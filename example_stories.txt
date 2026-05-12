@@ -1,0 +1,1269 @@
+Example source stories for Beat Book Builder
+
+Source: Chicago Sun-Times via WBEZ / Chicago Public Media.
+Pulled from https://github.com/NewsAppsUMD/beat_book_work
+  chicago-public-media/data/2026/ (May 8-11, 2026)
+
+Twenty stories, one file. Drop this into the Upload screen and
+the ingest pipeline will split it back into individual stories.
+
+========================================================================
+STORY 1 OF 20
+========================================================================
+Title: Trump's corruption may finally lead to his downfall
+Author: Mona Charen
+Published: 2026-05-08T06:00:00-05:00
+Link: https://chicago.suntimes.com/columnists/2026/05/08/trumps-corruption-uae-justice-treasury-china-russia-gas-economy-mona-charen
+
+Did you catch the story about Donald Trump trying to raid the Treasury to the tune of $10 billion? It's the latest in a string of grasping, grubby assaults on public integrity that have marked the Trump regime. This is not just the most corrupt presidency in American history; it is among the most corrupt regimes on earth.
+
+Trigger warning: The thefts and abuses below are eye-watering. I cite them not to enrage readers, but to offer a theory that we may, at long last, be passing out of the "LOL nothing matters" phase of this travesty. There is good reason to believe that, finally, Trump's unprecedented corruption is going to bite him in the ass.
+
+The IRS farce, which began in Trump's first term, goes like this: There was an actual offense committed against Trump. Between 2018 and 2020, Charles Edward Littlejohn, who worked for Booz Allen Hamilton under contract with the IRS, leaked confidential tax information about a number of wealthy individuals, including Trump, to ProPublica and The New York Times. (Recall that Trump, after repeatedly vowing to disclose his tax returns, never did.) The Times subsequently revealed that Trump, a putative billionaire, paid only $750 in federal income taxes in 2016 and 2017.
+
+Littlejohn was discovered, fired and prosecuted by the Justice Department under Joe Biden. At the conclusion of the trial, Judge Ana Reyes handed down the maximum sentence of five years in prison.
+
+Fast forward to 2026. In January, Treasury Secretary Scott Bessent, whose department oversees the IRS, announced that it was terminating all contracts with Booz Allen Hamilton totaling $21 million for failure to safeguard taxpayer information. Three days later, Trump and his sons sued the IRS for the aforesaid $10 billion, alleging that the leak had caused them "reputational and financial harm" and "public embarrassment." Hmm. The financial harm claim is risible — is the Trump family really arguing that, if not for this leak, they would have accumulated money even faster than they have over the past six years? As for embarrassment, it seems the Trumps bear the burden of proving they've ever felt such a thing in their lives.
+
+Columnists bug
+
+Columnists
+
+In-depth political coverage, sports analysis, entertainment reviews and cultural commentary.
+
+Beyond that, there is the preposterous sum of $10 billion for this piddling "injury." It would amount to two-thirds of the IRS's annual budget and be about 1,000 times more than the largest payout in the history of the Federal Tort Claims Act. But that isn't the most eye-popping aspect of the case. No, that honor goes to the fact, highlighted by Judge Kathleen Williams in her order requiring a new hearing, that there are not two contending parties here. Courts only have jurisdiction when there is a bona fide "case or controversy." In this case, Williams observes, Trump is sitting on both sides of the table. He is the plaintiff, but he is also the superior of all the respondents and can fire any at will. She quoted Trump himself, who admitted that "I'm supposed to work out a settlement with myself." So it's not a lawsuit, it's a gargantuan shakedown of American taxpayers.
+
+Presumably the same logic applied in Trump's other suit against the government. He is suing the DOJ for the Mueller probe, as well as for searching Mar-a-Lago in the classified documents case. The total he's demanding here is $230 million. Trump filed these cases before returning to the Oval Office, but his reelection hasn't given him second thoughts. As he put it in October 2025, "I have a lawsuit that was doing very well, and when I became president, I said, I'm sort of suing myself. It sort of looks bad, I'm suing myself, right? So I don't know. But that was a lawsuit that was very strong, very powerful." No worries, any settlement would have to be approved by ... Todd Blanche. And besides, Trump has promised that he will donate the money to charity (though what Trump considers "charity" you can probably guess).
+
+There is so much more. Remember the thousands of hours of vitriol he devoted to Hunter Biden's corruption? I can't sum up the contrast better than National Review's Andrew McCarthy did, in a series about Trump's stupendous grifting. McCarthy carefully documented how Trump and Steve Witkoff founded their crypto business, World Liberty Financial, just before Trump returned to the White House. The Wall Street Journal reported that World Liberty Financial then received, four days before the inauguration, a $500 million investment, amounting to a 49% share in the company, from Sheikh Tahnoon bin Zayed Al Nahyan, aka the "spy Sheikh," the second-highest-ranking royal in Abu Dhabi and the Emirati national security advisor. Nothing remotely like this has happened before.
+
+What did the United Arab Emirates want in return for this largesse? During the Biden years, the UAE's ambitions to become an artificial intelligence player had been thwarted. The administration declined to give the UAE access to high-end computer chips because the regime had close ties to the Chinese Communist Party. Hold that thought.
+
+Speaking of China, one of the figures who helped midwife World Liberty Financial with technical advice was the Chinese-born Binance founder Changpeng Zhao. Zhao had pleaded guilty to permitting his cryptocurrency exchange to be used by terrorists, cybercriminals and child abusers. But he was very useful to World Liberty Financial, helping to launch their first stablecoin, USD1. UAE-linked entities then purchased $2 billion of these. Trump pardoned Zhao in October 2025. He told "60 Minutes" that "I don't know who he is," and then immediately contradicted himself by adding, "I know he got a four-month sentence or something like that. And I heard it was a Biden witch hunt."
+
+Oh, and the UAE got the chips. So much for the supposedly "tough on China" Trump administration.
+
+Andrew McCarthy, recalling the Republican outrage over Hunter Biden, put it this way: "You know what the difference is between the Biden family business and the Trump family business? You'd have to add two digits to the sum of Biden abuses of power, foreign entanglements, and corruption ... to get near what Trump has raked in just from the UAE."
+
+Qatar gave Trump a $400 million luxury jet. Just like that. No embarrassment, no extenuating circumstances, no nothing. Just the bottomless greed of an unleashed Midas (without the curse — for now).
+
+To escape tariffs, Vietnam approved a $1.5 billion Trump Organization project to build a huge golf course near Hanoi. Mar-A-Lago increased its membership fee to $1 million, and the Bedminster club raised its initiation fee to $125,000. Paramount paid Trump $16 million in settlement of a suit over Kamala Harris' interview on "60 Minutes." ABC donated $15 million to the future Trump library in settlement of a case about George Stephanopoulos. Amazon put $28 million in Melania Trump's pocket for an unwatchable documentary. The Trump juniors have invested in drone companies and other firms that have received government contracts. Trump pals like Michael Flynn and Carter Page have received $1.25 million "restitution" payouts from the government, though Flynn pleaded guilty and Page's lawsuits have been dismissed twice.
+
+Nearing turning point
+
+The Trump family has increased its net worth by about $4 billion since January 2025, with the total now approaching $6.2 billion.
+
+And this is just the financial corruption. The perversion of justice is perhaps even worse — prosecuting Trump's critics and pardoning his allies.
+
+Why then do I say that we may be nearing a turning point? Any country that could passively accept the UAE gift, the Qatar plane and the Jan. 6 pardons is beyond caring, no? We'll see. My theory is that two things must be present for people in a free republic to turn a blind eye to corruption: 1) Their personal bank accounts must be flush, and 2),they must believe that most of the corruption stories are just partisan attacks.
+
+We have recent evidence from Hungary. Between 2010 and 2019, while the economy was (mostly) growing nicely, Hungarians were prepared to overlook Viktor Orban's subversion of the judiciary, capture of the media, and personal wealth aggrandizement. But when the economy went south in 2023, people became outraged about the corruption. Peter Magyar, especially because he had been a Fidez party insider at one time, was able to capitalize on that anger.
+
+Alexei Navalny, though he could not win an election in Russia (because they're rigged), became a national sensation by documenting the palaces and other wealth that Vladimir Putin and his cronies had obtained. Putin's trajectory was similar to Orban's. When he first gained power, the economy was strong due to high energy prices, allowing him to consolidate power. But when the economy soured, people became much more open to criticism about corruption, though sadly, they were in no position to remove Putin. Still, Navalny was enough of a threat that Putin had him consigned to a penal colony (where Putin's government later killed him).
+
+The American economy was very strong in the 1990s, and though Bill Clinton behaved in an abominable fashion toward women, people were willing to overlook it. Similarly, voters in 2024 made a bargain: Though they knew Trump was corrupt, they bet that he would bring them the kind of economy they'd enjoyed in 2018. This isn't an admirable trait, but there is good reason to think it's the way many voters operate.
+
+Trump has not delivered on the bargain. On the contrary, economic conditions are now worse than they were in 2024. Nor can Trump rely on partisanship to come to his rescue because it isn't the Democrats who are making the case about corruption, it's Trump himself and his allies. It is Trump who attempted to use the attempted assassination at the White House Correspondents' Association dinner to make the case for his garish ballroom. It is Senate Republicans who are adding the insult of demanding taxpayers pay $1 billion for this monument to Trump's ego. It is Trump, not his opposition, who instructs voters that they should be happy with fewer dolls at Christmas. It is Trump who accepts gold bars from the Swiss delegation and adorns the Oval Office in a style that could be called neo-Saddam.
+
+The corruption never mattered before, but when gas prices are near $5 a gallon, groceries have only gone up and the economy is skidding toward recession, the gold leaf becomes not an eccentricity but an indictment. The worm has turned.
+
+Mona Charen is policy editor of The Bulwark and host of the “Beg to Differ” podcast.
+
+Send letters to letters@suntimes.com. More about how to submit here.
+
+========================================================================
+STORY 2 OF 20
+========================================================================
+Title: Attacks on Black political representation ramp up after Supreme Court ruling
+Author: Marc H. Morial
+Published: 2026-05-08T06:00:00-05:00
+Link: https://chicago.suntimes.com/columnists/2026/05/08/black-political-representation-supreme-court-voter-rights-act-marc-morial
+
+For generations, Black Americans fought not merely for the right to cast a ballot, but for that ballot to matter. 
+
+The Voting Rights Act of 1965 was enacted to fulfill that promise — to ensure that political participation produced political power. Today, that promise is being dismantled, district by district.
+
+The Supreme Court’s ruling last month in Louisiana v. Callais struck down a congressional map that included two majority‑Black districts, claiming that Louisiana’s effort to comply with Section 2 of the Voting Rights Act amounted to unconstitutional racial gerrymandering. 
+
+Within hours of the ruling taking effect, Louisiana suspended its congressional primaries and moved to redraw its map — effectively eliminating districts that had allowed Black voters, who make up roughly one‑third of the state’s population, to elect candidates of their choice.
+
+This was not an isolated legal correction. It was the first flash in a thunderstorm.
+
+Columnists bug
+
+Columnists
+
+In-depth political coverage, sports analysis, entertainment reviews and cultural commentary.
+
+Almost immediately, legislatures across the South treated the ruling as permission to unravel decades of Voting Rights Act protections. Florida enacted a new congressional map that dismantles districts previously credited with protecting Black electoral opportunity and reinforces white-majority control. 
+
+Alabama and Tennessee called special legislative sessions to redraw congressional lines in ways that directly threaten the only districts anchored in majority‑Black communities, including the Memphis‑based seat that has long served as a rare source of Black representation in Tennessee’s congressional delegation.
+
+These developments expose the intent behind eliminating Black‑majority districts: not neutrality, but exclusion.
+
+Majority‑Black districts were never about racial favoritism. They were a necessary remedy to a documented reality — racially polarized voting. In state after state, courts have found that Black voters and white voters consistently support different candidates. When Black voters are fragmented across multiple white‑majority districts, their votes are predictably suppressed. They participate, but they lose.
+
+Section 2 of the Voting Rights Act existed to prevent precisely this kind of vote dilution. Its purpose was not to guarantee outcomes, but to ensure equal opportunity. As Justice Elena Kagan warned in dissent, the majority’s court ruling renders Section 2 “all but a dead letter” by raising the burden so high that discriminatory effects alone no longer matter.
+
+The real‑world consequences are already becoming clear. Congressional Black Caucus leaders have warned that the post‑Louisiana v. Callais ruling redistricting frenzy could threaten more than a dozen Black‑held House seats nationwide — not because voters chose differently, but because their choices have been constricted. 
+
+History confirms this pattern: Black representation in Congress rose sharply only after the Voting Rights Act was aggressively enforced and majority‑Black districts were created. When those districts disappear, Black representation declines.
+
+Supporters of this rollback argue that Black voters can still exert “influence” through coalition districts. But influence is not power. An electorate that can mobilize, donate and protest — but cannot reliably elect — is not participating on equal footing. In jurisdictions with severe racial polarization, coalition districts almost never produce consistent Black electoral success. They dilute accountability and weaken responsiveness.
+
+The harm extends beyond elections. Members of Congress elected from Black‑majority districts have historically been among the strongest advocates for voting rights, civil rights enforcement, fair housing, healthcare equity and criminal justice reform. Removing those districts weakens not just representation, but policymaking itself.
+
+What makes this moment especially dangerous is the illusion of neutrality. Maps can now be drawn “race‑blind” while reproducing the same exclusionary outcomes the Voting Rights Act was designed to stop. Structural discrimination does not require explicit racial language to function. The Supreme Court acknowledged this reality for decades — until now.
+
+Eliminating Black‑majority districts reverts the nation to a system where Black voters show up, follow the rules and still lose. That is not democracy. It is an illusion of representation.
+
+Marc H. Morial is president and CEO of the National Urban League and was mayor of New Orleans from 1994 to 2002.
+
+Send letters to letters@suntimes.com. More about how to submit here.
+
+========================================================================
+STORY 3 OF 20
+========================================================================
+Title: $10 million investment to reduce chronic absenteeism in Chicago schools
+Author: Janice Jackson
+Published: 2026-05-08T06:00:00-05:00
+Link: https://chicago.suntimes.com/other-views/2026/05/08/chronic-absenteeism-schools-10-million-community-nonprofit-grants-beth-swanson-janice-jackson
+
+More than 40% of Chicago Public Schools students were chronically absent during the 2024–2025 academic year — missing at least 10% of school days. For about 130,000 young people, that adds up to nearly a month of lost learning. And if chronic absenteeism patterns persist over a student’s K-12 academic experience, they would end up with up to two years less learning than their peers. 
+ 
+The implications of chronic absenteeism are profound and far-reaching. When students miss significant amounts of school, they lose access not only to instruction, but also to tutoring, mental health support, extracurricular activities and the peer and trusted adult relationships that help keep them connected and on track for high school graduation. 
+ 
+Chicago’s young people understand this deeply. One student who participated in a focus group conducted by A Better Chicago during summer 2025 put it simply: “When school feels like a place where people care about you, you want to be there.” 
+
+Commentary bug
+
+Commentary
+
+Families also play a key role in establishing consistent school attendance as a norm. Parents and community members, working in partnership with local school leaders and educators, help create a system of support that enables students to be present in school and engaged in their learning. 
+ 
+The recently released 2026 State of Our Youth report by A Better Chicago brings together public data with the experiences of our city’s young people shared through surveys and focus groups to offer a deeper look at how they are faring. Encouragingly, similar to last year, the vast majority (95%) of Chicago youth say they feel optimistic about their futures — a powerful reminder that young people still believe in what is possible.
+ 
+At the same time, students point to real challenges that can make attending school difficult. Nearly 95% of youth say mental health is a serious issue affecting their peers, and these struggles are among the most common reasons students say their classmates miss school. The broader social and economic pressures many families are navigating, along with concerns about community violence and escalating immigration activity, can add to that strain. When students are dealing with anxiety, stress or instability outside the classroom, even just showing up for school can become much harder.
+
+Relationships matter
+
+But the survey findings also highlight what draws students to school. Students say they are more likely to attend when school feels meaningful — when they feel respected by teachers, engaged with the material and are able to see how what they are learning connects to their future. 
+
+Relationships with supportive adults and peers matter deeply as well. In other words, students are more likely to show up to school when they feel they belong — and when they believe school is helping them build a path toward success in college or the workplace.
+ 
+Across Chicago, schools and community partners are working to create those conditions for students. At César E. Chávez Multicultural Academic Center in the Back of the Yards neighborhood, Principal Barton Dassinger and his team start with a simple belief: S tudents are more likely to attend when schools build strong relationships with families. When attendance begins to slip, staff reach out quickly — not with punishment, but with a question: “How can we help?”
+ 
+Still, no single strategy will solve chronic absenteeism. The challenge is complex and reflects the harsh reality that long-standing inequities and under-resourced systems — compounded by the pandemic and ongoing political pressures — continue to shape young people’s lives in uneven ways.
+
+South, West focus
+
+That is why A Better Chicago recently launched Every Day Counts, an initiative committing at least $10 million over the next five years to help strengthen student attendance. This effort will focus on communities where absenteeism remains highest — including Austin, Englewood, Garfield Park, South Lawndale, South Shore and Woodlawn.
+
+Our grants will provide funding to support partnerships between community-based nonprofit organizations and schools that prioritize interventions centered on prevention for elementary students and additional support for high school students already struggling with attendance. 
+
+We are seeking new and innovative approaches to improve school attendance, support a culture of student engagement and belonging in schools and classrooms, and empower students to thrive as they plan and prepare for success in college, vocational training or postsecondary employment.
+
+The priorities are clear and urgent. Chicago Public Schools’ five-year plan, approved in September 2024, includes a number of strategies to reduce the chronic absenteeism rate to about 25%. 
+
+But improving attendance cannot fall on Chicago Public Schools and local school leaders and educators alone. Addressing chronic absenteeism must become a citywide priority — one that will require community organizations, employers, faith leaders and policymakers across Chicago working together as partners with families and parents to support young people and strengthen the future of Chicago’s neighborhoods — and the city they will lead.
+ 
+Beth Swanson is CEO of A Better Chicago. Janice Jackson is a member of the A Better Chicago board of directors and former CEO of Chicago Public Schools. She is currently executive director of the Education & Society Program at the Aspen Institute’s Center for Rising Generations. 
+
+Send letters to letters@suntimes.com. More about how to submit here.
+
+========================================================================
+STORY 4 OF 20
+========================================================================
+Title: Fraudster accused of bilking $450M ordered jailed in Chicago, with judge citing his ‘untrustworthiness’
+Author: Frank Main
+Published: 2026-05-08T15:36:12.67-05:00
+Link: https://chicago.suntimes.com/crime/2026/05/08/vladimir-sklarov-ricardo-salinas-pliego-crime-fraud-chicago-new-york
+
+A convicted fraudster was ordered held in custody Friday at the federal jail in downtown Chicago as he awaits extradition to New York to face charges that he bilked a Mexican billionaire out of hundreds of millions of dollars.
+
+During a hearing at the Dirksen Federal Courthouse, an attorney for Vladimir Sklarov presented him as a family man with strong ties to the United States — and “a lot of reasons not to flee” while awaiting the outcome of his case. 
+
+Federal prosecutors, on the other hand, painted a picture of a convicted felon with a history of lying to courts and access to hundreds of millions of dollars and multiple foreign passports. 
+
+“He has the means, the money and the motive to flee,” Assistant U.S. Attorney Vincenza Lamonica Tomlinson said Friday. 
+
+Judge David Weisman agreed, finding Sklarov's character was “one of untrustworthiness.”
+
+Sklarov will remain in federal custody and soon be transported to the Southern District of New York in Manhattan, where an indictment against him was filed. Weisman said New York prosecutors will then "proceed with the case as they see fit,” but still moved to schedule a status hearing for Sklarov in Chicago next month.
+
+Sklarov is a Ukrainian immigrant who grew up in Chicago’s Uptown neighborhood and once lived in a mansion in Lake Forest. He’s accused of ripping off Mexican billionaire Ricardo Salinas Pliego of more than $450 million in a loan scheme.
+
+He was arrested over the past weekend at O’Hare Airport while preparing to board a flight to Greece, where he, his wife and three young children had been living.
+
+Sklarov allegedly posed as the operator of a company that was funded with the fortune of New York’s storied Astor family. He used the aliases Gregory Mitchell and Mark Simon Bentley. His federal defender argued this was to avoid prejudice against his Slavic last name, not to obscure his identity. 
+
+Salinas later told a reporter he felt like an “idiot” for entering the deal with Sklarov, a known fraudster.
+
+In 1998, Sklarov was convicted of Medicare fraud for billing the federal insurance program for surgical dressings and a skin cleaner that weren’t reimbursable. He was ordered to repay $14 million to the government.
+
+Stephen Golden, a retired Indianapolis Housing Agency police officer, said he couldn’t believe his eyes when he saw a photo of Sklarov in a Sun-Times story earlier this week about the federal indictment against him.
+
+“He’s a guy who could truly sell snow to an Eskimo,” said Golden, who investigated one of Sklarov’s Chicago-based companies in the mid-2000s.
+
+The company, SLS Management Co., operated a seedy apartment complex not far from the Indianapolis Motor Speedway. Sklarov renamed the complex Las Palmas and put fake palm trees outside. The complex drew the attention of the Indianapolis Housing Agency because of its “third world” conditions, including apartments without doors and a leaking roof, Golden said.
+
+Low-income residents lived in the complex through the federal Section 8 housing program. The problem was that Sklarov was barred from doing business with the federal government.
+
+“He had been selling defective penile implant kits and defrauded [the U.S. Department of Health and Human Services] of several million dollars,” Golden said.
+
+But Sklarov, who is listed in Illinois business records as the president of long-defunct SLS Management, didn’t sign most of the documents involving Las Palmas, Golden said. So prosecutors in Marion County, Indiana, decided to charge the company itself with felony welfare fraud.
+
+“It was more of a direct line,” Golden said.
+
+On June 16, 2006, SLS Management pleaded guilty and was ordered to pay $425,000 in restitution, court records show.
+
+“People deserve better than to have landlords who let them live in filth like that,” Golden said. “He was preying on that population, who don’t have a lot of choices for housing.”
+
+In addition to the criminal case filed in New York, Sklarov has been sued by Salinas and faces other litigation in the U.S. and abroad.
+
+“He has a history of engaging in this same conduct against other victims all over the world,” Tomlinson said.
+
+In a 2018 affidavit, signed by Sklarov and presented to Weisman Friday, Sklarov indicated he was “destitute” and on the verge of homelessness. Yet three years later, around the time the alleged scheme involving Salinas began, Sklarov started transferring millions to his wife and four adult children, according to Tomlinson.
+
+When Weisman asked Sklarov’s attorney to explain how that “changed so rapidly,” she said she couldn’t provide specifics.
+
+Sklarov is due to appear in court Monday in New York.
+
+Related
+
+Ukrainian man’s indictment for bilking billionaire out of $450 million runs through Chicago
+
+Man accused of bilking $450M from billionaire is convicted fraudster who once lived in a Lake Forest mansion
+
+========================================================================
+STORY 5 OF 20
+========================================================================
+Title: Thousands of Endeavor Health nurses look to unionize over pay cuts, staffing conditions
+Author: Kristen Schorsch | WBEZ
+Published: 2026-05-08T14:26:26.924-05:00
+Link: https://chicago.suntimes.com/health/2026/05/08/endeavor-health-nurses-look-to-unionize-over-pay-cuts-staffing-conditions
+
+During an annual week celebrating nurses across the U.S, nearly 3,000 nurses at Endeavor Health in the Chicago area are working to unionize over pay cuts and what they say are unsafe working conditions.
+
+While the effort has been quietly building for about a year, now nurses are openly organizing at work and have launched a public campaign on Instagram under the name teamsternurses. That’s a nod to the Teamsters Local 743, the union that would represent them.
+
+“Once upon a time the nurses of North Shore were HAPPY,” one post on Instagram reads. “It was not long ago they were even called HEROES. Sadly, the nurses experienced changes as they became ruled under a new name Endeavor. It didn’t take long for the nurses to realize they were disposable to Endeavor.”
+
+So far the unionizing effort only includes Endeavor’s so-called legacy hospitals in the suburbs — Evanston, Skokie, Glenbrook and Highland Park hospitals, said Tricia Poreda, one of the Endeavor nurses who is leading organizing efforts. Those hospitals were part of the system when it was known as NorthShore University HealthSystem, before it became much bigger through mergers. The ultimate goal is to organize nurses across Endeavor, Poreda said.
+
+Nurses have received pay cuts of $5 to $22 an hour, amounting to thousands of dollars a year, and pay is capped for the most experienced nurses, Poreda said. That’s as executives at Endeavor get bonuses, she said.
+
+Endeavor CEO Gerald Gallagher made just over $5 million in 2024 at the non-profit health system, including a $1.4 million bonus, as well as retirement and other “deferred” compensation, Endeavor’s most recent tax return shows. That same year, the health system had a $494 million operating loss, much of it from legal settlements, an audited financial statement shows.
+
+Poreda, who works in the emergency department and in intensive care with the sickest patients, said what many nurses are most concerned about is being short-staffed — putting patients at risk. For example, in the ICU there’s typically one nurse treating two patients unless a patient is very critical, but without enough staff, nurses are often forced to take on more, Poreda said.
+
+“It’s so stressful,” she said. “I make it a point to care for each and every one of my patients the way that I would want my family taken care of. … When I can’t do that, I worry about them… The last thing in the world I want is for something bad to happen because I am too bogged down with too much workload.”
+
+WBEZ obtained fliers administrators are circulating at work that say nurses don’t have to sign a card or petition from a union.
+
+In a statement, an Endeavor spokesperson did not comment on pay cuts or understaffing nurses but said: “Nurses are at the heart of organization."
+
+“We also recognize the challenges in providing safe, seamless patient care when a union acts as the intermediary between our nurses and hospital leadership,” the statement said.
+
+Endeavor has had to grapple with safety issues recently after a patient at Swedish Hospital on Chicago’s North Side shot two police officers, according to prosecutors. One of the officers died and the other was gravely wounded. Swedish is one of nine Endeavor hospitals across Chicago and the suburbs.
+
+Endeavor is one of the biggest hospital systems in the Chicago area, treating more than 1 million patients a year and employing more than 27,000 people, according to the health system. It generated about $6.4 billion in revenue in 2025, its most recent annual financial statement shows.
+
+Poreda is one of several nurses who sued Endeavor last year, alleging the health system understaffs nurses to save money, compromising patient safety, and requiring nurses to routinely work beyond their shifts without pay, according to the federal lawsuit.
+
+The lawsuit describes several instances where patients were allegedly hurt, or died because of understaffing. One patient fell and broke their hip while waiting in the emergency room, while another was given the wrong blood type during a transfusion and died, court records show.
+
+One of the nurses alleged she was berated by a manager for helping a patient who was covered in feces, bleeding, crying and screaming, instead of discharging other patients. The same nurse alleges a human resources officer “involuntarily snatched” her cell phone and searched it after she talked with other nurses about unionizing. Then she was fired, the lawsuit said. The lawsuit is ongoing.
+
+There’s a wave of nurses unionizing across the country. Nurses at Rush University Medical Center on Chicago’s West Side recently rallied about trying to unionize.
+
+Related
+
+Swedish Hospital police shooting highlights critical security fail points
+
+Swedish Hospital police shooting highlights critical security fail points
+
+Kristen Schorsch covers the health of the region for WBEZ.
+
+========================================================================
+STORY 6 OF 20
+========================================================================
+Title: Pressure ramps up as Bears rely on 2026 draft class to complete roster rebuild
+Author: Jason Lieser
+Published: 2026-05-08T17:22:57.848-05:00
+Link: https://chicago.suntimes.com/bears/2026/05/08/pressure-ramps-up-as-bears-rely-on-2026-draft-class-to-complete-roster-rebuild
+
+The Bears talked about their roster during the NFL Draft last month as though they had the luxurious leverage of being able to select players based purely on the best available talent rather than targeting pressing needs. The reality, though, is that some of their weak spots put ample pressure on this rookie class to contribute right away.
+
+All seven of the Bears’ draft picks, from first-round safety Dillion Thieneman to sixth-round defensive tackle Jordan van den Berg, have paths to significant roles this season. Their bids for those spots began Friday and Saturday with rookie minicamp.
+
+All eyes have been on Thieneman so far. He almost certainly will be their Week 1 starter and very well could open Organized Team Activities at the end of the month atop the depth chart alongside veteran Coby Bryant.
+
+The spotlight is on him not only because of where he was picked, No. 25 overall out of Oregon, but because general manager Ryan Poles and coach Ben Johnson believed so strongly in his star potential that they passed on prospects at premium positions like left tackle and defensive end.
+
+“They expect a certain level of production coming in,” Thieneman said after his first practice.
+
+They all need to wrap their minds around that demand. Coming off a division title and a playoff win, this is no time for the Bears to take a step backward, and they were relatively quiet in free agency. They can’t afford for any of their draft picks to use this as merely an acclimation season.
+
+That includes players who, unlike Thieneman, have veterans standing in their way.
+
+Iowa center Logan Jones, a second-round pick at No. 57 overall, has some margin in his timeline since the Bears traded for Patriots veteran Garrett Bradbury in March, and it’ll be difficult for him to master Johnson’s offense by the season opener, but there’s certainly a hope within Halas Hall that he takes over the job at some point this season.
+
+When asked Friday how quickly he believes Jones can be ready to play, Johnson made the expectations clear by saying, “The ball is in his court as far as I’m concerned.”
+
+Bradbury, a 30-year-old on his third team in three seasons, was always going to be a placeholder in the wake of Drew Dalman’s retirement. He’s on an expiring contract, so next season is the deadline for Jones to step in. But the Bears clearly believe Jones eventually will be better than Bradbury, and it’s up to him how soon that will be.
+
+The team also didn’t draft Stanford tight end Sam Roush or LSU wide receiver Zavien Thomas, both third-rounders in the top 90 overall selections, to be fringe players or essentially redshirt this season.
+
+Roush is behind Colston Loveland and Cole Kmet for now, but must assert himself as a multipurpose tool for Johnson this season and affirm to the Bears that he can do more down the road. Kmet was a potential salary-cap casualty this offseason and could be in 2027, too.
+
+Thomas will get a shot right away as a kick returner, but there’s also an opening at wide receiver behind Rome Odunze and Luther Burden. The Bears’ biggest addition at that position after trading DJ Moore to the Bills was signing 31-year-old Kalif Raymond to a cheap one-year deal.
+
+Raymond has the inside track because he played for Johnson in Detroit, but he had 35 or fewer catches in each of the last three seasons. In a perfect world, the Bears would develop a dynamic receiving corps of Odunze (23 years old), Burden (22) and Thomas (21).
+
+Texas cornerback Malik Muhammad has as good of a shot at starting as anybody other than Thieneman in this class since the Bears will hold an open competition for the outside corner spot opposite Jaylon Johnson.
+
+Tyrique Stevenson is penciled in — lightly — for that job, but there’s never been any certainty with him. Terell Smith, a fifth-round pick the same year in which Stevenson was a second-rounder, has challenged him throughout their time with the Bears, though Smith is coming off a major knee injury.
+
+Fifth-round pick Keyshaun Elliott, from Arizona State, enters a fairly open field for the strong-side linebacker job, and van den Berg, out of Georgia Tech, was the only draft addition to a defensive line that has been underwhelming for years. Both have an opportunity to be significant factors for defensive coordinator Dennis Allen this season if they’re good enough.
+
+Rookie minicamp gives them, as well as the undrafted signees, a chance to grasp the framework of Johnson and Allen’s systems. They’ll likely still be floundering when the veterans arrive for OTAs and minicamp, but the hope is that they’re relatively caught up by the time training camp begins in July.
+
+The Bears’ dependence on this rookie class is reflective of how far they still have to go to become a true contender, despite significant progress last season. The draft usually should be future-focused, but that’s only for teams that are fully built. The Bears aren’t quite at that stage yet, and they’re hoping this class will help them get there.
+
+Latest on the Bears
+
+========================================================================
+STORY 7 OF 20
+========================================================================
+Title: Property tax relief scant in Bears stadium bill, analysis shows
+Author: Rich Miller
+Published: 2026-05-08T17:00:00-05:00
+Link: https://chicago.suntimes.com/columnists/2026/05/08/property-tax-relief-megaprojects-bears-bill-pritzker-rich-miller
+
+Before the House passed the megaprojects bill last month, we were told that the drafters didn’t want to just do some symbolic or “token” property tax relief. After the chamber passed the bill, we were told the property tax component will provide meaningful statewide relief for homeowners.
+
+Well, the governor’s office ran the numbers on the statewide tax relief aspect of the bill and shared the results with Senate Democrats, which I obtained.
+
+It ain’t good.
+
+The tax relief component is built into the payment in lieu of taxes, or PILOT, part of the legislation. Megaprojects developers would negotiate with local governments what “special payments” they’ll pay on top of property taxes based on frozen assessments.
+
+The House proposal would take half that “special payment” money from local governments and divert it to property tax relief, with 60% of the annual special payments going to local residential taxpayers in the megaprojects area. The other 40% would go to statewide property tax rebates for homeowners in their primary residences.
+
+Columnists bug
+
+Columnists
+
+In-depth political coverage, sports analysis, entertainment reviews and cultural commentary.
+
+Illinois has 3.1 million “homestead owners,” according to the governor’s office analysis. A $20 million special payment for a “Large-Sized/Industrial Development” would result in a statewide pot of $4 million (40% of $10 million, which is half of $20 million) split 3.1 million ways, for a total of about $1.29 per homeowner.
+
+A “mid-sized” $3 million special payment would net Illinois homeowners a whopping 24 cents.
+
+And a “small” $1 million special payment would get you… wait for it… 6 cents.
+
+In other words, that’s not even worth the mailing costs to send the checks. And even if the program is wildly successful beyond anyone’s imagination and produces a billion dollars in special payments, that’s about 60 bucks per homestead.
+
+According to the governor’s office analysis, “Requiring a company to negotiate and pay for property tax relief would also be an added complication to negotiating a PILOT agreement. PILOT is a tool utilized by 35 states today, so this could risk the loss of projects and the revenue they would generate.”
+
+Again, kudos to the House for passing a Bears/megaprojects bill. It wasn’t easy by any means. As with the Senate’s mass transit bill last year, it was one of those “whatever it takes” tasks. And it was a good time for House Speaker Emanuel “Chris” Welch to start conditioning his members to vote for some tough bills as the session progresses. On all that, Welch succeeded.
+
+But there have been consequences. As I told you last week, Senate progressives are up in arms about how the House took the time to pass a Bears stadium bill, but didn’t pass a constitutional amendment (or anything else) to tax the wealthy.
+
+And this property tax relief analysis from the governor’s office won’t help matters with the progressives or pretty much anyone else. Turning this ship around will not be easy without the political cover of property tax “relief.”
+
+The House’s brief burst of frenetic activity last month has also created another rift with the Senate.
+
+The Senate, you will recall, refused to take up the House’s proposed constitutional amendment adding to the remap requirements, “to ensure that no citizen is denied an equal opportunity to participate in the political process and to elect representatives of his or her choice on account of race,” and “to create, where practical, racial coalition or influence Districts.”
+
+The Senate’s refusal to move the proposal has led to some new problems.
+
+Welch’s chief of staff Clayton Harris, III, wrote on his Facebook account: “I'm proud the House stepped up to strengthen voting rights through a constitutional amendment. That mattered. It showed who we are and who we aspire to be.” And then Harris added: “But seeing that effort stall... I'm not disappointed. I'm hurt.”
+
+Harris went on to say, “As a Howard Law grad, as someone who teaches policing and race at the University of Chicago, and as a Black man fully engaged in this state's political landscape, voting rights aren't abstract to me. They're about history, access, power and who gets a voice.”
+
+That could’ve been an allusion to Senate President Don Harmon’s statement about why his chamber decided not to proceed: “I would ask for patience and time for our state’s top legal experts to work through this. The last thing we want is to act in haste and risk unintended consequences down the road. Too much is at stake for too many.”
+
+A spokesperson for Harmon declined comment about Harris’ statement.
+
+Rich Miller also publishes Capitol Fax, a daily political newsletter, and CapitolFax.com.
+
+Send letters to letters@suntimes.com. More about how to submit here.
+
+========================================================================
+STORY 8 OF 20
+========================================================================
+Title: Chicago school board’s investigation into media leaks fails to yield results
+Author: Sarah Karp | WBEZ
+Published: 2026-05-08T16:22:35.586-05:00
+Link: https://chicago.suntimes.com/chicago-school-board/2026/05/08/chicago-school-board-investigation-media-leaks
+
+An investigation into who was responsible for leaking internal Chicago Board of Education information to the media was unable to reach a conclusion, according to a report released Thursday.
+
+Two board members, Ellen Rosenfeld and Che “Rhymefest” Smith, refused to participate in the investigation, while the other 18 board members swore to investigators that they were not the source of the leaks, the law firm hired to conduct the investigation wrote in the report. The investigators did not have subpoena power.
+
+Rosenfeld told WBEZ in response to questions Friday that she didn’t participate because she did not leak information. “I knew it wasn’t me,” she wrote in a text. Smith said he didn’t leak information, either. He previously told WBEZ that he thought it was inappropriate for board members to share confidential information.
+
+One of the leaks under scrutiny was the revealing of the finalists for the Chicago Public Schools CEO position to a WBEZ reporter. The other leak was to Fox-32 Chicago reporter Paris Schutz, who posted a communication sent to the board about a special meeting to raise property taxes. Schutz has since moved to NBC-5 Chicago.
+
+Related
+
+CPS Board is investigating two leaks of internal board information
+
+Board President Sean Harden said he was disappointed that the investigation that he launched didn’t reveal the source of the leaks. But he said he still thought the review was important.
+
+“There was clear evidence that people were perpetuating their own agendas, and it was just counter to board business,” said Harden, who was appointed by Mayor Brandon Johnson and is not seeking to be elected to the post in November. Sharing the confidential information, he said, is not in the best interest of the board or the community.
+
+The law firm, Salvatore Prescott Porter & Porter, has been paid $59,202 so far this school year, CPS records show.
+
+Several board members were unhappy with the investigation.
+
+Rosenfeld said she doesn’t think communicating with the press warrants an investigation as the “press is one of our greatest allies.” She said the process was “a distraction and a waste of taxpayer money.”
+
+“The people of Chicago sent me here to ensure their kids receive a high quality, rigorous joyful education not to sit in closed door interrogations,” she wrote in a text.
+
+Jessica Biggs, who represents a South Side district, called the investigation “petty politics.” Biggs is running for school board president.
+
+“This Board should be focused on student achievement and growth,” she said. “This ‘investigation’ is an example of everything that is misguided about our current leadership.”
+
+While Biggs and other school board members wanted to keep the CEO finalists confidential, many school districts release their names and qualifications to allow the public to vet them.
+
+Board members had signed a non-disclosure agreement to keep the CEO search confidential. But as investigators acknowledged in the report, other people outside the board knew the finalists’ names, and it was unclear whether board members were the source of the leak.
+
+Within hours of WBEZ and the Chicago Sun-Times publishing the names of the finalists, one of them withdrew from consideration. That resulted in the search process dragging on for many months. Eventually, the board hired CEO Macquline King, who initially was not a finalist and was serving as the interim leader.
+
+Meanwhile, public notice about the special school board meeting that was the subject of the other leak was posted 12 hours after Schutz published the communication. News of the special meeting drew ire because it was held a few days before Christmas, and some critics accused the mayor and his allies on the board of trying to sneak in the vote when no one was paying attention.
+
+In discussing why these leaks might have occurred, the report points to the current makeup of the board. Currently, it is a hybrid board with 10 elected members and 11 appointed by the mayor.
+
+“Whatever the motivation of the leaks, all witnesses agreed that the leaks made the Board look divided and untrustworthy,” according to the report. “Relatedly, many witnesses commented on the tension and distrust within the Board between the appointed and elected members.”
+
+========================================================================
+STORY 9 OF 20
+========================================================================
+Title: Let the good times roll, but remember e-scooter, e-bike safety
+Author: Letters to the Editor
+Published: 2026-05-09T06:00:00-05:00
+Link: https://chicago.suntimes.com/letters-to-the-editor/2026/05/09/electric-bike-scooter-mothers-day-medicaid-samantha-steele-after-school-trump
+
+A quick buzz passes by us while we walk on Chicago Avenue to start another shift as pediatric resident physicians. We see a teenager on an electric scooter. Immediately, memories resurface of resuscitating a child in the trauma bay of the emergency department who fell off a scooter at high speeds while not wearing a helmet. We hope the child we see gets to his or her destination safely.
+
+In the last several years, e-scooters and electric bicycle, or micromobility, have become a staple of the Chicago area's urban and suburban landscape. Rental stations for bikes and scooters are seemingly on every street corner with people of all ages using them for both work and pleasure.
+
+A recent study by the Consumer Product Safety Commission illustrates the increasing dangers of micromobility. Between 2017-2023, all forms of micromobility resulted in nearly 500,000 emergency department visits, with an increasing number of fatalities (from five in 2017, to 117 in 2023). The increased use of micromobility has resulted in a youth health and safety crisis that has been tragically underscored by the recent death of a teen in South Shore and the death of an Arlington Heights teen in the fall of 2025.
+
+Earlier this year, the Illinois Senate unanimously passed Secretary of State Alexi Giannoulias’ new initiative, “Ride Safe, Ride Smart, Ride Ready,” that aims to increase the safety of micromobility devices in Illinois. The initiative targets legislation around high-speed devices and incorporates educational components and updated rider training. This follows in the steps of multiple states across the country that have also made efforts to increase safety measures.
+
+As pediatricians, we care for the people behind these statistics. We have challenging conversations with devastated parents when children have serious injury or disability related to micromobility. Our job is to protect, educate and advocate. We urge caregivers to think twice before allowing their child to use e-scooters and e-bikes.
+
+We call on our state legislators to pass Senate Bill 3336/House Bill 4925 to enact common-sense micromobility safety provisions, to support the “Ride Safe, Ride Smart, Ride Ready” initiative and prioritize protecting the children of Illinois from devastating injury, disability and death.
+
+Dr. Shannon Conway and Dr. Caroline Chivily, pediatric residents, Lurie Children's Hospital of Chicago
+
+Give us your take
+
+Send letters to the editor to letters@suntimes.com. To be considered for publication, letters must include your full name, your neighborhood or hometown and a phone number for verification purposes. Letters should be a maximum of approximately 375 words.
+
+No one loves us like Mom 
+
+In honor of all the moms out there, both with us and departed, for doing the world's most important, difficult and rewarding job, I offer the following — dedicated, of course, to the memory of my own cherished and beautiful mother.
+
+Where would any of us be without our moms? They showed us love before anyone else. They dried our tears, bandaged our knees, kissed our bruises, tucked us in, sang to us, read to us, made us eat our peas but also gave us dimes when the Good Humor truck came by. They made us do our homework but let us turn on "The Andy Griffith Show" when that arithmetic problem became too much to bear. They doubled our victories by sharing them with us and halved our defeats with a hug and a promise that you did your best and next time would be different. They were there to help pick up the pieces when someone broke our hearts and were happier than anyone else when our hearts shone their very brightest. And when all is said and done, you better believe that Mom is the only name you’ll never see crossed out on any sailor's arm, cause Mom is the one gal that ain't going nowhere.
+
+Rob Hirsh, West Ridge
+
+Mom, I finally get it
+
+My mother is long gone now, but a certain vivid memory lingers and is still a bit disturbing to this day.
+
+I had the sweetest and most wonderful mother anyone could want. But her unexpected reaction one fateful day still pricks and pokes my overly sensitive soul: the time when I laid my 12-year-old head on her shoulder while we were watching television one summer evening. Instead of being delighted that her tomboy daughter was cuddling up to her, she pulled back immediately and said, "Oh no, don't do that. It's too hot!" I felt shock and rejection like I never felt before.
+
+This short but very surprising interaction with my mom came out of the blue. In no way was I prepared for this. How could a little heat and humidity come between us? After all, she was my hero, savior, angel and my everything.
+
+So I moved to the other end of the couch and sulked. I sulked for another 25 years, not necessarily on that couch. One day, it occurred to me: My mother also had needs. Well, who knew?
+
+Kathleen Melia, Niles
+
+Help Illinois Medicaid moms 
+
+Pregnant with my third child, I am very aware of how pregnancy, birth and postpartum are joyful but expensive moments. Forty percent of mothers who give birth in Illinois rely on Medicaid, including myself, and we’re scared that looming cuts will make care more costly and difficult.
+
+That’s why I'm urging Illinois lawmakers to protect moms by enacting the Newborn Equity Support Transfer, or NEST, program.
+
+As a Black woman all too familiar with the fact that Black moms are three times more likely to die from pregnancy-related conditions compared to white moms, I need care that prioritizes my health and safety. But the right care is expensive, and Medicaid cuts could make it more so.
+
+Congressional Republicans cut $1 trillion from Medicaid and gave tax cuts to the ultra-wealthy. That’s a particularly brutal blow to moms. Twenty-eight hospitals across Illinois could be forced to cut services like maternity care or close down entirely. My current pregnancy is high-risk. If I had to travel hours to get care, it would be a huge health risk and cost time and gas money that I can’t afford.
+
+I know that Springfield leaders can’t stop Medicaid cuts, but lawmakers can act to protect moms and babies from the most painful consequences. The Newborn Equity Support Transfer program would provide expectant moms on Medicaid with $1,500 in the third trimester and $500 a month for the first six months of a baby’s life. Targeted cash support like that has been proven to help babies and moms stay healthy and lower healthcare costs for families and the state.
+
+I remember how quickly all the new expenses added up with my children — car seats, bassinets, diapers, bottles, formula, clothing and more. If the program had been around earlier, my life would have been completely different.
+
+Motherhood is beautiful, challenging, joyful and painful. All new and expectant moms deserve the freedom to focus on our babies without worrying about how we’ll get the care we need or pay all the bills. The Newborn Equity Support Transfer program would help make sure we can.
+
+So while the federal government may have turned its back on moms in favor of the wealthy, Illinois lawmakers don’t have to make the same choice.
+
+Chanelle Brown, POWER-PAC IL parent leader, Community Organizing and Family Issues, Evanston
+
+Fighting for after-school program funding
+
+Every parent knows the feeling.
+
+The school bell rings and suddenly the day becomes a puzzle we have to piece together. Who’s picking up the kids? Where will they go until you’re off work? Will they be safe?
+
+As the school year ends, that puzzle gets harder as the structure of the school day disappears entirely.
+
+Out-of-school time programs have been solving those problems for thousands of families in Illinois. Yet 1 million students are on wait lists for these after-school programs.
+
+New national reporting underscores the biggest gaps for children in poverty aren’t during the school day — they’re after the bell rings. Access to enrichment, mentorship, childcare and safe spaces after school and during the summer play a major role in long-term outcomes.
+
+As a working mom, I know how much these programs matter.
+
+Two years ago, Illinois made a promise. Lawmakers approved $50 million in state funding for after-school programs. It was a historic, bipartisan investment meant to support kids and give parents peace of mind.
+
+But that promise was broken.
+
+That funding never reached the programs it was meant to support because Gov. JB Pritzker’s administration never released it. Nearly 30,000 kids lost access. More than 2,000 staff lost their jobs. Families were left scrambling.
+
+Even more troubling: No one can tell us where that money went.
+
+Now, the situation is getting worse. The federal government is canceling grants mid-school year, and instead of stepping up, Pritzker has proposed cutting $17.5 million from after-school programs that have decades of proven success and bipartisan support.
+
+That’s on top of not giving them the funding they were promised.
+
+We’ve tried good-faith conversations and negotiations, only to be ignored. But our kids can’t afford inaction. We will continue fighting for our kids, schools and families through ongoing federal litigation and by pushing for sustained state investment.
+
+Today, Illinois has a choice.
+
+As a mom, I think about the kind of state I want for my children — and every child — to grow up in. One that keeps its promises. One that prioritizes opportunity and safety beyond the school day.
+
+We have a chance to lead, but only if we ensure that investments meant for our kids actually reach them.
+
+Because accountability should never be optional.
+
+Susan Stanton, executive director, ACT Now Illinois
+
+The nerve of Steele
+
+So Cook County Board of Review Commissioner Samantha Steele managed to beat her DUI rap. Now she is doubling down, playing the victim and waving away the vulgar, disrespectful abuse she aimed at the arresting police officers. 
+
+It is obvious that she was impaired but shows no sign of remorse. She should be removed from the road before she kills someone. In WBEZ's Dan Mihalopoulos' report that was published in the Sun-Times, the only thing Steele said that rings true is, "I'm a messy person." Yes, she is.
+
+Blaise J. Arena, Des Plaines
+
+Off to the disgraces 
+
+Now that the Kentucky Derby is over, the next important race will be between the modern day Four Horsemen of the Apocalypse: Todd Blanche, Pete Hegseth, Robert F. Kennedy Jr. and Howard Lutnick, whose mounts are arrogance, incompetence, mendacity and servility. The prize is a legacy of ignominy and admission to the "Pam Bondi and Kristi Noem Hall of Shame."
+
+Never has a president nominated such an unfit group for the Cabinet, and never before has the Senate been so supine as to approve such.
+
+William P. Gottschalk, Lake Forest 
+
+Congress ain’t what it used to be
+
+Congress? Used to be a theater and concert venue on Milwaukee Avenue in Chicago. While the structure exists, it's currently closed to the public. 
+
+Congress? Used to be the moniker of the expressway leading into Downtown Chicago from the western suburbs. The freeway is still there but is now known as the Eisenhower or Ida B. Wells Drive as it enters Downtown.
+
+Congress? Used to be a hallowed hall of duly elected representatives in place as checks and balances to counter the executive branch of government. With the expiration of the 60-day deadline under the War Powers Resolution of 1973 and more inaction by the body of schmucks in place, I’d reckon we can assume they, too, are no longer in existence either. 'Tis a shame, truly.
+
+Lawrence Pietras, Glen Ellyn
+
+Defeating Vance 
+
+Sun-Times letter writer Bill Hartman wants to know who the Democrats have to run against JD Vance.
+
+Considering Mr Vance's unwarranted attacks on Pope Leo XIV, the answer is every Catholic in the country.
+
+Steven Herr, West Ridge
+
+========================================================================
+STORY 10 OF 20
+========================================================================
+Title: Cubs shortstop Dansby Swanson treats his glove with love
+Author: Gordon Edes
+Published: 2026-05-09T08:00:00-05:00
+Link: https://chicago.suntimes.com/cubs/2026/05/09/cubs-shortstop-dansby-swanson-treats-his-glove-with-love
+
+His first glove, the one he got when he was maybe 4 or 5?
+
+‘‘I had one of those Mizuno, the ‘power flexes,’ I think they were called,’’ shortstop Dansby Swanson said the other day in the Cubs’ clubhouse. ‘‘Basically, it was like they had this little slot that your thumb can go in that kind of just helps you close the glove better because you’re not that strong.’’
+
+If he still has it, Swanson said, it’s probably tucked away somewhere in his parents’ basement in Georgia, where he was raised.
+
+His glove, he said, is something he always has viewed as worthy of his TLC. Something to be treasured. Not to be left out in the rain, like many remorseful Little Leaguers have been known to do.
+
+‘‘My glove is and always has been something I took care of,’’ he said. ‘‘I’ve always taken care of my glove from a young age. I never threw my glove. You know how some kids just chuck it? I never threw my glove. I always set my glove down.’’
+
+It was true then, and in the big leagues, no diva is pampered more than the Wilson A2K 1787 model that is Swanson’s glove of choice. The glove, measured from the bottom of the heel to the tip of the index finger, is 11¾ inches. Dark-brown-dyed cowhide leather, infused with touches of red and blue to reflect the Cubs’ colors. Inscribed on the thumb of the glove is ‘‘All Dai,’’ a tribute to an old high school and college friend, Dai-Jon Parker, who died in a tubing accident.
+
+The glove occupies its own shelf in Swanson’s locker. When he travels, it has its own special carrying case.
+
+Before the Cubs boarded their flight to Texas after their game Thursday against the Reds, Swanson massaged his glove with mink oil.
+
+‘‘I do it now just to coat the leather and protect the leather and moisturize the leather,’’ he said. ‘‘I’ve done that since I was little.’’
+
+He gives the glove that treatment about once a week but always before a road trip.
+
+‘‘Because leather can dry out on a flight,’’ he said.
+
+Swanson might not know the whereabouts of his first glove, but the A2K 1787 never will require one of those AirTags people attach to their car keys to locate them. Swanson knows where his glove is. In the dugout, he always leaves it on the third step. If it’s not there, he knows someone has moved it without asking.
+
+Other people are allowed to touch his glove, sure.
+
+‘‘But no one puts his hand inside my glove,’’ he said.
+
+Does everyone on the team know that?
+
+‘‘It’s kind of an unwritten rule,’’ he said. ‘‘I don’t put my hand in — I don’t use it until the regular-season games. I don’t use it in spring training. I keep it in its little case, safe.’’
+
+When the season is over, other equipment is packed up and kept in the clubhouse. Swanson takes his glove home with him.
+
+Scott Paulson, a Wilson rep from Chicago, has supplied Swanson with his glove ever since Swanson played a dozen years ago at Vanderbilt, a Wilson client. Back at Vandy, Swanson took to naming his gloves. One he called ‘‘Charlotte.’’
+
+Every spring, Paulson supplies Swanson with two or three new gloves. Every year since the pandemic year, 2020, Swanson chooses the same glove to be his game glove. Seven seasons of shelf life is a long time for a baseball glove.
+
+Swanson is giving no thought to replacing it any time soon.
+
+‘‘I hope it lasts the rest of my career,’’’ he said.
+
+What makes this glove so different from the rest?
+
+‘‘I’m, like, a very feel-oriented person,’’ he said, ‘‘and no other glove broken in has been able to feel like this one.
+
+‘‘At this point, it just feels like an extension of my hand, and I don’t do anything special to break in gloves; I never have. The neat thing to me about gloves is, like, leather is always different, right? It can come from the same cow and still be different, how it gets stretched and laced and even the dye. Who knows how the dye impacts the leather?’’
+
+You know how some NBA players can just look at a rim and see it hasn’t been set at precisely 10 feet? That’s how Swanson is with gloves. Not everyone’s glove. His glove. He can feel the difference in the leather. He also can tell, by an eighth of an inch, whether the glove is 11¾ inches. He actually prefers if it shrinks it 11⅝.
+
+‘‘I feel bad at times because Wilson has always done everything I’ve asked,’’ Swanson said. ‘‘They’re amazing; they’ve treated me like family. They’re the best. But I feel bad because they can hand me a glove and I can, like, touch it and know if it’s good or not, really.’’
+
+It’s all in the leather, he said.
+
+‘‘There’s a softness in leather,’’ he said, ‘‘but there’s also a firmness and stiffness in leather. I tend to like the stiffness in leather more. If I feel I can bend it around the first time I put my hand in it, it’s too soft.
+
+‘‘[Cubs second baseman] Nico [Hoerner] likes his glove super-stiff all the time. But mine is, like, formed so perfectly, it just closes the exact same way every time. It’s, like, stiff around the edges, but everything else is, like, supple and soft.’’
+
+Swanson has won two Gold Gloves playing short, the first for the Braves in 2022, the second in his first season for the Cubs in 2023. Shortstop traditionally has been defined as a glove-first, bat-second position, although that started to change with the arrival of Cal Ripken Jr. and successors such as Alex Rodriguez, Derek Jeter and Nomar Garciaparra.
+
+When he was a kid, Swanson wore out an old VHS tape called ‘‘Superstar Shortstops,’’ a montage of great fielding plays by shortstops from the time of Luis Aparicio. That film isn’t a distant memory. When the Cubs were rained out last month in Cleveland, he clicked on
+‘‘Superstar Shortstops’’ and watched it on YouTube.
+
+‘‘I’ve watched it all the time,’’ he said. ‘‘That’s why I really fell in love with the position of playing shortstop. Nomar was my favorite. Just something about his game.
+
+‘‘But Derek and I have a little bit of a relationship. We have the same agent. We’ve had conversations. I have an appreciation for being great at what you do.’’
+
+Whatever greatness Swanson has experienced in his career, he knows the A2K 1787 has been a part of it. He hasn’t given it a name yet, he said, but he has one picked out if he does.
+
+Old Reliable.
+
+========================================================================
+STORY 11 OF 20
+========================================================================
+Title: Analyzing Blackhawks' draft options: Could Ivar Stenberg fall to No. 4 pick?
+Author: Ben Pope
+Published: 2026-05-10T06:30:00-05:00
+Link: https://chicago.suntimes.com/blackhawks/2026/05/10/blackhawks-nhl-draft-options-ivar-stenberg-caleb-malhotra-chase-reid-carson-carels
+
+The Blackhawks will take their time finalizing their prospect rankings before the NHL Draft on June 26. General manager Kyle Davidson has learned there’s no need to rush that process.
+
+But they also will have to read and react to decisions made by the three teams picking ahead of them — the Maple Leafs, Sharks and Canucks — after falling to the No. 4 pick in the draft lottery Tuesday.
+
+This might not be an awful year for that, however. Chris Peters, the prospect scouting expert for FloHockey, considers this draft class weaker than average. He doesn’t think there are any Connor Bedard-level stars at the top, either.
+
+‘‘It’s a tough year to get a real feel for the overall quality,’’ Peters said. ‘‘This is one of those years where it feels like the best player might not come from the top pick.’’
+
+Here’s Peters’ analysis of the Hawks’ options at No. 4:
+
+Ivar Stenberg, LW, Frolunda (Sweden)
+
+Stenberg, the consensus second-best prospect (behind Gavin McKenna) in most public rankings, initially seemed out of the Hawks’ reach after the lottery. But that might not be true.
+
+The Sharks, picking second, need an elite defenseman to complete their impressive young core. The Canucks, picking third, have been strongly linked to Caleb Malhotra, in part because his dad, Manny, is their AHL coach.
+
+Many mock drafts, including Peters’ latest, project the Sharks and Canucks to pass on Stenberg, allowing him to fall into the Hawks’ laps. They would be giddy about that.
+
+‘‘[Stenberg is] a really good stylistic fit in terms of the way he plays and the way Chicago is going,’’ Peters said. ‘‘He’s not a big guy, but he’s very fast, competitive, skilled and tenacious. ... Sometimes he’ll take you out of your seat, and other times he’s just making the simple, right play.’’
+
+Stenberg enjoyed one of the best seasons ever by a teenager in the Swedish league with 33 points in 43 games, notching more points (but fewer goals) than Hawks prospect Anton Frondell. He was also Sweden’s top scorer in the world junior championships, helping the country win a gold medal.
+
+McKenna and Stenberg are both 5-11, but Stenberg is physically stronger and rarely gets stuck on the perimeter the way McKenna does (although McKenna’s offensive skills are more dynamic).
+
+‘‘[Stenberg is] not afraid to go to any of the hard areas,’’ Peters said. ‘‘He’s not afraid to take a hit to make a play. He’ll dig that puck out, and he’s got the hands to do something with it.’’
+
+Stenberg isn’t under contract with Frolunda for next season, so he could jump to North America and compete for an NHL job right away.
+
+Ivar Stenberg with a dominant sequence to record his second assist of the game. Wow pic.twitter.com/j18x03oJeE
+— BHF (@BlackhawksFocus) January 6, 2026
+
+Caleb Malhotra, C, Brantford (OHL)
+
+An electric second half rapidly pushed Malhotra up draft rankings.
+
+‘‘In a year where we were very concerned . . . if there was a center worthy of being a top-five pick, we have one here in Malhotra,’’ Peters said.
+
+Malhotra ranked second on Brantford with 84 points in 67 games, behind Kraken prospect Jake O’Brien (the No. 8 pick last year) but ahead of Hawks prospect Marek Vanacker (No. 27 in 2024).
+
+The Hawks watched Malhotra a lot this season because of Vanacker, whose 47 goals dwarfed Malhotra’s 29 and O’Brien’s 28. They saw Malhotra go berserk in the OHL playoffs with 26 points (including 13 goals) in 15 games. They should know his game intimately.
+
+Malhotra is less pro-ready than Stenberg. He’s committed to Boston University and will need at least one, if not two, college seasons to develop.
+
+But he is bigger (6-2) and plays an equally ‘‘mature’’ game, Peters said. And beyond his offensive contributions, he can kill penalties and take faceoffs.
+
+Chase Reid, RD, Soo (OHL)
+
+Opinions vary about the best defenseman in the class, but Reid passed Keaton Verhoeff as the majority opinion over the course of the season.
+
+Reid (6-2, 195 pounds) has enjoyed a meteoric rise since playing Tier II junior hockey as recently as fall 2024. He was the OHL’s most-used defenseman this season, averaging 27-28 minutes, and he produced more than a point per game (48 in 45).
+
+‘‘He’s a workhorse, he’s got a great athletic toolkit, he’s got a great mentality and he’s only scratching the surface of what he could be,’’ Peters said. ‘‘The modern NHL requires strong puck-moving defensemen, so that puts a premium on guys like him.’’
+
+For the Hawks, there would be one possible reason for hesitation: Artyom Levshunov and Sam Rinzel are offensive right-handed defensemen, just like Reid.
+
+‘‘If you project him to be better than either [Levshunov or Rinzel], then I don’t think it should [stop them],’’ Peters said. ‘‘Now you’re working on a gigantic surplus of something that everybody wants.’’
+
+Reid will play next season at Michigan State, where he’ll be part of the same freshman class as Hawks forward prospect Mason West.
+
+CHASE REID CASHES IN🎯
+
+The @OHLHoundPower tie it up once again on this snipe from the #NHLDraft prospect.#KITvsSOO | #OHLPlayoffs pic.twitter.com/YkxPQ2f0uM
+— Ontario Hockey League (@OHLHockey) April 15, 2026
+
+Carson Carels, LD, Prince George (WHL)
+
+Carels matches the Hawks’ needs better as a defensive-leaning, left-handed defenseman. His work ethic is acclaimed, and the Hawks usually value that highly, too.
+
+‘‘If the forwards are gone, [the Hawks] have to at least consider it,’’ Peters said. ‘‘[In terms of] team fit, I think he makes a ton of sense. ... He’s good enough offensively, but he’s better in the defensive zone than [Reid and Verhoeff].’’
+
+Carels (6-2, 198 pounds) had 73 points in 58 games for Prince George this season, although that production might have been driven more by hockey IQ and smart decision-making than by dynamic skill. He surpassed Verhoeff on Canada’s depth chart during the world junior championships.
+
+Peters thinks Carels likely will move to the NCAA next season, even though he hasn’t committed to a school yet.
+
+Keaton Verhoeff, RD, North Dakota (NCAA)
+
+Old-school hockey fans love Verhoeff’s huge body (6-3, 208 pounds) and willingness to use it.
+
+That has given Verhoeff a reputation as a stout defensive defenseman, but Peters thought his subpar defensive awareness and decision-making got exposed at North Dakota this season. He had 20 points in 36 games and struggled noticeably during the NCAA Tournament.
+
+‘‘We got to see where some of the holes are,’’ Peters said. ‘‘There are some concerns about hockey sense. That’s where you start saying, ‘Maybe he’s not a top-five guy.’ ’’
+
+Verhoeff’s skating also is debated. Some experts criticize his backward and lateral mobility and clumsy changes of direction, but Peters thinks his skating is fine.
+
+Alberts Smits, LD, Jukurit (Finland)
+
+Not many prospects enter the draft having already faced the best players in the world, but Smits has, having served as Latvia’s top defenseman in the Olympics. He also faced pros in Finnish and German leagues this season.
+
+Peters describes Smits as the most NHL-ready defenseman in the class. He’s left-handed, big (6-3, 205) and poised. But his upside, particularly offensively, is lower than that of his peers.
+
+Meanwhile, if the Hawks are dead-set on drafting a forward and McKenna, Stenberg and Malhotra go 1-2-3, it’s worth mentioning the next-best forwards in the class: Viggo Bjorck, Ethan Belchetz and Tynan Lawrence.
+
+Bjorck is a small, intelligent center. Belchetz is a punishing 6-5 winger. Lawrence, a center, piqued the Hawks’ interest during the first half of his season at Boston University before plateauing during the second half. They all would represent reaches at No. 4.
+
+========================================================================
+STORY 12 OF 20
+========================================================================
+Title: Bulls defy the lottery odds and move up to No. 4 as the rebuild begins
+Author: Joe Cowley
+Published: 2026-05-10T14:40:44.89-05:00
+Link: https://chicago.suntimes.com/bulls/2026/05/10/bulls-defy-lottery-odds-move-no-4-rebuild-begins
+
+The list for Michael Reinsdorf was a long one.
+
+In discussing why he and the others atop the Bulls organization opted to fill the vacant executive vice president of basketball operations chair by hiring Bryson Graham, “elite talent evaluator” came out of Reinsdorf’s mouth more than once.
+
+With good reason.
+
+The team president witnessed a series of swings and misses from the previous regime in that department, and enough was enough.
+
+“It doesn’t matter what we do up there (in the management suites),” Reinsdorf said last week. “If the players can’t play, we’re not going to be successful. One thing that came out clearly is (Graham) is an elite talent evaluator, understands today’s players, disciplined in his approach.”
+
+And now thanks to Sunday’s NBA Draft Lottery results, Graham knows when and where that first test will look like and has serious talent to pick from.
+
+Defying the draft odds that said the Bulls only had a 20.3% to jump into the top four, they did just that landing No. 4.
+
+The good news for Graham is that he’ll have two bites at a very ripe and talented apple, also holding the No. 15 pick from Portland. In landing No. 4, however, that means a stab at the likes of an AJ Dybantsa, Darryn Peterson, Cameron Boozer and Caleb Wilson – each considered to be immediate organizational talent changers, while there is a slight drop in the 2026 Class after that.
+
+The key word – slight.
+
+It will be Graham’s job to make sure to limit the perceived talent discrepancy at No. 15, as well as jumpstarting the rebuild process come draft day on June 23-24.
+
+Sunday was a great first step in doing that.
+
+“At the end of the day it still comes down to talent evaluation,” Reinsdorf said. “We still have to build the right team. We need to build this into a sustainable contender. We need the Bulls to be relevant again.
+
+“We are committed to doing this right. We’re going to build a foundation. We are going to elevate this organization, we are going to make our fans proud again.”
+
+MOCK DRAFT (with the addition of pick No. 15 for the Bulls)
+
+1. Wizards: AJ Dybantsa, F, BYU
+
+In a few years, there’s a real possibility that Peterson turns out to be a better pro, especially in the scoring department, but Dybantsa is the safer pick and seems destined for stardom. Is he 2025 No. 1 pick Cooper Flagg? No, but he’s instant impact.
+
+2. Jazz: Darryn Peterson, G/F, Kansas
+
+After destroying the likes of Dybantsa and Cameron Boozer back in his senior year in high school, it felt like he took over the class, but an odd season with the Jayhawks in missing games and halves left more questions than answers. Still, an elite talent.
+
+3. Grizzlies: Cameron Boozer, F, Duke
+
+Maybe the safest pick in the entire draft because it feels like the son of former Bull, Carlos Boozer, has the fundamentals and mindset to be a double-double machine for the next decade. There are very few holes in his game and he gives Memphis the toughness they like up front.
+
+4. BULLS: Caleb Wilson, F/C, North Carolina
+
+Wilson will have a chance to jump up on draft boards the next few weeks and it wouldn’t surprise anyone if he goes No. 2. But his fit for what the Bulls need is perfect on both ends of the floor and he fits Graham’s player profile.
+
+5. Clippers: Darius Acuff Jr., G, Arkansas
+
+While his size (6-foot-3) has been pointed to as a negative, Acuff is a bucket every time he touches the ball. He’s a scorer at all three levels but has some serious deficiencies on the defensive end that he needs to work on. LA has a new scoring star.
+
+6. Nets: Keaton Wagler, G, Illinois
+
+No player in the top 10 made a bigger jump than the Illinois product this season, showing an ability to knock down the outside shot and be a solid decision maker with the ball. Think a poor man’s Kon Knueppel.
+
+7. Kings: Kingston Flemings, G, Houston
+
+It’s time for Sacramento to start moving away from Zach LaVine – yes, he has one more year – as well as adding a guard with two-way ability. Enter Flemings, who can be explosive on the offensive end and fits the defensive mindset that Sacramento needs to grasp at.
+
+8. Hawks: Mikel Brown Jr., G, Louisville
+
+Brown has displayed top five talent when he plays – and that was the concern – the amount of time he didn’t. Back issues put a damper on Brown’s season but could be a huge addition to an already playoff-caliber roster.
+
+9. Mavericks: Brayden Burries, G, Arizona
+
+A physical guard that can shoot and rebound? Flagg has a chance to be the face of the league as the next elite two-way player and Burries could be a great Robin to Flagg’s Batman someday.
+
+10. Bucks: Yaxel Lendeborg, F, Michigan
+
+The fact that the National Championship’s standout player is already 23 years old might scare off a few teams, but with a willingness to compete on both ends of the floor and a 7-4 wingspan, it can be overlooked for a plug-and-play talent.
+
+11. Warriors: Karim Lopez, F, New Zealand Breakers
+
+There’s not a lot of miles on Lopez, as he could be the first non-college player off the board. Golden State was hoping for lottery luck but now they need to make sure they evaluate the overseas talent correctly and like what Lopez offers up.
+
+12. Thunder: Nate Ament, F, Tennessee
+
+Ament has the talent to be a top seven pick but could also be a swing-and-miss. Which means if OKC gambles on him he’ll likely be an All-Star in four years.
+
+13. Heat: Chris Cenac Jr., F/C, Houston
+
+The big might be a reach at No. 13 but a fresh dose of some “Heat Culture” might be just what he needs to continue growing in the physicality department.
+
+14. Hornets: Jayden Quaintance, C, Kentucky
+
+Pre-ACL injury, Quaintance was a human flyswatter at the rim. Because Charlotte has two first-round picks they can gamble that Quaintance can be their rim protector of the future.
+
+15. BULLS: Aday Mara, C, Michigan
+
+A potential frontcourt of Mara, Wilson and Matas Buzelis has a ring to it, and one that can be lethal in a few years on both ends of the floor.
+
+========================================================================
+STORY 13 OF 20
+========================================================================
+Title: Hypocritical anti-immigrant Americans rely on immigrants, too
+Author: Letters to the Editor
+Published: 2026-05-11T06:00:00-05:00
+Link: https://chicago.suntimes.com/letters-to-the-editor/2026/05/11/immigrants-police-officers-violent-offenders-accountability-flooding-samantha-steele-nurses
+
+In late 2025, UCLA released a study that looked at Latino immigrant labor employment across every major red and blue state across the country. Researchers found that Texas and Florida, among the loudest anti-immigration states, depend on immigrant labor at about the roughly the same rates as California and more than New York. In other words, red states can't function without the very people they say they want to deport.
+
+Red state conservatives attack immigrants publicly, so no one looks too closely at their own behavior. As Shakespeare once wrote: "The lady doth protest too much, methinks."
+
+A good example of someone "protesting too much" has been Donald Trump, who has repeatedly attacked undocumented migrants as “animals” who "poison the blood of our country." 
+
+Given those types of comments, it is more than ironic that the Trump Tower in Manhattan was built by employing undocumented Polish workers in 1980s, while Trump was telling Americans that immigrants were stealing their jobs. Trump's golf courses hired undocumented workers for decades. Of course, Trump will deny all of these facts as "fake news."
+
+Trump and MAGA need you to hate immigrants, so you don't notice they're the ones hiring immigrants. The louder the outrage, the bigger the secret they're hiding from the public.
+
+By the way, aren't we still waiting for millions of more documents to be released from the Epstein files?
+
+Bob Chimis, Elmwood Park
+
+Give us your take
+
+Send letters to the editor to letters@suntimes.com. To be considered for publication, letters must include your full name, your neighborhood or hometown and a phone number for verification purposes. Letters should be a maximum of approximately 375 words.
+
+Abusive cops are among repeat violent offenders who dodge accountability
+
+I strongly agree with many of the points raised by retired Riverside Police Chief Tom Weitzel in his recent op-ed regarding the public view of policing.
+
+But I feel an important issue needs to be brought into the mix. When he speaks of "violent offenders being cycled through the system with no meaningful consequences," it is hard not to think of those notorious instances where it was police brutality, ending with fatalities in some cases, that resulted in no meaningful consequences to the actors.
+
+People need to be reassured that those rare incidents of excessive and violent behavior will result in serious punishment and not that justice favors the powerful.
+
+Victor Skade, Brookfield
+
+Breaking Chicago’s flooding cycle
+
+ As severe storms increase in intensity and frequency, Chicago is being forced to fight today’s storms with yesterday’s tools, and residents are paying the price with their health, homes and peace of mind. Using federal disaster recovery dollars received last year, the city must reimagine Chicago’s response to severe downpours. Chicagoans deserve a city that meets this moment. 
+
+Tens of thousands of homes flooded in 2023, leaving behind not only costly repairs for the city and residents but also serious health risks such as mold, the Sun-Times’ Brett Chase recently reported. The aftermath of flooding lingers for years, affecting residents’ health, finances and well-being. 
+
+As more severe weather events bring heavier rainfall, this cycle is becoming more common and more expensive.  But the deeper problem is that much of Chicago’s stormwater system was never designed for the scale of storms we are now experiencing, and the city’s green places are far too few to naturally absorb excess water. Fixing that will require a more comprehensive approach to infrastructure that reduces flood risk and centers on community health and resilience.  
+
+We have learned the hard way that no single solution can handle today’s storms. Traditional “gray” infrastructure — such as pipes, pumps and tunnels — remains essential, but our system is failing with the climate realities we face today.
+
+Natural systems — from wetlands and urban tree canopies to rain gardens and parks — can slow, store and absorb stormwater before it overwhelms pipes and pavement.  Research from The Nature Conservancy, drawing on nearly 1,500 studies, shows these nature-based solutions can also deliver strong economic returns by reducing flood damage while improving air and water quality, cooling neighborhoods and strengthening communities. The best results come from sustained investment in both green and gray solutions, designed to work together. 
+
+Chicago should take action now to invest in flood recovery and resilience with the federal dollars already on hand. This presents a rare opportunity, not just to rebuild what was damaged, but to rethink how we reduce risk going forward. If we invest in a more complete strategy, we can begin to break the cycle and design a system not for the past but for the future. 
+
+Georgie Geraghty, Illinois executive director and Midwest partner, The Nature Conservancy
+
+Wheels of injustice 
+
+Apparently, the appropriate response to comply with a field sobriety test is "screw you." It obviously worked for the Cook County Karen — Board of Review Commissioner Samantha Steele — who was acquitted by a judge who said evidence only showed "suspicion of intoxication."
+
+Steele was driving erratically, hit a parked car, had an open bottle of wine in her car and refused to cooperate with police, who noticed her slurring in the 2024 incident.
+
+What more did the judge need? The judge set a bad precedent. Be belligerent, uncooperative, make up a dog-ate-my-homework excuse and get off. We need our judicial system to apply common sense to clear-cut cases.
+
+Steven Fortuna, Naperville
+
+Honoring nurses 
+
+I would like to thank and recognize all nurses during this year's Nurse’s Week, which started last Wednesday and ends Tuesday.
+
+I am retired after 45 years of hospital nursing. I look back on my career with gratitude and satisfaction. There is nothing in the world like caring for a patient and helping patients and their families during a stressful time.
+
+These days, nurses are having a difficult time with a nursing shortage and the devaluation of medical science by our current federal administration. Please thank the nurses in your life, and encourage students with interest in people and science to join this rewarding profession.
+
+Patricia Warman, Des Plaines
+
+========================================================================
+STORY 14 OF 20
+========================================================================
+Title: Lesson for every police officer: Find peace and quiet, before the job consumes you
+Author: Jeremy Eaton
+Published: 2026-05-11T06:00:00-05:00
+Link: https://chicago.suntimes.com/other-views/2026/05/11/police-week-officer-burnout-respite-self-care-jeremy-eaton
+
+I knew early on I wanted a life of service.
+
+I spent eight years in the United States Marine Corps before beginning my law enforcement career in 2005. That transition wasn’t a departure from service so much as a continuation of it — just in a different uniform, with different stakes and different kinds of calls for help. Today, I serve as a detective with the Joliet Police Department, working cases that require focus, patience and attention to detail.
+
+Across both careers, I have seen what trauma and loss look like on a personal level. You learn how to manage it. You compartmentalize, stay focused and keep moving forward because the work demands it, and the people you serve are counting on you.
+
+Over time, I realized something most people in this profession come to understand: The job will take everything you give it, if you let it.
+
+Commentary bug
+
+Commentary
+
+What stays with you is not one defining moment but the accumulation of long shifts, difficult calls and the responsibility that follows you home, whether you want it to or not.
+
+Restless nights, less patience
+
+For many in law enforcement and the military, that weight builds quietly. It shows up in restless nights, shorter patience and a constant sense of being “on,” even when the shift is over. Over time, that becomes normal in a way that is hard to explain outside the profession.
+
+For a long time, I accepted that as part of the job. Then I found something that helped me step away from it, even if only for a little while.
+
+For me, that place is on the water.
+
+When I am fishing, my focus shifts completely. I am not thinking about cases or past calls. I am thinking about what lure to use, where the fish might be and how the water is moving. It is simple, but that is the point. It forces my mind to be present in a way the job rarely allows.
+
+A few summers ago, I had a moment that changed how I thought about that time. Sitting on the water, I realized I had no worries in that moment. No negative thoughts. No frustration — just calm that felt very different from the pace of daily life.
+
+It made me realize how much that kind of reset matters, not just for me, but for others still carrying the same weight without enough outlets to release it.
+
+That realization led me to Heroes on the Water and eventually to starting a chapter in the Chicago area. What we do is straightforward. We bring police officers, veterans, first responders and their families together for time on the water.
+
+But what happens there goes beyond the activity itself. It creates space to slow down, be present and set aside, even briefly, the things we carry every day. That kind of space is rare in professions that rarely slow down.
+
+A big catch
+
+I have seen its impact in moments that might seem small from the outside but matter deeply to the people living them. A veteran trying something new after years away from it. An officer spending uninterrupted time with family without calls or schedules pulling them away. People laughing, relaxed and fully present in a way that is not always easy to reach in daily life.
+
+One moment stands out: a Navy veteran and retired Chicago police officer who joined us, got into a kayak for the first time and caught her first fish. She spent the entire day smiling. It was simple, but it mattered. Because for a while, whatever she had been carrying was not the focus.
+
+That is what this is about. Not escaping the realities of the job but making it possible to keep doing it without letting it take everything.
+
+In both military and law enforcement, there is a mindset of pushing through. That mindset is necessary in critical moments, but it cannot be the only way forward in everyday life. There also has to be space to reset, reconnect and take care of the person behind the role before the weight becomes too heavy to carry alone.
+
+I practice being more intentional with my time — prioritizing family, taking breaks to do the things I love and recognizing that stepping away is part of staying steady in the long run.
+
+For others, it might look different. But the need is the same.
+
+We all carry something. The difference is whether we have a place to put it down, even for a little while. For me, that place is on the water.
+
+As National Police Week is observed, these stories matter because they speak to what is often unseen in this profession: the need for space to reset, reconnect and continue showing up for others without losing yourself in the process.
+
+ Jeremy Eaton is a detective with the Joliet Police Department and a U.S. Marine Corps veteran. He also founded the Heroes on the Water Chicago chapter, supporting veterans, first responders and their families through outdoor recreation and peer connection.
+
+Send letters to letters@suntimes.com. More about how to submit here.
+
+========================================================================
+STORY 15 OF 20
+========================================================================
+Title: City Council panel backs tax incentives for United Center entertainment district
+Author: Mariah Woelfel | WBEZ
+Published: 2026-05-11T13:16:14.929-05:00
+Link: https://chicago.suntimes.com/city-hall/2026/05/11/city-council-economic-development-committee-tax-breaks-united-center-entertainment-district
+
+Chicago taxpayers should help bankroll development of a “cultural and entertainment district” around the West Side’s United Center, a key city panel said Monday.
+
+The City Council’s Committee on Economic, Capital and Technology Development voted unanimously to provide $54.7 million in tax breaks for the first phase of the massive development planned by the owners of the Bulls and the Blackhawks. The measure still needs full City Council approval.
+
+The $7 billion “1901 Project” is meant to transform surface parking lots around the United Center into an entertainment district with a 6,000-seat music hall, public parks, a hotel and residential units.
+
+The tax abatement — which would be applied over 12 years — would be the first infusion of public funding for the privately-owned stadium and came as “a surprise to some of us,” said Ald. Nicole Lee (11th), since it wasn’t part of the initial announcement of the project.
+
+The tax relief would come in the form of a 7(b) incentive for the first phase, which allows the property to be assessed at a lower percentage than it would be otherwise.
+
+That type of incentive is only for projects that would not be viable without the tax assistance, and where the project is located in an economically depressed area in need of development. The measure advanced Monday also requires the developers to invest $500 million into the first phase.
+
+The measure was approved despite some pushback from members concerned about diversity, who were angered to learn that none of the construction firms tapped for the first phase of the project thus far are Latino-owned.
+
+In response, a lawyer representing the owners of the United Center vowed that “there will be Latino… participation in this project.”
+
+“We haven't started construction yet, and so we haven't identified some of those sub[contractors],” said Katie Jahnke Dale, with the firm DLA Piper. “But I, just, none of us here have the answer on how the first three [contractors] were selected.”
+
+Committee chair Derrick Curtis (18th) said that questions about representation should be answered before he calls the measure for a full council vote.
+
+Mayor Brandon Johnson introduced the tax assistance plan in March and has defended it since, even as the city remains cash-strapped and Johnson has railed against tax incentives being considered at the state level for the Chicago Bears and a proposed stadium in Arlington Heights.
+
+Johnson said in March that the project would bring much needed jobs and development to the West Side.
+
+“This is a project that is going to create thousands of jobs and opportunities for the people across the city, but particularly for development on the West Side,” Johnson told reporters.
+
+The project will be the first major development in the area in decades.
+
+It will be overseen by freshman Ald. Walter “Red” Burnett (27th) who succeeded his father last year and grew up near the United Center.
+
+“When people think about West Loop and Fulton Market, they assume that the United Center, Near West Side, is a part of that. It's not the case. We've seen more buildings deconstructed west of Ashland than we have in any other part on the West Side of Chicago,” Burnett said.
+
+“I remember personally going to Popeyes on Ashland and Madison growing up, because that was the closest restaurant that we had. That was demolished 10 years ago.”
+
+========================================================================
+STORY 16 OF 20
+========================================================================
+Title: Cook County judge puts off ruling on whether to install special prosecutor to probe Operation Midway Blitz
+Author: Jon Seidel
+Published: 2026-05-11T12:58:17.507-05:00
+Link: https://chicago.suntimes.com/immigration/2026/05/11/midway-blitz-trump-erica-reddick-eileen-oneill-burke-chicago-cook-county-crime-conspiracy
+
+A Cook County judge questioned prosecutors Monday about whether protocols they announced this year for the potential prosecution of Operation Midway Blitz agents actually ruled out charges for nonviolent crimes such as conspiracy or perjury.
+
+Prosecutors denied setting any limits for themselves. But Cook County Circuit Judge Erica Reddick posed the question while considering whether to appoint a special prosecutor to investigate those federal agents — offering possible insight into her thinking.
+
+Reddick did not rule Monday on whether to appoint a special prosecutor, despite previously setting that goal for herself. The judge said she now expects to rule on May 21.
+
+The decision she hands down could turn out to be a crucial turning point in efforts to hold agents responsible for their conduct during the deportation campaign.
+
+A coalition of elected officials, clergy, journalists and attorneys say a special prosecutor should be appointed because Cook County State’s Attorney Eileen O’Neill Burke has turned a “blind eye” to “egregious acts of violence” by federal agents.
+
+Related
+
+Ruling on whether to appoint a special prosecutor to probe Midway Blitz agents expected in coming weeks
+
+But O’Neill Burke’s office points to a 2017 Illinois Supreme Court decision addressing the power of a state’s attorney to investigate alleged crimes. Her team says its role is to “support” law enforcement investigations, not to be the “primary investigators.”
+
+“The state’s attorney has repeatedly condemned the tactics used by the Trump administration and during Operation Midway Blitz, denouncing the abhorrent conduct we have all witnessed," the office said in a statement following Monday’s hearing.
+
+Reddick delayed her ruling after attorneys on both sides of the issue filed supplemental briefs with the court. The coalition seeking a special prosecutor shared the recent Illinois Accountability Commission report, which found that federal agents regularly used force against Illinois residents “without justification” during Midway Blitz.
+
+Gov JB Pritzker assembled the commission to investigate the agents' conduct during the deportation campaign.
+
+O’Neill Burke’s office followed up with its own filing Friday. It pointed to its support of the recently initiated Illinois State Police investigation into the September killing of Silverio Villegas Gonzalez by a U.S. Immigration and Customs Enforcement agent in Franklin Park.
+
+Coalition attorneys declined to answer questions Monday about whether that investigation should affect the judge’s decision. They said they’ll address it in another brief due to the judge Friday.
+
+The coalition includes the Chicago News Guild, which represents journalists at the Chicago Sun-Times.
+
+Reddick, the presiding judge of the criminal division, had questions for O’Neill Burke’s team Monday about the protocol released by her office in February. It outlined how her office would work with state and local law enforcement when “a death, shooting, act of violence, or use of force incident related to federal immigration enforcement activity occurs.”
+
+The coalition’s list of crimes potentially committed by immigration agents also includes nonviolent crimes.
+
+Related
+
+Illinois State Police investigating deadly ICE shooting of Silverio Villegas González in Chicago suburb
+
+So Reddick asked about the scope of O’Neill Burke’s protocol and whether her office had limited itself to pursuing charges only for allegations of violence. The judge specifically brought up the potential for conspiracy or perjury charges.
+
+“Will the scope — the stated limit of the scope — preclude the state from pursuing a prosecution — if the facts support it — of the conspiracy charge?” Reddick asked.
+
+Yvette Loizon, the chief assistant state’s attorney for policy and external affairs, said the protocol set no such limit.
+
+“We wanted to make sure that we were giving law enforcement clear direction on how to access the state’s attorney’s office in those matters,” Loizon explained.
+
+Neither the reporter nor editors who worked on this story — including some represented by the News Guild — have been involved in the litigation described in this article.
+
+========================================================================
+STORY 17 OF 20
+========================================================================
+Title: Supreme Court temporarily extends women’s access to a widely used abortion pill
+Author: AP
+Published: 2026-05-11T15:47:01.732-05:00
+Link: https://chicago.suntimes.com/nation-world/2026/05/11/supreme-court-abortion-pill-access
+
+WASHINGTON — The Supreme Court is leaving women’s access to a widely used abortion pill untouched until at least Thursday, while the justices consider whether to allow restrictions on the drug, mifepristone, to take effect.
+
+Justice Samuel Alito’s order Monday allows women seeking abortions to continue obtaining the pill at pharmacies or through the mail, without an in-person visit to a doctor. It prevents restrictions on mifepristone imposed by a federal appeals court from taking effect for the time being.
+
+The court is dealing with its latest abortion controversy four years after its conservative majority overturned Roe v. Wade and allowed more than a dozen states to effectively ban abortion outright.
+
+The case before the court stems from a lawsuit Louisiana filed to roll back the Food and Drug Administration’s rules on how mifepristone can be prescribed. The state claims the policy undermines the ban there, and it questions the safety of the drug, which was first approved in 2000 and has repeatedly been deemed safe and effective by FDA scientists.
+
+Lower courts concluded that Louisiana is likely to prevail, and a three-judge panel of the 5th U.S. Circuit Court of Appeals ruled that mail access and telehealth visits should be suspended while the case plays out.
+
+The drug is most often used for abortion in combination with another drug, misoprostol. Medication abortions accounted for nearly two-thirds of all abortions in the U.S. in 2023, the last year for which statistics are available.
+
+Related
+
+Supreme Court restores access to abortion pill mifepristone through telehealth, mail and pharmacies
+
+The current dispute is similar to one that reached the court three years ago.
+
+Lower courts then also sought to restrict access to mifepristone, in a case brought by physicians who oppose abortion. They filed suit in the months after the court overturned Roe.
+
+The Supreme Court blocked the 5th Circuit ruling from taking effect over the dissenting votes of Alito and Justice Clarence Thomas. Then, in 2024, the high court unanimously dismissed the doctors’ suit, reasoning they did not have the legal right, or standing, to sue.
+
+In the current dispute, mainstream medical groups, the pharmaceutical industry and Democratic members of Congress have weighed in cautioning the court against limiting access to the drug. Pharmaceutical companies said a ruling for abortion opponents would upend the drug approval process.
+
+The FDA has eased a number of restrictions initially placed on the drug, including who can prescribe it, how it is dispensed and what kinds of safety complications must be reported.
+
+Despite those determinations, abortion opponents have been challenging the safety of mifepristone for more than 25 years. They have filed a series of petitions and lawsuits against the agency, generally alleging that it violated federal law by overlooking safety issues with the pill.
+
+President Donald Trump’s administration has been unusually quiet at the Supreme Court. It declined to file a written brief recommending what the court should do, even though federal regulations are at issue.
+
+The case puts Trump’s Republican administration in a difficult place. Trump has relied on the political support of anti-abortion groups but has also seen ballot question and poll results that show Americans generally support abortion rights.
+
+Both sides took the silence as an implicit endorsement of the appellate ruling. Alito is both the justice in charge of handling emergency appeals from Louisiana and the author of the 2022 decision that declared abortion is not a constitutional right and returned the issue to the states.
+
+========================================================================
+STORY 18 OF 20
+========================================================================
+Title: No drought about it: It's the U of C Maroons' year
+Author: Steve Greenberg
+Published: 2026-05-11T14:44:07.533-05:00
+Link: https://chicago.suntimes.com/college-sports/2026/05/11/chicago-maroons-baseball-ncaa-tournament-erik-rindner-john-butka-braden-jirovec
+
+If there’s any place that knows what an epic baseball drought is like, it’s Chicago.
+
+The University of Chicago, that is.
+
+Remember the White Sox’ 87-year World Series drought? How quaint. And the Cubs’ 108-year drought? OK, a bit longer.
+
+But behold the Chicago Maroons, people. While you weren’t watching — fine, I wasn’t either — a Hyde Park little-engine-that-could got its season on track, got hotter than the grill at the Valois cafeteria on 53rd Street and won its first conference championship in 113 big ones.
+
+The last one, in 1913, was so long ago, the Maroons were in the Big Ten. They’ve downsized just a tad since then, but they’ll carry their University Athletic Association crown into the school’s second NCAA Division III tournament ever. It’s no minor feat.
+
+“It is a very big deal,” coach Kevin Tyrrell said.
+
+On Monday, the team gathered in a meeting room to watch a stream of the NCAA selection show and learned it’s bound for Washington, Pennsylvania, for a four-team, double-elimination regional hosted by Washington & Jefferson that starts Friday. Hosting games wasn’t ever going to happen for the Maroons because, for one thing, their home field has no lights. They can commiserate with the 1984 Cubs about that.
+
+But every championship team has its own story, as I was reminded last week after receiving an email about the Maroons’ success and — rather than ignoring it in this big-fish sports town — dropping in on a practice. The Maroons’ story is better than most.
+
+On April 5, they dropped both games of a doubleheader against Brandeis to fall to 11-12 overall and 4-4 in the UAA. The NCAA Tournament had been the goal from the start, but now Tyrrell was telling his players heading into a series against Case Western Reserve in Cleveland they might have to win all 17 of their remaining games to have any chance to make it into the 64-team field. Then, in the first game at Case, the Maroons scored six runs in the first inning and still led by three entering the bottom of the ninth, when, one strike from victory, Case plated three on a bases-loaded triple. Case then walked it off on a wild pitch.
+
+Talk about a gut punch.
+
+Sixteen games later, though, wouldn’t you know it? The Maroons have yet to lose again. They won the last three at Case, swept Emory in four, swept New York University in four and went 5-0 in non-conference action. As unlikely as it was, they’ve rewritten the whole deal.
+
+A sterling senior class has done the heaviest lifting. Against Emory at home, catcher Erik Rindner drove a home run over the fence in left, tying the school’s career record for dingers and RBI on the same mighty swing. Later in that game, outfielder Braden Jirovec broke the record for stolen bases. In a non-league game against IIT at Rate Field, Rindner drove in his record run. And in separate home games against NYU, Rindner bashed his record homer and Jirovec broke the record for hits.
+
+A few innings after Jirovec’s milestone swing, the Maroons clinched a conference title more than a century in the making. As players dogpiled in the infield, senior ace John Butka snuck behind Tyrrell and dumped a cooler of water on his skipper.
+
+“I shed a lot of tears that day,” Tyrrell said.
+
+Butka, from St. Louis, is the UAA’s pitcher of the year. Rindner, from Potomac, Maryland, is its position player of the year. Along with fellow all-UAA first-teamer Jirovec, infielder Jack Sharp and utility man Michael Gladden, they sat in a semi-circle outside their dugout and charmed a visiting columnist due mainly to their obvious friendship, which was evident in how many times they mentioned fellow senior Brady Miller, a key infielder who happened to have somewhere else to be.
+
+========================================================================
+STORY 19 OF 20
+========================================================================
+Title: Trump says he'll move to suspend federal gasoline tax. He can't do it on his own
+Author: Matthew Daly | AP
+Published: 2026-05-11T13:39:03.887-05:00
+Link: https://chicago.suntimes.com/transportation/2026/05/11/trump-suspend-federal-gasoline-tax
+
+President Donald Trump said Monday he will move to suspend the federal tax on gasoline to help Americans shoulder surging fuel prices caused by the Iran war.
+
+The president cannot suspend the federal tax on his own. Congress would have to approve the move.
+
+Lawmakers from both parties have pushed for a gas-tax suspension, saying it would provide much-needed relief for families and businesses that rely on their cars and trucks to get to work and school and run everyday errands.
+
+As of Monday, the average national gas price was $4.52 a gallon, according to the AAA, 50% higher than the average price of just under $3 a gallon before Trump began the war against Iran in February.
+
+In Illinois, the average price for a gallon of regular gas was $4.97, up from $3.41 a year ago. The highest recorded average price was $5.56 on June 13, 2022, according to AAA. The city of Chicago was at $5.37 a gallon, a roughly 43% increase from $3.76 for the same time last year. Chicago's record price was reached in June 2022 at $6.07.
+
+What the gas tax supports
+
+The federal tax is currently set at 18.4 cents per gallon on gasoline and 24.4 cents per gallon on diesel fuel, an amount that doesn't include state taxes, which often are higher. The tax provides more than $23 billion per year in revenue for federal highway and public transit programs.
+
+Asked by reporters at the White House how long the tax should be suspended, Trump said, “Until it’s appropriate.” While the tax only adds about 18 cents per gallon to the price of gas, “it’s still money,” Trump said.
+
+As gas prices have spiked, the Trump administration has released millions of barrels of oil from the U.S. Strategic Petroleum Reserve and temporarily lifted sanctions on some Russian and Iranian oil shipments already at sea. The U.S. is negotiating with countries reliant on Middle East crude to join a coalition to police the Strait of Hormuz, where about one-fifth of the world’s traded oil normally flows.
+
+Trump needs Congress
+
+Republican Sen. Josh Hawley of Missouri said on social media Monday that he will introduce legislation to suspend the gas tax. Democrats have previously sponsored similar legislation.
+
+Rep. Anna Paulina Luna, R-Fla., also said in a post on X that she will introduce a bill “to suspend the federal gas tax in light of Trump’s recent remarks.”
+
+The ongoing spike in gas prices has set off alarms among some Republicans that it could hurt the party's chances in the midterm elections. Trump has previously said higher fuel prices are worth paying to prevent Iran from getting a nuclear weapon.
+
+That hardline message appeared to soften Sunday as Energy Secretary Chris Wright said the Trump administration was “open to all ideas,” including a suspension of the gas tax, during an interview on NBC’s “Meet the Press.”
+
+A bill sponsored by Democratic Sens. Richard Blumenthal of Connecticut and Mark Kelly of Arizona would suspend the federal tax through Oct. 1. A similar measure was sponsored in the House by Democratic Rep. Chris Pappas of New Hampshire.
+
+"Trump’s war of choice with Iran is driving up gas prices across the country — and Americans shouldn’t have to bear the additional economic burden of Trump’s reckless decision making,” Blumenthal said in introducing the bill.
+
+Several states, including Indiana and Georgia, have recently suspended their taxes to alleviate high prices amid the war. Kentucky and Utah have reduced their state tax. Other states are weighing similar suspensions.
+
+Industry group touts drawbacks
+
+The gasoline tax is the single largest source of revenue for federal highway and public transit programs.
+
+While proposed bills would offset any lost Highway Trust Fund revenue with general funds, the tax suspension could raise the federal deficit and jeopardize the long-term sustainability of investments for highway and public transit programs, according to the American Road & Transportation Builders Association, which represents the transportation construction industry.
+
+The group cites studies showing that many retailers don't pass on the full amount of the gas tax reduction to consumers. Research also suggests that state and federal gas taxes are just one component of a complex pricing scheme that includes the global price of oil and other factors.
+
+Contributing: Sun-Times
+
+Related
+
+Chicago gas prices up again, reaching over $5 a gallon
+
+How the Iran war is raising more than Chicago’s gas prices
+
+Why are gas prices so different across the country?
+
+========================================================================
+STORY 20 OF 20
+========================================================================
+Title: Cook County liable for property tax sale violations, judge rules
+Author: Nicole Jeanine Johnson
+Published: 2026-05-11T18:12:44.736-05:00
+Link: https://chicago.suntimes.com/money/2026/05/11/cook-county-property-tax-sale-violations-pappas
+
+A federal judge ruled Monday that Cook County is liable to pay back potentially millions of dollars to people who lost their homes in the county’s annual property tax sales, three years after the U.S. Supreme Court ruled the system unconstitutional.
+
+Since 2020, nearly 2,500 homeowners not only lost their properties but also the surplus equity in those homes after their delinquent property taxes were sold. 
+
+Under that system, if taxes went unpaid, counties sold tax certificates to buyers to recuperate money from properties with unpaid taxes. Those tax buyers often tacked on fees and interest in addition to the existing rent, which homeowners have two and a half years to pay off before the tax buyer can go to court to get the deed to their home, forcing the owner to vacate.
+
+U.S. District Judge Matthew Kennelly wrote in his decision Monday that the county was “deliberately indifferent to the need to address the … violations that occurred from property tax sales."
+
+Cook County Treasurer Maria Pappas’ office, a defendant in the case, said it could not comment on active litigation.
+
+The majority of homes lost this way since 2019 were taken after an initial property tax debt of $1,600 or less, according to an investigation by the Investigative Project on Race and Equity and Injustice Watch. The initial debt that cost people their homes was collectively $2.3 million, but the homes had a total market value of more than $108 million. Many cases involved the transfer of homes from Black neighborhoods like Roseland and Englewood to wealthy investors.
+
+In 2023, the U.S. Supreme Court ruled it is unconstitutional for property owners to lose the surplus equity on property foreclosed due to delinquent taxes. Last December, a federal judge ruled the county’s tax sale system unconstitutional. And in February, state lawmakers passed a law delaying the tax sale process to Dec. 1 to give legislators time to bring the state into compliance with the Supreme Court ruling. 
+
+Illinois is the only state not in compliance with that ruling.
+
+John Bouman, the attorney for the plaintiffs, said Monday’s ruling further confirmed Cook County could have intervened.
+
+“Today's ruling basically said, 'Yes, the county knew about it. Yes, they could have done something to stop it. But they didn't,'” Bouman said.
+
+In the proposed new tax-sale system, the county will petition the court for a tax deed if homeowners don't settle their property tax debt within three years. After that, the property could go to a foreclosure auction where owners could still bid on their own homes.
+
+While the judge acknowledged Pappas’s office’s work to push reform on the issue, he still ruled in favor of relief for the homeowners. But questions remain about how that will be paid out.
+
+Pappas’ office claimed in the lawsuit that fully compensating victims of the violation would cost “hundreds of millions of dollars” and “ruin one of the largest counties in the country."
+
+Kennelly called that a “wild overstatement” given that only 0.02% of county homeowners qualified and the average loss was about $70,000. That would leave the county with $15.4 million to be paid out annually.
+
+Related
+
+Property taxes, driven by TIF districts and school funds, outpace inflation and wages: county treasurer study
+
+Black neighborhoods hit hardest with Cook County property tax bill increase, analysis finds
+
+Cook County Assessor Fritz Kaegi lost big where property taxes in city, suburbs soared

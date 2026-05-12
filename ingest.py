@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-MAX_FILE_BYTES = 15 * 1024 * 1024            # 15 MB per file
+MAX_FILE_BYTES = 25 * 1024 * 1024            # 25 MB per file
 URL_FETCH_TIMEOUT = 15.0                     # seconds
 URL_USER_AGENT = "BeatBookBuilder/1.0 (+https://github.com/clayludwig/beat-book)"
 NORMALIZE_MODEL = CHAT_MODEL

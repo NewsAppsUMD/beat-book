@@ -80,7 +80,7 @@ Ingest is a two-stage pipeline that converts any supported source into the `{tit
 | `.json` | Parsed and rendered as readable markdown (any known wrapper unwrapped). No special-case schema. |
 | URLs (`http`/`https`) | Fetched server-side with `httpx`. SSRF-protected — private, loopback, link-local, and unresolvable addresses are refused. |
 
-**Per-file size cap:** 15 MB. No limit on number of files or URLs per request.
+**Per-file size cap:** 25 MB. No limit on number of files or URLs per request.
 
 ### Stage 1: Extract Text
 
@@ -225,7 +225,7 @@ The frontend is a single-page app with four screens:
 ### Upload Screen
 - Drag-and-drop or file-picker accepting any common document format
 - Textarea for pasting URLs (one per line) — fetched server-side and run through the same ingest pipeline
-- 15 MB per-file cap
+- 25 MB per-file cap
 
 ### Preview Screen
 - Detected stories grouped by source, with confidence chips and one-line reasoning from the LLM

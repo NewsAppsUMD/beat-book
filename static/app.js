@@ -62,7 +62,7 @@
   let elapsedTimer = null;
   let elapsedStart = null;
 
-  const MAX_FILE_BYTES = 15 * 1024 * 1024;
+  const MAX_FILE_BYTES = 25 * 1024 * 1024;
 
   // ── Screen routing ───────────────────────────────────────────────────
   function switchScreen(name) {
@@ -97,7 +97,7 @@
   function addFiles(files) {
     for (const f of files) {
       if (f.size > MAX_FILE_BYTES) {
-        alert(`${f.name} is larger than 15 MB. Please split or compress it before uploading.`);
+        alert(`${f.name} is larger than 25 MB. Please split or compress it before uploading.`);
         continue;
       }
       if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) {
