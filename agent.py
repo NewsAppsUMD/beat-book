@@ -285,26 +285,43 @@ def _target_for_topic(topic_size: int) -> int:
 
 def _progress_report(
     pipeline_result: PipelineResult,
+    selected_topics: set,
     listed_topics: set,
     read_indices: set,
 ) -> tuple[str, bool]:
     """Format the agent's research progress, plus a boolean telling whether
-    every listed topic has reached its read-count target. The boolean drives
-    the generate_beat_book gate."""
-    if not listed_topics:
+    every required topic has reached its read-count target.
+
+    Required topics = the topics the reporter selected via the interview, if
+    we were able to extract those. Otherwise, fall back to whatever topics
+    the agent has chosen to list. The selected-topic path is the strict one
+    — it prevents the agent from gaming the gate by listing only a small
+    topic and reading its handful of stories.
+    """
+    if selected_topics:
+        required = selected_topics
+        header = (
+            "[Research progress] "
+            f"Reporter's selected topics: {', '.join(sorted(selected_topics))}."
+        )
+    elif listed_topics:
+        required = listed_topics
+        header = "[Research progress] (Topics inferred from your list_stories_in_topic calls — interview the reporter to confirm scope.)"
+    else:
         return (
-            "[Research progress] No topics listed yet. Call list_stories_in_topic "
-            "for each topic the reporter selected to start exploring.",
+            "[Research progress] No topics on the agenda yet. Interview the "
+            "reporter about which topics form their beat, then call "
+            "list_stories_in_topic for each.",
             False,
         )
 
-    lines = ["[Research progress]"]
+    lines = [header]
     all_met = True
-    for topic in sorted(listed_topics):
+    for topic in sorted(required):
         indices = pipeline_result.topics.get(topic, [])
-        if not indices:
-            continue
         total = len(indices)
+        if total == 0:
+            continue
         read = sum(1 for i in indices if i in read_indices)
         target = _target_for_topic(total)
         met = read >= target
@@ -314,13 +331,10 @@ def _progress_report(
         lines.append(
             f"  - {topic}: {read}/{total} read (target {target}) — {marker}"
         )
-    lines.append(
-        f"Total stories read (unique): {len(read_indices)}. "
-        "Targets: every story in topics with <15 stories, otherwise half."
-    )
+    lines.append(f"Total unique stories read: {len(read_indices)}.")
     if not all_met:
         lines.append(
-            "generate_beat_book will be rejected until every listed topic "
+            "generate_beat_book will be REJECTED until every required topic "
             "meets its target. Keep reading."
         )
     return "\n".join(lines), all_met
@@ -443,11 +457,15 @@ async def run_agent(
     last_message_text = ""
     beat_book_done = False
 
-    # Research-progress tracking. listed_topics is the set of topic labels the
-    # agent has called list_stories_in_topic on (a proxy for "topics the
-    # reporter selected"); read_indices is the set of story indices the
-    # agent has read via read_story. Both feed _progress_report, which is
-    # surfaced in every local tool result AND used to gate generate_beat_book.
+    # Research-progress tracking. selected_topics holds the topics the
+    # reporter actually picked during the interview (extracted from any
+    # checklist answer that matches known topic labels); listed_topics is
+    # what the agent has explored via list_stories_in_topic; read_indices is
+    # what the agent has read via read_story. selected_topics is the strict
+    # source of truth for the gate — it stops the agent from gaming the
+    # threshold by listing only a small topic.
+    all_topic_labels = set(pipeline_result.topics.keys())
+    selected_topics: set = set()
     listed_topics: set = set()
     read_indices: set = set()
 
@@ -517,20 +535,32 @@ async def run_agent(
             if tool_name == "interview_user":
                 answer = await on_interview(tool_input)
                 content_str = f"Reporter's answer: {answer}"
+                # Extract the reporter's topic selection from any "→ ..."
+                # answer line that matches known topic labels. The frontend
+                # joins multi-select checklist answers with ", " before
+                # sending them back, so we split on commas.
+                for line in answer.splitlines():
+                    if "→" not in line:
+                        continue
+                    after_arrow = line.split("→", 1)[1].strip()
+                    for item in after_arrow.split(","):
+                        item = item.strip()
+                        if item in all_topic_labels:
+                            selected_topics.add(item)
 
             elif tool_name == "generate_beat_book":
                 progress, threshold_met = _progress_report(
-                    pipeline_result, listed_topics, read_indices,
+                    pipeline_result, selected_topics, listed_topics, read_indices,
                 )
                 if not threshold_met:
                     content_str = (
                         "generate_beat_book REJECTED — research is incomplete.\n\n"
                         f"{progress}\n\n"
-                        "Continue using list_stories_in_topic (for any topics you "
-                        "haven't listed yet) and read_story to bring every listed "
-                        "topic up to its target, then call generate_beat_book again. "
-                        "Do not stop — the user will get no beat book if you abandon "
-                        "the loop now."
+                        "Continue using list_stories_in_topic (for any required "
+                        "topics you haven't listed yet) and read_story to bring "
+                        "every required topic up to its target, then call "
+                        "generate_beat_book again. Do not stop — the user will "
+                        "get no beat book if you abandon the loop now."
                     )
                 else:
                     await on_beat_book(
@@ -553,7 +583,7 @@ async def run_agent(
                     if isinstance(idx, int) and 0 <= idx < len(pipeline_result.stories):
                         read_indices.add(idx)
                 progress, _ = _progress_report(
-                    pipeline_result, listed_topics, read_indices,
+                    pipeline_result, selected_topics, listed_topics, read_indices,
                 )
                 content_str = f"{content_str}\n\n{progress}"
 
