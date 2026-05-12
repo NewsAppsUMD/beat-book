@@ -216,15 +216,16 @@ actually read. For each topic the reporter selected, call \
 sample. At minimum, read half the stories in every selected topic; when a \
 topic has fewer than 15 stories, read every one. Use `search_stories` to \
 surface specific people, institutions, and themes once you start noticing \
-patterns. Take notes mentally on key sources, recurring themes, open \
-questions, and story angles. Do not move to step 4 until you can name the \
-recurring sources, events, and themes from memory — without doing this, you \
-will end up writing generic prose with no concrete names, dates, or \
-examples, which defeats the whole purpose of the tool.
-4. **Generate** — Once you have read enough of the corpus to write \
-specifically (see the threshold above), use `generate_beat_book` to produce \
-a polished Markdown document. Do not call this tool early. You have a \
-40-turn budget for a reason.
+patterns. Every `list_stories_in_topic` / `read_story` / `search_stories` \
+tool result includes a `[Research progress]` block that tells you, per \
+topic, how many stories you've read out of the target — use it to track \
+where you still need depth. The system will refuse `generate_beat_book` \
+calls until every listed topic has met its target, so do not bother trying \
+to short-circuit; just keep reading.
+4. **Generate** — Once every listed topic shows "OK" in the progress block, \
+call `generate_beat_book` with a polished Markdown document. You have a \
+40-turn budget — using most of it on research is the expected behavior, \
+not a problem.
 
 The beat book is a narrative document, not an outline. A reporter should be \
 able to read it cover-to-cover the way they'd read a long-form magazine \
@@ -273,6 +274,57 @@ Keep your conversational messages concise. Use tools frequently.\
 # ─────────────────────────────────────────────────────────────────────────────
 # LOCAL TOOL EXECUTION
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _target_for_topic(topic_size: int) -> int:
+    """Per-topic minimum read count: every story if the topic has fewer than
+    15, otherwise half (rounded up)."""
+    if topic_size < 15:
+        return topic_size
+    return (topic_size + 1) // 2
+
+
+def _progress_report(
+    pipeline_result: PipelineResult,
+    listed_topics: set,
+    read_indices: set,
+) -> tuple[str, bool]:
+    """Format the agent's research progress, plus a boolean telling whether
+    every listed topic has reached its read-count target. The boolean drives
+    the generate_beat_book gate."""
+    if not listed_topics:
+        return (
+            "[Research progress] No topics listed yet. Call list_stories_in_topic "
+            "for each topic the reporter selected to start exploring.",
+            False,
+        )
+
+    lines = ["[Research progress]"]
+    all_met = True
+    for topic in sorted(listed_topics):
+        indices = pipeline_result.topics.get(topic, [])
+        if not indices:
+            continue
+        total = len(indices)
+        read = sum(1 for i in indices if i in read_indices)
+        target = _target_for_topic(total)
+        met = read >= target
+        if not met:
+            all_met = False
+        marker = "OK" if met else "needs more"
+        lines.append(
+            f"  - {topic}: {read}/{total} read (target {target}) — {marker}"
+        )
+    lines.append(
+        f"Total stories read (unique): {len(read_indices)}. "
+        "Targets: every story in topics with <15 stories, otherwise half."
+    )
+    if not all_met:
+        lines.append(
+            "generate_beat_book will be rejected until every listed topic "
+            "meets its target. Keep reading."
+        )
+    return "\n".join(lines), all_met
+
 
 def execute_local_tool(name: str, input_data: dict, result: PipelineResult) -> str:
     """Execute a non-interactive tool and return a string result."""
@@ -391,6 +443,14 @@ async def run_agent(
     last_message_text = ""
     beat_book_done = False
 
+    # Research-progress tracking. listed_topics is the set of topic labels the
+    # agent has called list_stories_in_topic on (a proxy for "topics the
+    # reporter selected"); read_indices is the set of story indices the
+    # agent has read via read_story. Both feed _progress_report, which is
+    # surfaced in every local tool result AND used to gate generate_beat_book.
+    listed_topics: set = set()
+    read_indices: set = set()
+
     MAX_TURNS = 40
     for turn in range(MAX_TURNS):
         response = client.chat.completions.create(
@@ -459,15 +519,43 @@ async def run_agent(
                 content_str = f"Reporter's answer: {answer}"
 
             elif tool_name == "generate_beat_book":
-                await on_beat_book(
-                    tool_input.get("filename", "beat_book.md"),
-                    tool_input.get("markdown_content", ""),
+                progress, threshold_met = _progress_report(
+                    pipeline_result, listed_topics, read_indices,
                 )
-                content_str = "Beat book saved successfully. You may now give a brief closing message."
-                beat_book_done = True
+                if not threshold_met:
+                    content_str = (
+                        "generate_beat_book REJECTED — research is incomplete.\n\n"
+                        f"{progress}\n\n"
+                        "Continue using list_stories_in_topic (for any topics you "
+                        "haven't listed yet) and read_story to bring every listed "
+                        "topic up to its target, then call generate_beat_book again. "
+                        "Do not stop — the user will get no beat book if you abandon "
+                        "the loop now."
+                    )
+                else:
+                    await on_beat_book(
+                        tool_input.get("filename", "beat_book.md"),
+                        tool_input.get("markdown_content", ""),
+                    )
+                    content_str = "Beat book saved successfully. You may now give a brief closing message."
+                    beat_book_done = True
 
             else:
                 content_str = execute_local_tool(tool_name, tool_input, pipeline_result)
+                # Track research progress and append a status block so the
+                # model can self-check against the per-topic targets.
+                if tool_name == "list_stories_in_topic":
+                    topic = tool_input.get("topic", "")
+                    if topic and topic in pipeline_result.topics:
+                        listed_topics.add(topic)
+                elif tool_name == "read_story":
+                    idx = tool_input.get("index")
+                    if isinstance(idx, int) and 0 <= idx < len(pipeline_result.stories):
+                        read_indices.add(idx)
+                progress, _ = _progress_report(
+                    pipeline_result, listed_topics, read_indices,
+                )
+                content_str = f"{content_str}\n\n{progress}"
 
             messages.append({
                 "role": "tool",
