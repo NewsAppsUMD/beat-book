@@ -14,7 +14,7 @@ import json
 from typing import Callable, Awaitable, Any
 
 from pipeline import PipelineResult
-from ollama_client import CHAT_MODEL, chat_client
+from ollama_client import CHAT_MODEL, chat_client, prepare_thinking
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MODEL
@@ -453,12 +453,16 @@ async def run_agent(
 
     MAX_TURNS = 40
     for turn in range(MAX_TURNS):
-        response = client.chat.completions.create(
-            model=AGENT_MODEL,
-            max_tokens=MAX_TOKENS_PER_TURN,
-            messages=messages,
-            tools=TOOLS,
-        )
+        turn_messages, extra_body = prepare_thinking(messages)
+        create_kwargs = {
+            "model": AGENT_MODEL,
+            "max_tokens": MAX_TOKENS_PER_TURN,
+            "messages": turn_messages,
+            "tools": TOOLS,
+        }
+        if extra_body:
+            create_kwargs["extra_body"] = extra_body
+        response = client.chat.completions.create(**create_kwargs)
 
         choice = response.choices[0]
         msg = choice.message

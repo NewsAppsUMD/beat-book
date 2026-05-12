@@ -38,7 +38,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from ollama_client import CHAT_MODEL, chat_client
+from ollama_client import CHAT_MODEL, chat_client, prepare_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -664,16 +664,20 @@ def _normalize_chunk(
     tool_call = None
     for attempt in range(NORMALIZE_MAX_ATTEMPTS):
         try:
-            resp = client.chat.completions.create(
-                model=NORMALIZE_MODEL,
-                max_tokens=NORMALIZE_MAX_TOKENS,
-                messages=[
-                    {"role": "system", "content": _NORMALIZE_SYSTEM},
-                    {"role": "user", "content": user_prefix + text + user_suffix},
-                ],
-                tools=[_NORMALIZE_TOOL],
-                tool_choice={"type": "function", "function": {"name": "register_stories"}},
-            )
+            messages, extra_body = prepare_thinking([
+                {"role": "system", "content": _NORMALIZE_SYSTEM},
+                {"role": "user", "content": user_prefix + text + user_suffix},
+            ])
+            create_kwargs = {
+                "model": NORMALIZE_MODEL,
+                "max_tokens": NORMALIZE_MAX_TOKENS,
+                "messages": messages,
+                "tools": [_NORMALIZE_TOOL],
+                "tool_choice": {"type": "function", "function": {"name": "register_stories"}},
+            }
+            if extra_body:
+                create_kwargs["extra_body"] = extra_body
+            resp = client.chat.completions.create(**create_kwargs)
         except Exception as e:
             raise IngestError(
                 f"{source_label}: LLM normalization failed — {type(e).__name__}: {e}"

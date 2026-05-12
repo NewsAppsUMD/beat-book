@@ -218,12 +218,23 @@
       previewExcluded.innerHTML = "";
     } else {
       previewExcluded.hidden = false;
-      previewExcluded.innerHTML = excluded.map(src => `
-        <div class="preview-excluded-item">
-          <span class="excluded-label">${escapeHtml(src.source_label)}</span>
-          <span>${escapeHtml(src.skip_reason || src.extract_error || "Excluded.")}</span>
-        </div>
-      `).join("");
+      previewExcluded.innerHTML = excluded.map(src => {
+        // Show the generic skip_reason and the underlying error detail when
+        // it adds new information — a bare "Normalization failed." with no
+        // detail is useless when the real cause is e.g. an API timeout.
+        const reason = src.skip_reason || "";
+        const detail = src.extract_error || "";
+        const showBoth = reason && detail && detail !== reason;
+        const text = showBoth
+          ? `${reason} — ${detail}`
+          : (reason || detail || "Excluded.");
+        return `
+          <div class="preview-excluded-item">
+            <span class="excluded-label">${escapeHtml(src.source_label)}</span>
+            <span>${escapeHtml(text)}</span>
+          </div>
+        `;
+      }).join("");
     }
 
     // Sources with stories

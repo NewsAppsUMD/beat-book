@@ -24,7 +24,7 @@ from openai import OpenAI
 import umap
 import hdbscan
 
-from ollama_client import CHAT_MODEL, chat_client
+from ollama_client import CHAT_MODEL, chat_client, prepare_thinking
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -233,10 +233,14 @@ def _label_cluster(client: OpenAI, stories: List[dict], indices: List[int], redu
         "'Immigration Policy', 'Crime and Sentencing', 'City Council', 'Transit'."
     )
 
-    resp = client.chat.completions.create(
-        model=LABEL_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    messages, extra_body = prepare_thinking([{"role": "user", "content": prompt}])
+    create_kwargs = {
+        "model": LABEL_MODEL,
+        "messages": messages,
+    }
+    if extra_body:
+        create_kwargs["extra_body"] = extra_body
+    resp = client.chat.completions.create(**create_kwargs)
     return resp.choices[0].message.content.strip().strip('"').strip("'")
 
 
