@@ -714,6 +714,17 @@ def _normalize_chunk(
     skip_reason = (payload.get("skip_reason") or "").strip()
     raw_stories = payload.get("stories") or []
 
+    # Filter out malformed entries before we touch them. Qwen 3.5 in /no_think
+    # mode occasionally emits string entries (or other non-dicts) inside the
+    # stories array, which would crash the marker-resolution loop below.
+    dropped_malformed = sum(1 for r in raw_stories if not isinstance(r, dict))
+    if dropped_malformed:
+        logger.warning(
+            "Dropped %d non-dict entries from %s's stories array.",
+            dropped_malformed, source_label,
+        )
+    raw_stories = [r for r in raw_stories if isinstance(r, dict)]
+
     if not is_news or not raw_stories:
         return [], False, skip_reason or "No news stories found in this document."
 
