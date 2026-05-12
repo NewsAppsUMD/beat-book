@@ -30,6 +30,7 @@ import logging
 import re
 import socket
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Tuple
@@ -62,8 +63,23 @@ NORMALIZE_MAX_ATTEMPTS = 2
 # in one of the two adjacent windows.
 WINDOW_SIZE = 100_000           # primary chunk size in chars
 WINDOW_OVERLAP = 15_000          # chars of overlap between adjacent chunks
-MAX_CHUNKS = 30                  # safety cap on LLM calls per document
-NORMALIZE_CONCURRENCY = 4        # in-flight chunk calls per document
+# Soft safety cap on LLM calls per document. Sized to comfortably cover
+# the largest input the 25 MB raw-file cap could produce after extraction
+# (≈50 MB of HTML-stripped text at ~100 KB per chunk).
+MAX_CHUNKS = 500
+# One chunk at a time per document. Anthropic's concurrent-request limits
+# are tight on lower tiers, and the SDK already retries 429s with
+# retry-after backoff, so serial keeps the request rate low enough that
+# big multi-chunk uploads stop tripping the limit at all.
+NORMALIZE_CONCURRENCY = 1
+# Sleep between chunks so requests don't fire back-to-back the instant
+# Anthropic frees a connection slot — gives their concurrent-connection
+# accounting a moment to settle between calls.
+INTER_CHUNK_PAUSE_SECONDS = 2.0
+# Record separator emitted by _extract_json for top-level JSON lists.
+# When present in the extracted text, _make_chunks packs whole records
+# into each chunk so a story body is never split across two chunks.
+RECORD_SEPARATOR = "\n\n---\n\n"
 
 # Extensions markitdown converts to readable markdown.
 _MARKITDOWN_EXTS = {
@@ -211,11 +227,52 @@ def _extract_with_markitdown(filename: str, raw: bytes) -> str:
         return (result.text_content or "").strip()
 
 
-def _extract_json(raw: bytes) -> str:
-    """Render JSON as readable markdown the LLM can scan for stories.
+def _indent(text: str, by: str = "  ") -> str:
+    return "\n".join((by + ln) if ln else ln for ln in text.split("\n"))
 
-    No privileged path — we just produce text so stage 2 can normalize it
-    the same way it would any other input.
+
+def _render_value(v) -> str:
+    """Render any JSON value as readable text. No field names are
+    privileged — every key is labeled, every value rendered recursively.
+    Strings get HTML stripped so Stage 2's verbatim-marker resolver can
+    find them in the source."""
+    if v is None or v == "" or v == [] or v == {}:
+        return ""
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, str):
+        return _clean_inline_html(v)
+    if isinstance(v, (int, float)):
+        return str(v)
+    if isinstance(v, list):
+        rendered = [s for s in (_render_value(x) for x in v) if s]
+        if not rendered:
+            return ""
+        if all("\n" not in s and len(s) < 60 for s in rendered):
+            return ", ".join(rendered)
+        return "\n".join(f"- {_indent(s).lstrip()}" for s in rendered)
+    if isinstance(v, dict):
+        parts = []
+        for k, sub in v.items():
+            sub_text = _render_value(sub)
+            if not sub_text:
+                continue
+            if "\n" in sub_text:
+                parts.append(f"{k}:\n{_indent(sub_text)}")
+            else:
+                parts.append(f"{k}: {sub_text}")
+        return "\n".join(parts)
+    return str(v)
+
+
+def _extract_json(raw: bytes) -> str:
+    """Render JSON as readable text the LLM can scan for stories.
+
+    Schema-agnostic — no field names are special. A top-level list is
+    split with `---` separators so each item becomes a candidate story
+    boundary; anything else is rendered as one document. HTML embedded
+    in string values is stripped so Stage 2's verbatim markers resolve
+    against the rendered text.
     """
     text = _decode_text(raw)
     try:
@@ -224,61 +281,10 @@ def _extract_json(raw: bytes) -> str:
         # Not valid JSON — return raw text; the LLM can still try.
         return text
 
-    def render_record(rec: dict, idx: Optional[int] = None) -> str:
-        title = (rec.get("title") or rec.get("headline") or "").strip() if isinstance(rec.get("title") or rec.get("headline"), str) else ""
-        date = (rec.get("date") or rec.get("published") or rec.get("published_parsed") or "").strip() if isinstance(rec.get("date") or rec.get("published") or rec.get("published_parsed"), str) else ""
-        author = (rec.get("author") or rec.get("byline") or "").strip() if isinstance(rec.get("author") or rec.get("byline"), str) else ""
-        link = (rec.get("link") or rec.get("url") or "").strip() if isinstance(rec.get("link") or rec.get("url"), str) else ""
-        body = rec.get("content") or rec.get("summary") or rec.get("body") or rec.get("text") or ""
-        if not isinstance(body, str):
-            body = json.dumps(body, ensure_ascii=False)
-        # Bodies pulled from JSON/RSS commonly contain HTML — unescape and
-        # strip tags so the LLM sees the same characters it will return as
-        # markers. Otherwise the marker resolver can't find the body.
-        body = _clean_inline_html(body)
-
-        header_lines = []
-        if title:
-            header_lines.append(f"# {title}")
-        meta_bits = []
-        if date:
-            meta_bits.append(f"Date: {date}")
-        if author:
-            meta_bits.append(f"Author: {author}")
-        if link:
-            meta_bits.append(f"Link: {link}")
-        if meta_bits:
-            header_lines.append(" · ".join(meta_bits))
-
-        if not body and not header_lines:
-            # No standard fields — dump the whole record as JSON so the LLM
-            # at least sees the data.
-            return json.dumps(rec, indent=2, ensure_ascii=False)
-
-        parts = []
-        if header_lines:
-            parts.append("\n".join(header_lines))
-        if body:
-            parts.append(body)
-        return "\n\n".join(parts)
-
-    # Common wrappers
-    if isinstance(data, dict):
-        if "entries" in data and isinstance(data["entries"], list):
-            data = data["entries"]
-        elif "stories" in data and isinstance(data["stories"], list):
-            data = data["stories"]
-        elif "items" in data and isinstance(data["items"], list):
-            data = data["items"]
-
     if isinstance(data, list):
-        rendered = [render_record(r, i) for i, r in enumerate(data) if isinstance(r, dict)]
+        rendered = [r for r in (_render_value(item) for item in data) if r]
         return "\n\n---\n\n".join(rendered)
-    if isinstance(data, dict):
-        return render_record(data)
-
-    # Scalars — just stringify
-    return str(data)
+    return _render_value(data)
 
 
 def extract_text(filename: str, raw: bytes) -> str:
@@ -602,16 +608,40 @@ def _slice_body(
 
 
 def _make_chunks(text: str) -> list[str]:
-    """Split text into overlapping windows of WINDOW_SIZE chars.
+    """Split text into chunks of at most WINDOW_SIZE chars.
 
-    Adjacent windows share WINDOW_OVERLAP characters so a story whose body
-    straddles the cut between window N and window N+1 is fully contained in
-    at least one of them — provided the body is shorter than WINDOW_OVERLAP,
-    which is true for essentially all news articles.
+    When the text carries record separators from a structured source
+    (top-level JSON lists rendered by _extract_json), pack whole records
+    into each chunk so a story body is never split across chunks — no
+    overlap needed because records are pre-delimited.
+
+    For unstructured text without separators, fall back to fixed-size
+    overlapping windows so a body straddling the cut between window N
+    and window N+1 is still fully contained in at least one of them.
     """
     if len(text) <= WINDOW_SIZE:
         return [text]
-    chunks: list[str] = []
+
+    if RECORD_SEPARATOR in text:
+        records = text.split(RECORD_SEPARATOR)
+        sep_len = len(RECORD_SEPARATOR)
+        chunks: list[str] = []
+        current: list[str] = []
+        current_size = 0
+        for rec in records:
+            added_size = len(rec) + (sep_len if current else 0)
+            if current and current_size + added_size > WINDOW_SIZE:
+                chunks.append(RECORD_SEPARATOR.join(current))
+                current = [rec]
+                current_size = len(rec)
+            else:
+                current.append(rec)
+                current_size += added_size
+        if current:
+            chunks.append(RECORD_SEPARATOR.join(current))
+        return chunks
+
+    chunks = []
     step = WINDOW_SIZE - WINDOW_OVERLAP
     start = 0
     while start < len(text):
@@ -816,6 +846,8 @@ def normalize(
     results: list[Optional[Tuple[list[Story], bool, str]]] = [None] * len(chunks)
 
     def _process(idx: int) -> Optional[Tuple[list[Story], bool, str]]:
+        if idx > 0:
+            time.sleep(INTER_CHUNK_PAUSE_SECONDS)
         try:
             return _normalize_chunk(
                 chunks[idx], source_label, anthropic_key,

@@ -50,10 +50,10 @@ from ingest import ingest_file, ingest_url
 
 app = FastAPI(title="Beat Book Builder")
 
-# Cap on concurrent LLM normalization calls per /ingest request.
-# Keep low so we don't slam the Anthropic API — typical ingest requests
-# are a handful of sources.
-_INGEST_CONCURRENCY = 2
+# Files-in-flight per /ingest request. Serial so a multi-file upload
+# doesn't multiply concurrent Claude calls against Anthropic's per-tier
+# concurrent-request limit (ingest.py itself runs chunks serially too).
+_INGEST_CONCURRENCY = 1
 
 # In-memory session store: session_id → PipelineResult
 sessions: Dict[str, PipelineResult] = {}

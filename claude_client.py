@@ -21,10 +21,12 @@ CHAT_MODEL = "claude-sonnet-4-6"
 # while leaving headroom for long tool-use turns.
 CHAT_TIMEOUT_SECONDS = 180.0
 
-# Anthropic SDK retries timeouts twice by default — that turns a single
-# 180s timeout into a silent 9-minute wait. Timeouts here usually mean a
-# large request, not a transient blip, so retries don't help.
-CHAT_MAX_RETRIES = 0
+# Let the SDK back off on 429s using the server's retry-after header.
+# Anthropic's concurrent-connections limits are per-tier and easy to hit
+# on multi-chunk ingests, especially when phantom requests from a killed
+# server are still consuming connection slots. Eight retries absorbs
+# cooldowns up to ~2–3 minutes before surfacing the failure.
+CHAT_MAX_RETRIES = 8
 
 
 def chat_client(api_key: str | None = None) -> Anthropic:
