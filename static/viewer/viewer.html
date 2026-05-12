@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Beat Book</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="viewer.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
+<body>
+    <!-- Hover preview tooltip -->
+    <div class="source-preview" id="sourcePreview">
+        <div class="preview-title" id="previewTitle"></div>
+        <div class="preview-meta">
+            <span id="previewAuthor"></span>
+            <span id="previewDate"></span>
+        </div>
+        <div class="preview-content" id="previewContent"></div>
+        <div class="preview-gradient"></div>
+    </div>
+
+    <!-- Fixed Header -->
+    <header class="site-header" id="siteHeader">
+        <h1 class="site-title" id="siteTitle">Beat Book</h1>
+        <div class="section-navigator" id="sectionNavigator">
+            <button class="current-section-btn" id="currentSectionBtn" onclick="toggleSectionMenu()">
+                <span id="currentSectionText">Introduction</span>
+                <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M6 9l6 6 6-6" />
+                </svg>
+            </button>
+            <div class="section-menu" id="sectionMenu">
+                <!-- Sections will be populated here -->
+            </div>
+        </div>
+        <div class="reading-progress" id="readingProgress"></div>
+    </header>
+
+    <div class="app-container" id="appContainer">
+        <div class="main-panel">
+            <div class="container">
+                <div id="content"></div>
+            </div>
+        </div>
+
+        <div class="article-panel" id="articlePanel">
+            <div class="article-panel-header">
+                <h2 class="article-panel-title" id="articlePanelTitle">Article Title</h2>
+                <button class="close-btn" onclick="closeArticle()">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path
+                            d="M18.0121 4.92865C18.305 4.63576 18.7798 4.63576 19.0727 4.92865C19.3656 5.22155 19.3656 5.69642 19.0727 5.98931L13.0623 11.9997L19.0727 18.0101C19.3656 18.303 19.3656 18.7779 19.0727 19.0708C18.7798 19.3637 18.305 19.3637 18.0121 19.0708L12.0016 13.0604L5.99127 19.0707C5.95466 19.1074 5.9152 19.1394 5.87361 19.1669C5.5825 19.3591 5.18689 19.327 4.93061 19.0707C4.63771 18.7779 4.63771 18.303 4.93061 18.0101L10.941 11.9997L4.93061 5.98936C4.63772 5.69647 4.63772 5.22159 4.93061 4.9287C5.2235 4.63581 5.69838 4.63581 5.99127 4.9287L12.0016 10.9391L18.0121 4.92865Z"
+                            fill="currentColor" />
+                    </svg>
+                </button>
+            </div>
+            <div class="article-panel-body" id="articleContent">
+                <!-- Article content will be loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="viewer.js"></script>
+</body>
+
+</html>

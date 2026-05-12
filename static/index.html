@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Beat Book Builder</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=Newsreader:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+  <div id="app">
+
+    <!-- ── UPLOAD SCREEN ────────────────────────────────────────── -->
+    <div id="upload-screen" class="screen active">
+      <div class="work-card upload-card">
+        <h1>Beat Book Builder</h1>
+        <p class="subtitle">Add the source material for your beat — any format, any size up to 15 MB per file.</p>
+
+        <div id="drop-zone" class="drop-zone">
+          <div class="drop-zone-inner">
+            <p>Drag &amp; drop files here</p>
+            <p class="small">Word, PDF, HTML, text, markdown, JSON, RTF, and more</p>
+            <label class="file-btn">
+              Browse Files
+              <input type="file" id="file-input" multiple hidden>
+            </label>
+          </div>
+        </div>
+
+        <div id="file-list" class="file-list" hidden></div>
+
+        <div class="url-section">
+          <label class="url-label" for="url-input">Or paste article URLs (one per line)</label>
+          <textarea id="url-input" class="url-input" rows="3" placeholder="https://example.com/article-1&#10;https://example.com/article-2"></textarea>
+        </div>
+
+        <button id="upload-btn" class="btn primary" disabled>
+          Read &amp; Detect Stories
+        </button>
+
+        <div id="upload-status" class="status" hidden>
+          <div class="ingest-spinner">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <span id="ingest-step">Reading your sources…</span>
+          </div>
+          <div class="progress-detail" id="ingest-detail"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── PREVIEW SCREEN ───────────────────────────────────────── -->
+    <div id="preview-screen" class="screen">
+      <header class="app-header">
+        <h2>Beat Book Builder</h2>
+        <div id="preview-session-info" class="session-info"></div>
+      </header>
+      <div class="screen-body">
+        <div class="screen-content">
+          <div class="interview-heading">
+            <div class="eyebrow">Step 1 of 3 · Review detected stories</div>
+            <h1 id="preview-title">Detected stories</h1>
+            <p class="interview-lede" id="preview-summary"></p>
+          </div>
+
+          <div id="preview-excluded" class="preview-excluded-list" hidden></div>
+          <div id="preview-sources" class="preview-sources"></div>
+
+          <div id="preview-status" class="status" hidden>
+            <div class="progress-container">
+              <div class="progress-step" id="preview-progress-step">Preparing…</div>
+              <div class="progress-bar-track">
+                <div class="progress-bar-fill" id="preview-progress-bar"></div>
+              </div>
+              <div class="progress-detail" id="preview-progress-detail"></div>
+            </div>
+          </div>
+
+          <div class="submit-row preview-actions">
+            <button id="preview-back-btn" class="btn">Back to upload</button>
+            <span id="preview-included-count" class="submit-hint"></span>
+            <button id="preview-run-btn" class="btn primary">Run pipeline</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── INTERVIEW SCREEN ─────────────────────────────────────── -->
+    <div id="interview-screen" class="screen">
+      <header class="app-header">
+        <h2>Beat Book Builder</h2>
+        <div id="interview-session-info" class="session-info"></div>
+      </header>
+      <div class="screen-body">
+        <div class="screen-content">
+          <div class="interview-heading">
+            <div class="eyebrow">Step 2 of 3 · Reporter interview</div>
+            <h1>A few quick questions</h1>
+            <p class="interview-lede">Your answers shape which angles the beat book emphasizes.</p>
+          </div>
+          <div id="interview-form-host"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── GENERATING SCREEN ────────────────────────────────────── -->
+    <div id="generating-screen" class="screen">
+      <header class="app-header">
+        <h2>Beat Book Builder</h2>
+        <div id="generating-session-info" class="session-info"></div>
+      </header>
+      <div class="screen-body centered">
+        <div class="work-card generating-card">
+          <div class="work-card-hero">
+            <span class="pulse-dot" aria-hidden="true"></span>
+            <h1 id="generating-label">Generating your beat book</h1>
+          </div>
+          <p id="generating-detail" class="work-card-detail">Analyzing your uploads…</p>
+
+          <div class="shimmer-bar" aria-hidden="true"><div class="shimmer-bar-fill"></div></div>
+
+          <ol class="stepper" id="stepper" aria-label="Progress">
+            <li class="step" data-step="review">
+              <span class="step-icon" aria-hidden="true"></span>
+              <div class="step-body">
+                <div class="step-title">Review coverage</div>
+                <div class="step-sub">Scanning topics and uploaded stories</div>
+              </div>
+            </li>
+            <li class="step" data-step="write">
+              <span class="step-icon" aria-hidden="true"></span>
+              <div class="step-body">
+                <div class="step-title">Write beat book</div>
+                <div class="step-sub">Drafting sections from source material</div>
+              </div>
+            </li>
+            <li class="step" data-step="research">
+              <span class="step-icon" aria-hidden="true"></span>
+              <div class="step-body">
+                <div class="step-title">Research context</div>
+                <div class="step-sub">Browsing the web for additional reporting context</div>
+              </div>
+            </li>
+            <li class="step" data-step="cite">
+              <span class="step-icon" aria-hidden="true"></span>
+              <div class="step-body">
+                <div class="step-title">Match citations</div>
+                <div class="step-sub">Linking each claim back to its source</div>
+              </div>
+            </li>
+          </ol>
+
+          <div class="work-card-footer">
+            <div id="generating-stats" class="stats-chips"></div>
+            <div class="elapsed" id="generating-elapsed" aria-live="polite">0:00</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── DONE SCREEN ──────────────────────────────────────────── -->
+    <div id="done-screen" class="screen">
+      <header class="app-header">
+        <h2>Beat Book Builder</h2>
+        <div id="done-session-info" class="session-info"></div>
+      </header>
+      <div class="screen-body centered">
+        <div class="work-card done-card">
+          <div class="success-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="5 12.5 10 17.5 19 7.5"></polyline>
+            </svg>
+          </div>
+          <h1>Your beat book is ready</h1>
+          <p class="done-subtitle" id="done-subtitle"></p>
+          <a id="done-viewer-link" class="btn primary large" target="_blank" rel="noopener">Open with inline citations →</a>
+          <p class="done-secondary"><a id="done-markdown-link" target="_blank" rel="noopener">Download raw Markdown</a></p>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+python-multipart
+httpx
+pydantic
+openai
+anthropic
+markitdown[all]
+numpy
+umap-learn
+hdbscan
+scikit-learn
+tqdm

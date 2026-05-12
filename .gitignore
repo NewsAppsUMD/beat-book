@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+
+# Caches
+.cache/
+.embeddings_cache.pkl
+
+# OS
+.DS_Store
+
+# Generated beat books
+output/
+
+# Scraped source stories
+source-stories-alt/
+source-stories/
