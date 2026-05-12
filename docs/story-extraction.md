@@ -1,10 +1,6 @@
 # Story extraction: how the ingest pipeline reads any format
 
-A reporter has a folder. Inside the folder is a PDF of a Sunday op-ed, a Word document with three pasted articles, a JSON dump from a CMS export, a scraped RSS feed in JSON, a plain-text newsroom notebook, and a half-dozen URLs to live pages. Their job, before the beat-book pipeline can do anything useful, is to feed all of that into the tool and end up with a clean list of stories — each one with a title, an author, a date, a link, and a body that the rest of the pipeline can embed, cluster, and reason about.
-
-The ingest stage exists to make that single step painless. From the reporter's perspective there is no upload-format menu: drag-and-drop everything, or paste a textarea of URLs, and the preview screen shows what was found.
-
-The mechanism behind that experience is two stages, lives entirely in `ingest.py`, and is intentionally format-blind: nothing about the rest of the pipeline knows or cares whether a given story came from a docx, an RSS feed, or a scraped HTML page.
+The ingest stage takes whatever a reporter uploads — files in any common format, or URLs — and produces a clean list of stories, each with a title, date, author, link, and body. The downstream pipeline doesn't need to know whether a story came from a Word doc, a JSON export, or a scraped HTML page; everything goes through the same two-stage path in `ingest.py`. From the reporter's perspective there is no upload-format menu: drag-and-drop everything, or paste a textarea of URLs, and the preview screen shows what was found.
 
 ## The two stages, in one paragraph
 

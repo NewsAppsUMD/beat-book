@@ -1,10 +1,8 @@
 # Inline citations from sentence embeddings: how the beat book stays attributable
 
-A beat book that an LLM produced from a corpus of stories sounds authoritative whether or not it actually is. Every paragraph reads with the same calm confidence regardless of whether it's restating something the reporter wrote last week or hallucinating a detail. For a reporting tool that's a problem: the reporter needs to know which sentences came from which source story, both to verify claims and to follow citation chains back to the article — and the byline — they can call.
+A reporter using the beat book needs to know which sentences came from which source story — both to verify claims and to follow the citation back to the article and byline they can call. The agent doesn't write notes like "according to source #3"; it paraphrases, summarizes, and synthesizes. So we attribute after the fact, by matching each generated sentence against the source corpus the agent had access to.
 
-The hard part is that the agent doesn't write notes like "according to source #3"; it paraphrases, summarizes, and synthesizes. So we attribute *after the fact*, by matching each generated sentence against the source corpus the agent had access to.
-
-This is the embeddings-based inline citation pipeline. It lives in `citation_matcher.py`, runs as the last stage of the pipeline (after the draft agent and after the research agent), and produces the per-sentence attribution metadata the viewer uses to wrap clickable spans around any beat-book sentence whose nearest source neighbor is similar enough to be worth surfacing.
+This is the embeddings-based inline citation pipeline. It lives in `citation_matcher.py`, runs as the last stage of the pipeline (after the draft agent and after the research agent), and produces the per-sentence attribution metadata the viewer uses to wrap clickable spans around any beat-book sentence whose nearest source neighbor is similar enough.
 
 ## The shape of the solution
 
