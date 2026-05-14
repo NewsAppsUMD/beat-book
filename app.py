@@ -502,7 +502,7 @@ async def agent_ws(ws: WebSocket, session_id: str):
             "type": "citation_progress",
             "stage": "starting",
             "fraction": 0.0,
-            "detail": "Embedding source sentences…",
+            "detail": "Embedding source passages…",
         })
 
         loop = asyncio.get_event_loop()
