@@ -1,73 +1,66 @@
 # Beat Book Builder
 
-A web application that turns a collection of news articles into an interactive, AI-generated **beat book** — a practical reporting guide for journalists covering a specific topic area. Upload source articles in any common format (Word, PDF, HTML, markdown, plain text, JSON) or paste URLs, and the system extracts the stories, lets you review them, then automatically discovers topics via embedding and clustering before walking the reporter through an AI-guided interview to produce a tailored beat book.
+A web application that turns a collection of news articles into an interactive **beat book** — a practical reporting guide for journalists covering a specific topic area. Upload source articles in any common format (Word, PDF, HTML, markdown, plain text, JSON) or paste URLs, and the system extracts the stories, lets you review them, then automatically discovers topics via embedding and clustering before walking the reporter through an AI-guided interview to produce a tailored beat book.
 
 Originally built around [Chicago Public Media](https://chicago.suntimes.com/) story data; works with any news corpus regardless of source format.
 
 ---
 
-## Changelog
+## Setup & Running
 
-### 2026-05-13 — Improved citations
+### Prerequisites
 
-Rewrote `citation_matcher.py` and `static/viewer/` end-to-end. The
-matcher now matches paragraph-level passages, retrieves top-K above a
-per-corpus calibrated similarity threshold, and surfaces results to the
-viewer as academic-style numbered footnotes.
+- Python 3.9+
+- An [OpenAI API key](https://platform.openai.com/api-keys) (used only for embeddings — `text-embedding-3-small`)
+- An [Anthropic API key](https://console.anthropic.com/) (used for `claude-sonnet-4-6` — story normalization, cluster labeling, the interview agent — and `claude-opus-4-7` for the research agent)
 
-- **Source side: passage chunks, not sentences.** Each story is sliced
-  into 100-word sliding windows with 16-word overlap; each window keeps
-  its character offset back into the source so the viewer can resolve a
-  hit to a quoted span.
-- **NumPy vectorization** for the cosine matmul (L2-normalize +
-  `B @ S.T`, replacing the per-sentence Python loop).
-- **Per-corpus threshold calibration.** Random `(beat_sentence,
-  source_passage)` pairs are sampled to estimate the noise floor; the
-  cutoff is `noise_mean + 3·sigma`, clamped to an absolute floor of
-  0.40. Calibration is written into the output JSON and is internal —
-  the viewer never surfaces the numbers.
-- **Top-K retrieval** (`K=5`) per beat-book sentence; everything below
-  threshold is dropped instead of confidently mis-attributed.
-- **Context-sum query embeddings** (`0.6·prev + 1.0·self + 0.4·next`,
-  paragraph-bounded) so pronoun-heavy / short sentences attribute
-  correctly.
-- **Leave-one-out sub-window highlighting** is computed in a single
-  pooled parallel batch (was N supports × 6 sub-windows × sequential
-  embedding calls — now one batched parallel `_embed_many` call).
-- **Parallelized embedding batches** (6× `ThreadPoolExecutor`, order-
-  preserving). Total wall-clock for citation matching is under ~5s for
-  any corpus we'd realistically run, dominated by network round-trip
-  rather than local computation.
-- **Viewer: academic footnotes.** Inline citations are uniformly-blue
-  `[N]` chip markers (rounded rectangle, 4px radius, no per-similarity
-  color variance, no score visible to the reader). Numbers are assigned
-  in document order — the first chip on the page is `[1]`, next is
-  `[2]`, etc.
-- **Footnotes section at the bottom** of the document, one entry per
-  unique source. Each entry lists *every* inline number that points to
-  that source as clickable chips, plus the article title / author /
-  date and the matched passage as a quote.
-- **Run-dedup of consecutive same-source citations** — a stretch of
-  sentences all citing the same passage collapses to one chip on the
-  last sentence in the run. Blank lines do NOT break the run; headings
-  / lists / plain prose do.
-- **Source-passage highlight in the same blue hue** as the chip, so
-  the chain (inline chip → opened-article highlight → claim card
-  accent) reads as one color family.
-- **Highlight tidying** — the matched passage range snaps to whole
-  paragraphs when the window covers ≥50%, drops slivers, and filters
-  nav-chrome paragraphs (`Related` / `Read more` / `See also` labels
-  and the headlines that follow them).
-- **Chip styles locked** — `font-weight`, `font-style`, `text-
-  decoration`, `color`, `text-transform`, and `font-size` are all
-  explicit (and `font-size` is `rem`, not `em`) so the chip never
-  inherits surrounding bold / italic / colored / underlined / scaled
-  text styling.
+No local daemons required — everything runs through hosted APIs, so the project is portable across machines.
+
+### Install
+
+```bash
+pip install -r requirements.txt
+```
+
+Or with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv pip install -r requirements.txt
+```
+
+### Configure
+
+Create a `.env` file in the project root (see `.env.example`):
+
+```
+OPENAI_API_KEY=sk-...
+ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional — extended thinking on Sonnet 4.6 (slower, higher quality).
+# Default: off. Ignored by the ingest normalization step, which forces
+# tool_choice and is incompatible with thinking.
+# ENABLE_THINKING=true
+```
+
+### Run
+
+```bash
+python -m uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+or with uv:
+
+```bash
+uv run python -m uvicorn app:app --host 127.0.0.1 --port 8000
+```
+
+Then open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
 
 ---
 
 ## Table of Contents
 
+- [Setup & Running](#setup--running)
 - [How It Works](#how-it-works)
 - [Architecture Overview](#architecture-overview)
 - [Ingest: Files, URLs, and the Preview Screen](#ingest-files-urls-and-the-preview-screen)
@@ -84,7 +77,6 @@ viewer as academic-style numbered footnotes.
   - [Agent Loop](#agent-loop)
 - [Frontend](#frontend)
 - [Tech Stack](#tech-stack)
-- [Setup & Running](#setup--running)
 - [Project Structure](#project-structure)
 
 ---
@@ -324,46 +316,6 @@ The frontend is a single-page app with four screens:
 
 ---
 
-## Setup & Running
-
-### Prerequisites
-
-- Python 3.9+
-- An [OpenAI API key](https://platform.openai.com/api-keys) (used only for embeddings — `text-embedding-3-small`)
-- An [Anthropic API key](https://console.anthropic.com/) (used for `claude-sonnet-4-6` — story normalization, cluster labeling, the interview agent — and `claude-opus-4-7` for the research agent)
-
-No local daemons required — everything runs through hosted APIs, so the project is portable across machines.
-
-### Install
-
-```bash
-pip install -r requirements.txt
-```
-
-### Configure
-
-Create a `.env` file in the project root:
-
-```
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-
-# Optional — extended thinking on Sonnet 4.6 (slower, higher quality).
-# Default: off. Ignored by the ingest normalization step, which forces
-# tool_choice and is incompatible with thinking.
-# ENABLE_THINKING=true
-```
-
-### Run
-
-```bash
-python -m uvicorn app:app --host 127.0.0.1 --port 8000
-```
-
-Then open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
-
----
-
 ## Project Structure
 
 ```
@@ -376,6 +328,8 @@ beat-book/
 ├── research_agent.py       # Sandboxed research agent that revises the draft beat book
 ├── citation_matcher.py     # Matches beat-book claims back to source sentences
 ├── requirements.txt        # Python dependencies
+├── Makefile                # Install, run, dev, lint, clean targets
+├── .env.example            # Template for required API keys
 ├── static/
 │   ├── index.html          # Single-page app markup (upload, preview, interview, done)
 │   ├── app.js              # Frontend logic — ingest, preview, SSE pipeline, WebSocket
@@ -385,3 +339,11 @@ beat-book/
 ├── output/                 # Generated beat books (Markdown + sources JSON)
 └── .cache/                 # Embedding cache (auto-generated)
 ```
+
+---
+
+## Authors
+
+- [Clay Ludwig](https://clayludwig.com/)
+- [Cat Murphy](https://github.com/catelizabethmurphy)
+- [Derek Willis](https://thescoop.org/)
