@@ -150,7 +150,7 @@ TOOLS = [
                 },
                 "filename": {
                     "type": "string",
-                    "description": "Filename for the beat book (e.g. 'sports_beat_book.md').",
+                    "description": "Descriptive filename based on the beat's topic, using snake_case and ending in _beat_book.md (e.g. 'chicago_immigration_enforcement_beat_book.md', 'bears_stadium_beat_book.md').",
                 },
             },
             "required": ["markdown_content", "filename"],
