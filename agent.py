@@ -239,22 +239,20 @@ def _target_for_topic(topic_size: int) -> int:
 
 
 def _derive_filename(pipeline_result: PipelineResult) -> str:
-    """Build a descriptive snake_case filename from the top broad topics."""
+    """Build a descriptive snake_case filename from the top broad topic."""
     import re
     topics = sorted(
         pipeline_result.broad_topics.items(),
         key=lambda x: -len(x[1]),
     )
-    labels = [label for label, _ in topics[:3]]
-    if not labels:
+    if not topics:
         return "beat_book.md"
-    slug = "_".join(labels)
-    slug = slug.lower()
-    slug = re.sub(r"[^a-z0-9]+", "_", slug)
-    slug = slug.strip("_")
-    if len(slug) > 80:
-        slug = slug[:80].rstrip("_")
-    return f"{slug}_beat_book.md"
+    label = topics[0][0].lower()
+    words = re.sub(r"[^a-z0-9]+", " ", label).split()
+    words = words[:3]
+    if not words:
+        return "beat_book.md"
+    return "_".join(words) + "_beat_book.md"
 
 
 def _progress_report(

@@ -334,8 +334,9 @@ Guidelines:
   meetings).
 - Prefer specific, verifiable facts (dates, dollar amounts, names with \
   titles, case numbers) over generic color.
-- Do not remove content from the file unless it is demonstrably wrong and \
-  you have a replacement.
+- Do not remove or condense existing content. The file should only grow. \
+  Never rewrite the file from scratch — use `str_replace` and `insert` to \
+  add material to the existing document.
 - Do not add a table of contents. The viewer builds its own.
 - Do not invent facts. If you can't verify something, leave it out.
 
@@ -461,6 +462,11 @@ def _run_text_editor(tool_input: Dict[str, Any], sandbox_dir: Path) -> str:
             return "\n".join(numbered) if numbered else "(empty file)"
 
         if command == "create":
+            if resolved.exists():
+                return (
+                    f"Error: '{raw_path}' already exists. Use `str_replace` or "
+                    "`insert` to edit existing files — `create` is only for new files."
+                )
             file_text = tool_input.get("file_text", "")
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(file_text, encoding="utf-8")

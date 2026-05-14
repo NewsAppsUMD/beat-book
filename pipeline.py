@@ -210,6 +210,7 @@ def _assign_outliers(reduced: np.ndarray, labels: np.ndarray) -> np.ndarray:
     labels          = labels.copy()
     unique_clusters = [c for c in np.unique(labels) if c != -1]
     if not unique_clusters:
+        labels[:] = 0
         return labels
     cluster_means = np.stack([reduced[labels == c].mean(axis=0) for c in unique_clusters])
     for idx in np.where(noise_mask)[0]:

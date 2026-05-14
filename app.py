@@ -366,11 +366,13 @@ async def agent_ws(ws: WebSocket, session_id: str):
     # research_task is set by on_exploration_done and awaited in on_beat_book.
     _research_task: asyncio.Task | None = None
     _research_filename: str = "beat_book.md"
+    _exploration_context: str | None = None
 
     async def on_exploration_done(context_doc: str):
         """Start the Opus research agent as soon as exploration is done,
         in parallel with Haiku's beat-book write."""
-        nonlocal _research_task, _research_filename
+        nonlocal _research_task, _research_filename, _exploration_context
+        _exploration_context = context_doc
         filename = _research_filename
         sandbox_dir = SANDBOX_ROOT / session_id
         sandbox_dir.mkdir(parents=True, exist_ok=True)
@@ -463,8 +465,21 @@ async def agent_ws(ws: WebSocket, session_id: str):
                     "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft.",
                 })
 
-        # research_result is the Opus-revised content; fall back to draft
-        revised_markdown = research_result if research_result else markdown
+        # Merge: draft is the base; append only what the research agent added
+        # beyond the initial exploration context it started with.
+        if research_result and _exploration_context:
+            stripped = research_result
+            if stripped.startswith(_exploration_context):
+                stripped = stripped[len(_exploration_context):]
+            elif _exploration_context.strip() in stripped:
+                idx = stripped.index(_exploration_context.strip())
+                stripped = stripped[:idx] + stripped[idx + len(_exploration_context.strip()):]
+            stripped = stripped.strip()
+            revised_markdown = markdown + "\n\n" + stripped if stripped else markdown
+        elif research_result:
+            revised_markdown = research_result
+        else:
+            revised_markdown = markdown
 
         await ws.send_json({"type": "research_complete"})
 
