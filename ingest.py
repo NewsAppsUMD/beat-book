@@ -24,12 +24,10 @@ from __future__ import annotations
 
 import concurrent.futures
 import html
-import ipaddress
 import json
 import logging
+import os
 import re
-import socket
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,7 +36,6 @@ import threading
 from urllib.parse import urlparse
 
 import anthropic
-import httpx
 
 from claude_client import (
     ANTHROPIC_SEMAPHORE,
@@ -55,13 +52,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAX_FILE_BYTES = 25 * 1024 * 1024            # 25 MB per file
-URL_FETCH_TIMEOUT = 15.0                     # seconds
-URL_USER_AGENT = "BeatBookBuilder/1.0 (+https://github.com/clayludwig/beat-book)"
 NORMALIZE_MODEL = "claude-haiku-4-5-20251001"
-# OCR settings for scanned PDFs (rendered via PyMuPDF, transcribed via Haiku vision).
-OCR_DPI = 150
-OCR_PAGES_PER_BATCH = 4   # images per Haiku vision call
-OCR_MAX_PAGES = 100        # cap for very large scanned PDFs
 # Max tokens per LLM call. Sized to fit marker data for up to ~30 stories
 # per chunk.
 NORMALIZE_MAX_TOKENS = 4096
@@ -346,122 +337,36 @@ def _clean_inline_html(s: str) -> str:
     return text.strip()
 
 
-def _extract_pdf(raw: bytes) -> str:
-    import fitz  # PyMuPDF
-    doc = fitz.open(stream=raw, filetype="pdf")
-    n_pages = len(doc)
-    pages = [page.get_text().strip() for page in doc if page.get_text().strip()]
-    doc.close()
-    if not pages and n_pages > 0:
-        raise IngestError("__SCANNED_PDF__")
-    return "\n\n".join(pages)
-
-
-def _render_page_png(page) -> bytes:
-    import fitz
-    mat = fitz.Matrix(OCR_DPI / 72, OCR_DPI / 72)
-    pix = page.get_pixmap(matrix=mat, alpha=False)
-    return pix.tobytes("png")
-
-
-def _ocr_pdf(raw: bytes, anthropic_key: str, source_label: str) -> str:
-    """OCR a scanned PDF using Claude Haiku vision.
-
-    Renders pages to PNG at OCR_DPI, batches them into groups of
-    OCR_PAGES_PER_BATCH, sends each batch to Haiku for transcription,
-    and returns the concatenated text. Caps at OCR_MAX_PAGES.
-    """
-    import base64
-    import fitz
-
-    doc = fitz.open(stream=raw, filetype="pdf")
-    n_pages = len(doc)
-    if n_pages == 0:
-        doc.close()
-        raise IngestError(f"{source_label}: PDF has no pages.")
-
-    truncated = n_pages > OCR_MAX_PAGES
-    page_indices = list(range(min(n_pages, OCR_MAX_PAGES)))
-
-    page_pngs: list[bytes] = []
-    for i in page_indices:
-        page_pngs.append(_render_page_png(doc[i]))
-    doc.close()
-
-    client = chat_client(anthropic_key)
-
-    batches = [page_pngs[i:i + OCR_PAGES_PER_BATCH]
-               for i in range(0, len(page_pngs), OCR_PAGES_PER_BATCH)]
-    batch_page_nums = [page_indices[i:i + OCR_PAGES_PER_BATCH]
-                       for i in range(0, len(page_indices), OCR_PAGES_PER_BATCH)]
-
-    def _ocr_batch(pngs: list[bytes], nums: list[int]) -> str:
-        content: list[dict] = []
-        for png in pngs:
-            b64 = base64.standard_b64encode(png).decode()
-            content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": "image/png", "data": b64},
-            })
-        label = (f"pages {nums[0]+1}–{nums[-1]+1}" if len(nums) > 1
-                 else f"page {nums[0]+1}")
-        content.append({
-            "type": "text",
-            "text": (
-                f"These are {len(pngs)} consecutive pages ({label}) from a scanned PDF. "
-                "Transcribe ALL text exactly as it appears, in reading order. "
-                "Preserve paragraph structure with blank lines between paragraphs. "
-                "Output only the transcribed text — no commentary, no page labels."
-            ),
-        })
-        for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
-            try:
-                with ANTHROPIC_SEMAPHORE:
-                    resp = client.messages.create(
-                        model=NORMALIZE_MODEL,
-                        max_tokens=4096,
-                        messages=[{"role": "user", "content": content}],
-                    )
-                break
-            except anthropic.RateLimitError as e:
-                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
-                    raise
-                pause = rate_limit_pause(rl_attempt, e)
-                logger.warning("OCR rate limited; waiting %.0fs (attempt %d/%d).",
-                               pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
-                time.sleep(pause)
-        return "".join(
-            b.text for b in resp.content if getattr(b, "type", None) == "text"
-        )
-
-    batch_results: list[str | None] = [None] * len(batches)
-    with concurrent.futures.ThreadPoolExecutor(max_workers=NORMALIZE_CONCURRENCY) as ex:
-        futures = {
-            ex.submit(_ocr_batch, batches[i], batch_page_nums[i]): i
-            for i in range(len(batches))
-        }
-        for fut in concurrent.futures.as_completed(futures):
-            i = futures[fut]
-            try:
-                batch_results[i] = fut.result()
-            except Exception as e:
-                logger.warning(
-                    "OCR batch %d/%d failed for %s: %s",
-                    i + 1, len(batches), source_label, e,
-                )
-                batch_results[i] = ""
-
-    combined = "\n\n".join(t for t in batch_results if t).strip()
-    if not combined:
+def _firecrawl_client():
+    """Lazy-construct a Firecrawl client from FIRECRAWL_API_KEY."""
+    key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    if not key:
         raise IngestError(
-            f"{source_label}: OCR produced no text. The PDF may be too degraded to read."
+            "FIRECRAWL_API_KEY is not set; required for PDF parsing and URL scraping."
         )
-    if truncated:
-        combined += (
-            f"\n\n[Note: This PDF has {n_pages} pages. "
-            f"Only the first {OCR_MAX_PAGES} were processed by OCR.]"
+    from firecrawl import Firecrawl
+    return Firecrawl(api_key=key)
+
+
+def _extract_pdf(raw: bytes, filename: str = "document.pdf") -> str:
+    """Parse a PDF via Firecrawl. Handles native and scanned PDFs uniformly."""
+    from firecrawl.v2.types import ParseOptions
+    client = _firecrawl_client()
+    try:
+        result = client.parse(
+            raw,
+            filename=filename,
+            content_type="application/pdf",
+            options=ParseOptions(formats=["markdown"]),
         )
-    return combined
+    except Exception as e:
+        raise IngestError(
+            f"{filename}: Firecrawl PDF parse failed — {type(e).__name__}: {e}"
+        ) from e
+    md = (getattr(result, "markdown", "") or "").strip()
+    if not md:
+        raise IngestError(f"{filename}: Firecrawl returned no PDF markdown.")
+    return md
 
 
 # Filename keyword → content type, checked before falling back to "document".
@@ -656,7 +561,7 @@ def extract_text(filename: str, raw: bytes) -> str:
 
     _EXTRACTORS = {
         ".json":  lambda: _extract_json(raw),
-        ".pdf":   lambda: _extract_pdf(raw),
+        ".pdf":   lambda: _extract_pdf(raw, filename),
         ".docx":  lambda: _extract_docx(raw),
         ".doc":   lambda: _extract_docx(raw),
         ".pptx":  lambda: _extract_pptx(raw),
@@ -690,95 +595,39 @@ def extract_text(filename: str, raw: bytes) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# URL FETCHING (with SSRF protection)
+# URL SCRAPING (via Firecrawl)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _is_blocked_ip(host: str) -> bool:
-    """Resolve hostname; reject loopback / private / link-local / multicast."""
-    try:
-        # getaddrinfo returns all A/AAAA records — check every one.
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return True  # unresolvable → block
+def scrape_url(url: str) -> str:
+    """Scrape a URL via Firecrawl and return markdown.
 
-    for info in infos:
-        ip_str = info[4][0]
-        try:
-            ip = ipaddress.ip_address(ip_str)
-        except ValueError:
-            continue
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_multicast
-            or ip.is_reserved
-            or ip.is_unspecified
-        ):
-            return True
-    return False
-
-
-def fetch_url(url: str) -> Tuple[str, bytes]:
-    """Fetch a URL, return (suggested_filename, raw_bytes).
-
-    Refuses non-http(s) schemes and private/loopback addresses.
-    Honors MAX_FILE_BYTES.
+    Firecrawl handles HTML, PDFs, and JS-rendered pages uniformly. The
+    server-side request is made by Firecrawl, so SSRF protections aren't
+    needed on our side — internal addresses are unreachable from their infra.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise IngestError(f"{url}: only http and https URLs are accepted.")
     if not parsed.hostname:
         raise IngestError(f"{url}: URL is missing a hostname.")
-    if _is_blocked_ip(parsed.hostname):
-        raise IngestError(f"{url}: URL resolves to a private or unreachable address.")
 
-    headers = {"User-Agent": URL_USER_AGENT, "Accept": "*/*"}
+    client = _firecrawl_client()
     try:
-        with httpx.Client(
-            timeout=URL_FETCH_TIMEOUT,
-            follow_redirects=True,
-            headers=headers,
-        ) as client:
-            resp = client.get(url)
-    except httpx.HTTPError as e:
-        raise IngestError(f"{url}: fetch failed — {type(e).__name__}: {e}") from e
-
-    if resp.status_code >= 400:
-        raise IngestError(f"{url}: server returned HTTP {resp.status_code}.")
-
-    body = resp.content
-    if len(body) > MAX_FILE_BYTES:
-        raise IngestError(
-            f"{url}: response is {len(body) / 1_048_576:.1f} MB; the limit is "
-            f"{MAX_FILE_BYTES / 1_048_576:.0f} MB."
+        result = client.scrape(
+            url,
+            formats=["markdown"],
+            only_main_content=True,
         )
+    except Exception as e:
+        raise IngestError(
+            f"{url}: Firecrawl scrape failed — {type(e).__name__}: {e}"
+        ) from e
 
-    # Decide a filename for extension dispatch.
-    content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
-    type_to_ext = {
-        "text/html": ".html",
-        "application/xhtml+xml": ".html",
-        "text/plain": ".txt",
-        "text/markdown": ".md",
-        "application/json": ".json",
-        "application/pdf": ".pdf",
-        "application/msword": ".doc",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
-        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
-        "application/rtf": ".rtf",
-        "text/rtf": ".rtf",
-    }
-    suggested_ext = type_to_ext.get(content_type, "")
-    path_part = Path(parsed.path).name or parsed.hostname
-    if suggested_ext and not path_part.lower().endswith(suggested_ext):
-        path_part = f"{path_part}{suggested_ext}" if path_part else f"page{suggested_ext}"
-    elif not _ext_of(path_part):
-        path_part = f"{path_part}.html"  # default for unknown content-type
-
-    return path_part, body
+    md = (getattr(result, "markdown", "") or "").strip()
+    if not md:
+        raise IngestError(f"{url}: Firecrawl returned no markdown.")
+    return md
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1460,29 +1309,16 @@ def ingest_file(
 
     try:
         if on_progress:
-            on_progress({"stage": "extract", "detail": "Extracting text"})
+            on_progress({
+                "stage": "extract",
+                "detail": "Parsing PDF via Firecrawl" if is_pdf else "Extracting text",
+            })
         text = extract_text(filename, raw)
     except IngestError as e:
-        if is_pdf and "__SCANNED_PDF__" in str(e):
-            # Fall back to OCR for scanned PDFs.
-            if on_progress:
-                on_progress({"stage": "extract", "detail": "Scanned PDF — running OCR"})
-            try:
-                text = _ocr_pdf(raw, anthropic_key, filename)
-                if user_hint:
-                    user_hint = "OCR transcription. " + user_hint
-                else:
-                    user_hint = "OCR transcription of a scanned PDF."
-            except IngestError as ocr_err:
-                source.excluded = True
-                source.extract_error = str(ocr_err)
-                source.skip_reason = str(ocr_err)
-                return source
-        else:
-            source.excluded = True
-            source.extract_error = str(e)
-            source.skip_reason = str(e)
-            return source
+        source.excluded = True
+        source.extract_error = str(e)
+        source.skip_reason = str(e)
+        return source
 
     source.char_count = len(text)
     source.truncated = len(text) > MAX_CHUNKS * (WINDOW_SIZE - WINDOW_OVERLAP)
@@ -1517,21 +1353,14 @@ def ingest_url(
     *,
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> IngestedSource:
-    """Fetch a URL, then run both stages. Same failure semantics as ingest_file."""
+    """Scrape a URL via Firecrawl, then run normalization. Same failure
+    semantics as ingest_file."""
     source = IngestedSource(source_label=url, kind="url")
 
     try:
-        filename, raw = fetch_url(url)
-    except IngestError as e:
-        source.excluded = True
-        source.extract_error = str(e)
-        source.skip_reason = "Failed to fetch this URL."
-        return source
-
-    try:
         if on_progress:
-            on_progress({"stage": "extract", "detail": "Extracting text"})
-        text = extract_text(filename, raw)
+            on_progress({"stage": "extract", "detail": "Scraping URL via Firecrawl"})
+        text = scrape_url(url)
     except IngestError as e:
         source.excluded = True
         source.extract_error = str(e)

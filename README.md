@@ -47,7 +47,7 @@ Browser (static HTML/JS/CSS)
     ├── POST /ingest          → files + URLs in
     │       │                   stories out (preview JSON)
     │       │
-    │       └── ingest.py     → extract_text(...) → markitdown / stdlib
+    │       └── ingest.py     → extract_text(...) → Firecrawl (PDFs, URLs) / format libs
     │                           normalize(...)    → Claude Sonnet 4.6
     │
     ├── POST /process         → streams SSE progress events
@@ -75,10 +75,11 @@ Ingest is a two-stage pipeline that converts any supported source into the `{tit
 
 | Source | How it's handled |
 |--------|------------------|
-| `.docx`, `.doc`, `.pdf`, `.html`, `.pptx`, `.xlsx`, `.csv`, `.rtf`, `.epub` | Converted to markdown via [markitdown](https://github.com/microsoft/markitdown). |
-| `.md`, `.markdown`, `.txt`, `.log` | Read directly as UTF-8 text. |
+| `.pdf` | Parsed via [Firecrawl](https://firecrawl.dev) `parse` (markdown output). Handles native and scanned PDFs uniformly. |
+| `.docx`, `.doc`, `.pptx`, `.xlsx`, `.html`, `.rtf`, `.epub` | Parsed locally with format-specific libraries (python-docx, python-pptx, openpyxl, BeautifulSoup, striprtf, ebooklib). |
+| `.md`, `.markdown`, `.txt`, `.log`, `.csv` | Read directly as UTF-8 text. |
 | `.json` | Parsed and rendered as readable markdown (any known wrapper unwrapped). No special-case schema. |
-| URLs (`http`/`https`) | Fetched server-side with `httpx`. SSRF-protected — private, loopback, link-local, and unresolvable addresses are refused. |
+| URLs (`http`/`https`) | Scraped via [Firecrawl](https://firecrawl.dev) `scrape` (markdown output, main-content extraction, JS rendering). |
 
 **Per-file size cap:** 25 MB. No limit on number of files or URLs per request.
 
@@ -86,7 +87,7 @@ Ingest is a two-stage pipeline that converts any supported source into the `{tit
 
 **Function:** `extract_text(filename, raw_bytes) -> str`
 
-Dispatches on file extension. Office documents and PDFs are written to a temp file and converted to markdown with markitdown; text formats are decoded directly. Unknown extensions fall back to UTF-8 decoding, with markitdown as a hail-mary.
+Dispatches on file extension. PDFs go through Firecrawl's `parse` endpoint (markdown, main-content extraction; handles scanned PDFs without a separate OCR path). Other office formats are parsed by their respective Python libraries. Pasted URLs are routed through Firecrawl's `scrape` endpoint. Text formats are decoded directly; unknown extensions fall back to UTF-8 decoding.
 
 ### Stage 2: LLM Normalization
 
@@ -250,8 +251,8 @@ The frontend is a single-page app with four screens:
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web server** | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) | Async HTTP + WebSocket server |
-| **File extraction** | [markitdown](https://github.com/microsoft/markitdown) | Convert docx / pdf / html / pptx / xlsx / rtf to markdown |
-| **URL fetching** | [httpx](https://www.python-httpx.org/) | Fetch URLs with SSRF protection (private IPs blocked) |
+| **PDF parsing & URL scraping** | [Firecrawl](https://firecrawl.dev) | Parse PDFs (native + scanned) and scrape user-supplied URLs to markdown |
+| **Other file extraction** | python-docx, python-pptx, openpyxl, BeautifulSoup, striprtf, ebooklib | Convert docx / pptx / xlsx / html / rtf / epub to text |
 | **Story normalization** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Tool-use call that splits documents into stories and infers title/date/author |
 | **Embeddings** | [OpenAI API](https://platform.openai.com/docs/guides/embeddings) (`text-embedding-3-small`) | Convert article text to 1536-d vectors. (Anthropic has no embedding API.) |
 | **Dimensionality reduction** | [UMAP](https://umap-learn.readthedocs.io/) | Project embeddings to lower dimensions for clustering |
@@ -271,6 +272,7 @@ The frontend is a single-page app with four screens:
 - Python 3.9+
 - An [OpenAI API key](https://platform.openai.com/api-keys) (used only for embeddings — `text-embedding-3-small`)
 - An [Anthropic API key](https://console.anthropic.com/) (used for `claude-sonnet-4-6` — story normalization, cluster labeling, the interview agent — and `claude-opus-4-7` for the research agent)
+- A [Firecrawl API key](https://firecrawl.dev) (used for PDF parsing and URL scraping)
 
 No local daemons required — everything runs through hosted APIs, so the project is portable across machines.
 
@@ -287,6 +289,7 @@ Create a `.env` file in the project root:
 ```
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
+FIRECRAWL_API_KEY=fc-...
 
 # Optional — extended thinking on Sonnet 4.6 (slower, higher quality).
 # Default: off. Ignored by the ingest normalization step, which forces

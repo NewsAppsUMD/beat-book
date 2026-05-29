@@ -1,11 +1,10 @@
 fastapi
 uvicorn[standard]
 python-multipart
-httpx
 pydantic
 openai
 anthropic
-pymupdf
+firecrawl
 python-docx
 python-pptx
 openpyxl
