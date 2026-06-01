@@ -38,6 +38,7 @@ import threading
 from urllib.parse import urlparse
 
 import anthropic
+import feedparser
 import httpx
 
 from claude_client import (
@@ -298,6 +299,42 @@ def _fast_json_stories(
         for s in [_map_json_item(item, link_hint)]
         if s is not None
     ]
+    return stories if stories else None
+
+
+def _fast_feed_stories(
+    raw: bytes, source_label: str
+) -> Optional[list["Story"]]:
+    """Parse RSS/Atom feed XML via feedparser, convert entries to Story objects
+    using the same mapping as structured JSON. Returns None if not a valid feed."""
+    feed = feedparser.parse(raw)
+    if not feed.entries:
+        return None
+
+    stories: list[Story] = []
+    for entry in feed.entries:
+        content_value = ""
+        if hasattr(entry, "content") and entry.content:
+            content_value = entry.content[0].get("value", "")
+        if not content_value:
+            content_value = getattr(entry, "summary", "")
+
+        date_str = ""
+        parsed_time = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+        if parsed_time:
+            date_str = f"{parsed_time.tm_year:04d}-{parsed_time.tm_mon:02d}-{parsed_time.tm_mday:02d}"
+
+        item = {
+            "title": getattr(entry, "title", ""),
+            "link": getattr(entry, "link", ""),
+            "summary": content_value,
+            "published": date_str,
+            "author": getattr(entry, "author", ""),
+        }
+        story = _map_json_item(item, "")
+        if story is not None:
+            stories.append(story)
+
     return stories if stories else None
 
 
@@ -770,6 +807,10 @@ def fetch_url(url: str) -> Tuple[str, bytes]:
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
         "application/rtf": ".rtf",
         "text/rtf": ".rtf",
+        "application/rss+xml": ".rss",
+        "application/atom+xml": ".atom",
+        "text/xml": ".xml",
+        "application/xml": ".xml",
     }
     suggested_ext = type_to_ext.get(content_type, "")
     path_part = Path(parsed.path).name or parsed.hostname
@@ -1450,6 +1491,16 @@ def ingest_file(
                 on_progress({"stage": "done", "detail": "Structured JSON mapped without LLM"})
             return source
 
+    # Fast path: RSS/Atom feed files skip the LLM.
+    if _ext_of(filename) in (".rss", ".atom", ".xml"):
+        fast = _fast_feed_stories(raw, filename)
+        if fast is not None:
+            source.stories = fast
+            source.char_count = sum(len(s.content) for s in fast)
+            if on_progress:
+                on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
+            return source
+
     # Build a filename-based type hint for PDFs and other documents so the LLM
     # can prioritize the right metadata schema from the start.
     is_pdf = _ext_of(filename) == ".pdf"
@@ -1527,6 +1578,16 @@ def ingest_url(
         source.extract_error = str(e)
         source.skip_reason = "Failed to fetch this URL."
         return source
+
+    # Fast path: RSS/Atom feed
+    if _ext_of(filename) in (".rss", ".atom", ".xml"):
+        fast = _fast_feed_stories(raw, url)
+        if fast is not None:
+            source.stories = fast
+            source.char_count = sum(len(s.content) for s in fast)
+            if on_progress:
+                on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
+            return source
 
     try:
         if on_progress:
