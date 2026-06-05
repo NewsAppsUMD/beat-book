@@ -18,3 +18,4 @@ umap-learn
 hdbscan
 scikit-learn
 tqdm
+feedparser

@@ -11,7 +11,6 @@ import hashlib
 import logging
 import pickle
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional, Dict, List, Tuple, Callable
@@ -29,8 +28,6 @@ import anthropic as anthropic_sdk
 
 from claude_client import (
     ANTHROPIC_SEMAPHORE,
-    CHAT_MODEL,
-    MAX_ANTHROPIC_CONCURRENT,
     RATE_LIMIT_MAX_RETRIES,
     chat_client,
     rate_limit_pause,

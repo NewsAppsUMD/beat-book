@@ -496,7 +496,6 @@ async def run_agent(
 
     # Restrict to reporter-selected topics if provided.
     if selected_topics:
-        from pipeline import PipelineResult as _PR
         from dataclasses import replace as _replace
         filtered = {t: v for t, v in pipeline_result.topics.items()
                     if t in set(selected_topics)}

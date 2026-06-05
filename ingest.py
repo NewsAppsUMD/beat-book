@@ -29,7 +29,6 @@ import json
 import logging
 import re
 import socket
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,7 +42,6 @@ import httpx
 
 from claude_client import (
     ANTHROPIC_SEMAPHORE,
-    CHAT_MODEL,
     RATE_LIMIT_MAX_RETRIES,
     chat_client,
     rate_limit_pause,
@@ -576,7 +574,6 @@ def _extract_xlsx(raw: bytes) -> str:
 
 
 def _extract_xls(raw: bytes) -> str:
-    import io
     import xlrd
     wb = xlrd.open_workbook(file_contents=raw)
     sheets = []
@@ -1267,7 +1264,6 @@ def _stories_from_payload(
 ) -> Tuple[list[Story], bool, str]:
     """Convert a register_stories tool payload into Story objects.
     Shared by both the Anthropic and OpenAI normalization paths."""
-    is_news = bool(payload.get("is_news_content", False))
     skip_reason = (payload.get("skip_reason") or "").strip()
     raw_stories = payload.get("stories") or []
 

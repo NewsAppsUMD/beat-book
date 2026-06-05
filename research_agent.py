@@ -33,7 +33,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from anthropic import Anthropic
 
-from claude_client import thinking_enabled, thinking_param
+from claude_client import thinking_param
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG

@@ -2,8 +2,8 @@
 claude_client.py
 ----------------
 Shared Anthropic configuration for the chat-model slots (ingest
-normalization, cluster labeling, the interview agent). Anthropic has no
-embedding API, so embeddings continue to use OpenAI's — that client is
+normalization, cluster labeling, and the beat-book writing agent). Anthropic
+has no embedding API, so embeddings continue to use OpenAI's — that client is
 constructed at the call sites that need it.
 
 Env vars:
