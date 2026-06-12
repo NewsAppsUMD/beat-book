@@ -31,7 +31,6 @@ from claude_client import (
     RATE_LIMIT_MAX_RETRIES,
     chat_client,
     rate_limit_pause,
-    thinking_param,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,7 +124,7 @@ def _embed_batch(client: OpenAI, texts: List[str]) -> np.ndarray:
 
 
 def _cache_key(texts: List[str]) -> str:
-    combined = "\n---\n".join(texts[:10])
+    combined = "\n---\n".join(texts)
     return hashlib.md5((combined + EMBED_MODEL).encode()).hexdigest()
 
 
@@ -249,7 +248,6 @@ def _label_cluster(client, stories: List[dict], indices: List[int], reduced: np.
                     model=LABEL_MODEL,
                     max_tokens=LABEL_MAX_TOKENS,
                     messages=[{"role": "user", "content": prompt}],
-                    thinking=thinking_param(),
                 )
             break
         except anthropic_sdk.RateLimitError as e:
@@ -324,7 +322,6 @@ def _label_all(client, stories, labels, reduced, level_name, on_progress=None):
                     model=LABEL_MODEL,
                     max_tokens=min(2048, 128 + 32 * len(unique)),
                     messages=[{"role": "user", "content": prompt}],
-                    thinking=thinking_param(),
                 )
             break
         except anthropic_sdk.RateLimitError as e:
