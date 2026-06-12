@@ -2,8 +2,8 @@
 claude_client.py
 ----------------
 Shared Anthropic configuration for the chat-model slots (ingest
-normalization, cluster labeling, the interview agent). Anthropic has no
-embedding API, so embeddings continue to use OpenAI's — that client is
+normalization, cluster labeling, and the beat-book writing agent). Anthropic
+has no embedding API, so embeddings continue to use OpenAI's — that client is
 constructed at the call sites that need it.
 
 Env vars:
@@ -20,8 +20,8 @@ CHAT_MODEL = "claude-sonnet-4-6"
 
 
 # Per-request timeout for the Anthropic client. The SDK default is 10
-# minutes; 180s keeps real failures visible to the user inside ~3 minutes
-# while leaving headroom for long tool-use turns.
+# minutes; 600s leaves headroom for long tool-use turns (Opus with
+# adaptive thinking can take several minutes).
 CHAT_TIMEOUT_SECONDS = 600.0
 
 # SDK retries are off so each 429 surfaces immediately at the call site
@@ -86,19 +86,13 @@ def thinking_enabled() -> bool:
     return (os.environ.get("ENABLE_THINKING") or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-# Token budget for extended thinking when enabled. Sonnet 4.6 wants
-# budget_tokens < max_tokens; 8k of thinking leaves room for substantive
-# output on a 32k cap.
-THINKING_BUDGET_TOKENS = 8000
-
-
 def thinking_param() -> dict:
     """Top-level `thinking` parameter for messages.create.
 
-    Returns {"type": "enabled", "budget_tokens": ...} when ENABLE_THINKING
-    is on, {"type": "disabled"} otherwise. Sonnet 4.6 does not support
-    Opus 4.7's "adaptive" mode — only enabled/disabled.
+    Returns {"type": "adaptive"} when ENABLE_THINKING is on,
+    {"type": "disabled"} otherwise.  Both Sonnet 4.6 and Opus 4.7+
+    support adaptive thinking; budget_tokens is deprecated.
     """
     if thinking_enabled():
-        return {"type": "enabled", "budget_tokens": THINKING_BUDGET_TOKENS}
+        return {"type": "adaptive"}
     return {"type": "disabled"}

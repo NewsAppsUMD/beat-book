@@ -229,7 +229,7 @@ The matcher returns a single dict:
 }
 ```
 
-The viewer (`static/viewer/viewer.js`) reads the calibration and surfaces it as a header label. For each entry with at least one support, it wraps the sentence's run-leader with a clickable span (run-grouping is unchanged — consecutive same-source sentences still get one visible link on the first). Clicking the link opens the source article in a side panel and the panel renders the raw article text with two tiers of `<mark>` highlighting: the matched 100-word passage in light amber, and the leave-one-out sub-window(s) inside it in stronger amber. The panel scrolls to the first highlight.
+The reader (`static/reader.js`) reads the calibration and surfaces it as a header label. For each entry with at least one support, it wraps the sentence's run-leader with a clickable span (run-grouping is unchanged — consecutive same-source sentences still get one visible link on the first). Clicking the link opens the source article in a side panel within the reader column, with the matched passage `<mark>`-highlighted; the panel scrolls to the first highlight.
 
 A small score chip after each citation link shows the similarity value — color-coded into three bands (green ≥0.6, amber ≥0.5, grey below). A reporter who wants to know "how confidently is this citation pinned to that source" can see it without opening the side panel.
 

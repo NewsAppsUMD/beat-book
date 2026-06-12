@@ -44,6 +44,45 @@ MAX_TOOL_RESULT_CHARS = 60_000
 # are replaced with a stub so the history stays within the 1M token limit.
 MAX_HISTORY_MESSAGES = 40
 
+def _add_cache_breakpoints(messages: list[dict]) -> list[dict]:
+    """Stamp cache_control on the last user message's final content block.
+
+    This lets the Anthropic prompt-cache retain the entire prefix
+    (system + all prior messages) across turns, cutting repeated input
+    token cost by ~90%.  The marker is ephemeral (5-minute TTL).
+
+    We target the last *user* message specifically because assistant
+    messages may contain SDK ContentBlock objects that don't support
+    dict-style mutation.
+    """
+    if not messages:
+        return messages
+    msgs = list(messages)
+    for i in range(len(msgs) - 1, -1, -1):
+        msg = msgs[i]
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        if role != "user":
+            continue
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if content is None:
+            break
+        if isinstance(content, str):
+            msgs[i] = {**msg, "content": [{
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }]}
+        elif isinstance(content, list) and content:
+            new_content = list(content)
+            last_block = new_content[-1]
+            if isinstance(last_block, dict):
+                last_block = {**last_block, "cache_control": {"type": "ephemeral"}}
+            new_content[-1] = last_block
+            msgs[i] = {**msg, "content": new_content}
+        break
+    return msgs
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # TOOL DEFINITIONS (Anthropic tool-use schema)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -163,25 +202,9 @@ TOOLS = [
 # SYSTEM PROMPT
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
-You are an expert journalism mentor and beat-book author. Your job is to help \
-a reporter create a comprehensive "beat book" — a practical reporting guide for \
-covering a specific beat (topic area).
-
-You have been given a set of news stories that the reporter has uploaded. These \
-stories have already been analyzed and grouped into topics automatically.
-
-Your workflow:
-1. **Explore** — Call `view_topics` to see the full topic list. Then call \
-`read_stories_in_topic` for each topic — it returns every story with a \
-2000-character excerpt and immediately satisfies the research requirement for \
-that topic. Use `read_story` only when you need the full text of a specific \
-document. Use `search_stories` to surface specific people, institutions, or \
-themes across topics. Every tool result includes a `[Research progress]` block \
-showing per-topic read status — once all topics show "OK", you can generate.
-2. **Generate** — Call `generate_beat_book` once every topic shows "OK" in \
-the progress block.
-
+# Shared between the explore-phase and write-phase system prompts: what a
+# beat book is and how it should read.
+_DOC_SPEC = """\
 The beat book is a narrative document, not an outline. A reporter should be \
 able to read it cover-to-cover the way they'd read a long-form magazine \
 feature about their own beat. Structure it as follows.
@@ -220,10 +243,48 @@ the same day.
 **Do NOT include a table of contents.** The viewer provides its own \
 navigation from the document's headings, so a TOC in the Markdown is \
 redundant. Start the document with the title and subtitle, then go directly \
-into the Beat Overview.
+into the Beat Overview.\
+"""
+
+SYSTEM_PROMPT = """\
+You are an expert journalism mentor and beat-book author. Your job is to help \
+a reporter create a comprehensive "beat book" — a practical reporting guide for \
+covering a specific beat (topic area).
+
+You have been given a set of news stories that the reporter has uploaded. These \
+stories have already been analyzed and grouped into topics automatically.
+
+Your workflow:
+1. **Explore** — Call `view_topics` to see the full topic list. Then call \
+`read_stories_in_topic` for each topic — it returns every story with a \
+2000-character excerpt and immediately satisfies the research requirement for \
+that topic. Use `read_story` only when you need the full text of a specific \
+document. Use `search_stories` to surface specific people, institutions, or \
+themes across topics. Every tool result includes a `[Research progress]` block \
+showing per-topic read status — once all topics show "OK", you can generate.
+2. **Generate** — Call `generate_beat_book` once every topic shows "OK" in \
+the progress block.
+
+""" + _DOC_SPEC + """
 
 Keep your conversational messages concise. Use tools frequently.\
 """
+
+# System prompt for the forced final-write turn. The explore prompt's
+# "call generate_beat_book" instruction directly conflicts with the
+# tool_choice="none" the final write uses — Sonnet 4.6 resolves that
+# conflict by ending the turn with empty content. This prompt makes the
+# text reply the explicitly correct action.
+WRITE_SYSTEM_PROMPT = """\
+You are an expert journalism mentor and beat-book author. You have finished \
+researching a set of news stories on behalf of a reporter, and your research \
+notes are in the conversation above. Your only job now is to write the \
+complete beat book.
+
+Reply with ONLY the finished Markdown document — no preamble, no \
+acknowledgement, no tool calls. Start directly with the title (`# ...`).
+
+""" + _DOC_SPEC
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -496,7 +557,6 @@ async def run_agent(
 
     # Restrict to reporter-selected topics if provided.
     if selected_topics:
-        from pipeline import PipelineResult as _PR
         from dataclasses import replace as _replace
         filtered = {t: v for t, v in pipeline_result.topics.items()
                     if t in set(selected_topics)}
@@ -588,24 +648,41 @@ async def run_agent(
                     # which streams reliably (forcing a tool_use that
                     # contains 16k tokens of stringified JSON hangs at TTFT
                     # for both Sonnet and Haiku — confirmed empirically).
-                    write_messages = list(messages) + [{
-                        "role": "user",
-                        "content": (
-                            "Now write the full beat book in Markdown. "
-                            "Reply with ONLY the Markdown document — no "
-                            "preamble, no acknowledgement. Start directly "
-                            "with the title (`# ...`)."
-                        ),
-                    }]
+                    # tool_choice "none" keeps the tool definitions in the
+                    # request (the history contains tool_use blocks that
+                    # reference them) while forcing a text-only reply.
+                    # Without it, Sonnet — whose system prompt says "call
+                    # tools, not prose" — sometimes ends the turn with
+                    # empty content when the tools are stripped.
+                    write_messages = list(messages) + [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Now write the full beat book in Markdown. "
+                                "The exploration phase is over and tools are "
+                                "disabled — the earlier instruction to call "
+                                "tools no longer applies. Reply with ONLY "
+                                "the Markdown document — no preamble, no "
+                                "acknowledgement. Start directly with the "
+                                "title (`# ...`)."
+                            ),
+                        },
+                    ]
+                    # NB: the swapped system prompt invalidates the prompt
+                    # cache for this one call (system precedes messages in
+                    # the cached prefix). Acceptable — it happens once per
+                    # run, and a correct document beats a cache hit.
                     request_kwargs = dict(
-                        model=EXPLORE_MODEL,
+                        model=AGENT_MODEL,
                         max_tokens=MAX_TOKENS_FINAL_GENERATE,
                         system=[{
                             "type": "text",
-                            "text": SYSTEM_PROMPT,
+                            "text": WRITE_SYSTEM_PROMPT,
                             "cache_control": {"type": "ephemeral"},
                         }],
-                        messages=write_messages,
+                        tools=TOOLS,
+                        tool_choice={"type": "none"},
+                        messages=_add_cache_breakpoints(write_messages),
                     )
                 else:
                     request_kwargs = dict(
@@ -617,15 +694,21 @@ async def run_agent(
                             "cache_control": {"type": "ephemeral"},
                         }],
                         tools=TOOLS,
-                        messages=messages,
+                        messages=_add_cache_breakpoints(messages),
                     )
-                print(f"[agent] turn {_turn}: calling Sonnet "
+                print(f"[agent] turn {_turn}: calling "
+                      f"{request_kwargs['model']} "
                       f"(force_generate={force_generate}, "
                       f"max_tokens={request_kwargs['max_tokens']}, "
                       f"messages={len(messages)})", flush=True)
                 response = await _api_call_with_heartbeat(**request_kwargs)
+                _usage = getattr(response, "usage", None)
                 print(f"[agent] turn {_turn}: stop_reason={response.stop_reason} "
-                      f"blocks={[getattr(b,'type',None) for b in response.content]}",
+                      f"blocks={[getattr(b,'type',None) for b in response.content]} "
+                      f"usage(in={getattr(_usage, 'input_tokens', '?')}, "
+                      f"out={getattr(_usage, 'output_tokens', '?')}, "
+                      f"cache_write={getattr(_usage, 'cache_creation_input_tokens', '?')}, "
+                      f"cache_read={getattr(_usage, 'cache_read_input_tokens', '?')})",
                       flush=True)
                 break
             except anthropic.RateLimitError as e:

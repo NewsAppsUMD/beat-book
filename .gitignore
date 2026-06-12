@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Virtualenv (created by `make install`)
+.venv/
+
 # Environment
 .env
 
