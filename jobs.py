@@ -221,18 +221,11 @@ async def run_generation(
                 await emit({"type": "error",
                             "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft."})
 
-        # 3. Merge: draft is the base; append only what research added beyond the
-        #    exploration context it started from (same logic as the old handler).
-        if research_result and _exploration_context:
-            stripped = research_result
-            if stripped.startswith(_exploration_context):
-                stripped = stripped[len(_exploration_context):]
-            elif _exploration_context.strip() in stripped:
-                idx = stripped.index(_exploration_context.strip())
-                stripped = stripped[:idx] + stripped[idx + len(_exploration_context.strip()):]
-            stripped = stripped.strip()
-            revised_markdown = markdown + "\n\n" + stripped if stripped else markdown
-        elif research_result:
+        # 3. The research agent receives the draft beat book in its sandbox,
+        #    enriches it with web research, and returns the full revised
+        #    document. Use it directly when available; fall back to the
+        #    unenriched draft otherwise.
+        if research_result and research_result.strip():
             revised_markdown = research_result
         else:
             revised_markdown = markdown

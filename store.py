@@ -199,3 +199,41 @@ def reconcile_on_startup() -> int:
         if n:
             _save(records)
     return n
+
+
+def adopt_orphan_files() -> int:
+    """Discover finished ``.md`` beat books in ``output/`` that have no
+    library.json record and create ``ready`` entries for them. Ignores
+    ``.draft.md`` files (intermediate artifacts). Returns the count of
+    newly adopted books."""
+    with _LOCK:
+        records = _load()
+        known_stems = {r.get("stem") for r in records}
+        adopted = 0
+        for md in sorted(OUTPUT_DIR.glob("*.md")):
+            if md.name.endswith(".draft.md"):
+                continue
+            stem = md.stem
+            if stem in known_stems:
+                continue
+            title = stem.replace("_", " ").replace("-", " ").title()
+            stat = md.stat()
+            rec = {
+                "id": uuid.uuid4().hex[:8],
+                "title": title,
+                "stem": stem,
+                "status": "ready",
+                "created_at": stat.st_mtime,
+                "updated_at": stat.st_mtime,
+                "error": "",
+                "num_stories": 0,
+                "num_topics": 0,
+                "selected_topics": [],
+                "opened_at": None,
+            }
+            records.append(rec)
+            known_stems.add(stem)
+            adopted += 1
+        if adopted:
+            _save(records)
+    return adopted

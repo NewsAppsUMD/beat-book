@@ -66,6 +66,9 @@ async def lifespan(app: FastAPI):
     n = store.reconcile_on_startup()
     if n:
         print(f"[startup] marked {n} interrupted book(s) as failed", flush=True)
+    adopted = store.adopt_orphan_files()
+    if adopted:
+        print(f"[startup] adopted {adopted} pre-existing beat book(s) into library", flush=True)
     job_queue = asyncio.Queue()
     _worker_task = asyncio.create_task(generation_worker(job_queue, book_jobs))
     print("[startup] generation worker started (single process — do not use "

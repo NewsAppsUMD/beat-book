@@ -301,7 +301,11 @@
           if (drive && msg.text) setGenerating("Agent", msg.text);
           break;
         case "tool_status":
-          if (drive) { bumpStats(msg.tool_name); setGenerating("Generating your beat book", formatToolDetail(msg)); }
+          if (drive) {
+            bumpStats(msg.tool_name);
+            if (msg.tool_name === "generate_beat_book") { setStage("write"); setGenerating("Writing beat book", formatToolDetail(msg)); }
+            else { setGenerating("Reviewing coverage", formatToolDetail(msg)); }
+          }
           break;
         case "agent_progress":
           if (drive) {
@@ -323,7 +327,7 @@
           if (drive) setGenerating("Research complete", "Handing off to citation matcher…");
           break;
         case "beat_book_markdown_saved":
-          if (drive) { setGenerating("Matching citations", "Embedding source passages…"); setStage("cite"); setShimmerDeterminate(0.02); }
+          if (drive) { stagesReached.add("write"); stagesReached.add("research"); setGenerating("Matching citations", "Embedding source passages…"); setStage("cite"); setShimmerDeterminate(0.02); }
           break;
         case "citation_progress":
           if (drive) { setGenerating("Matching citations", msg.detail || msg.stage || ""); if (typeof msg.fraction === "number") setShimmerDeterminate(msg.fraction); }
@@ -809,7 +813,7 @@
     if (!pendingSession || selected.length === 0) return;
 
     // Prepare the generating screen optimistically.
-    resetStats();
+    resetStats(); resetStages();
     setGenerating("Generating your beat book", "Sending to the queue…");
     setStage("review"); setShimmerIndeterminate(); startElapsed();
     switchScreen("generating");
@@ -860,16 +864,19 @@
   }
 
   const STAGE_ORDER = ["review", "write", "research", "cite"];
+  const stagesReached = new Set();
   function setStage(stage) {
     if (!stepperEl) return;
-    const idx = STAGE_ORDER.indexOf(stage);
+    stagesReached.add(stage);
     stepperEl.querySelectorAll(".step").forEach(el => {
-      const sIdx = STAGE_ORDER.indexOf(el.getAttribute("data-step"));
+      const s = el.getAttribute("data-step");
       el.classList.remove("active", "done");
-      if (sIdx < idx) el.classList.add("done"); else if (sIdx === idx) el.classList.add("active");
+      if (stagesReached.has(s) && s !== stage) el.classList.add("done");
+      else if (s === stage) el.classList.add("active");
     });
   }
   function markAllStagesDone() { if (stepperEl) stepperEl.querySelectorAll(".step").forEach(el => { el.classList.remove("active"); el.classList.add("done"); }); }
+  function resetStages() { stagesReached.clear(); }
   function setShimmerDeterminate(fraction) { if (shimmerBar && shimmerFill) { shimmerBar.classList.add("determinate"); shimmerFill.style.width = `${Math.min(Math.max(fraction, 0), 1) * 100}%`; } }
   function setShimmerIndeterminate() { if (shimmerBar && shimmerFill) { shimmerBar.classList.remove("determinate"); shimmerFill.style.width = ""; } }
 
