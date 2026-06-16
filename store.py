@@ -126,6 +126,7 @@ def create_book(
     num_stories: int,
     num_topics: int,
     selected_topics: list[str],
+    style: str = "narrative",
 ) -> dict:
     """Create a ``queued`` book record with a unique stem. Returns the record
     (with its generated ``id`` and resolved ``stem``)."""
@@ -137,6 +138,7 @@ def create_book(
             "id": uuid.uuid4().hex[:8],
             "title": title,
             "stem": stem,
+            "style": style,
             "status": "queued",
             "created_at": now,
             "updated_at": now,

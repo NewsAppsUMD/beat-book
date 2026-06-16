@@ -202,31 +202,36 @@ TOOLS = [
 # SYSTEM PROMPT
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Shared between the explore-phase and write-phase system prompts: what a
-# beat book is and how it should read.
-_DOC_SPEC = """\
-The beat book is a narrative document, not an outline. A reporter should be \
-able to read it cover-to-cover the way they'd read a long-form magazine \
-feature about their own beat. Structure it as follows.
+# ── Document structure (shared by all styles) ──────────────────────────────
+
+_DOC_STRUCTURE = """\
+Structure the beat book as follows.
 
 Open with a **Beat Overview** of two or three paragraphs explaining what the \
-beat covers and why it matters — written as prose, not as bullets. Move into \
-**Key Topics & Themes**, organized around the topics the reporter selected; \
-each topic gets a few paragraphs describing who is doing what, what is at \
-stake, and the recurring tension or arc in the coverage. Cover **Key Sources \
-& Players** — the people, organizations, and institutions that appear \
-repeatedly — by writing about them in sentences, explaining their role and \
-how they tend to surface; do not reduce them to a bulleted roster. **Story \
-Ideas & Angles** can be a short numbered list because each idea is a \
-discrete thought, but introduce the list with a sentence or two framing the \
-gap in coverage it addresses. Provide **Background & Context** as flowing \
-prose: the history, policy, and institutional knowledge a new reporter would \
-need to make sense of the beat. End with **Reporting Tips** (a few sentences \
-of practical advice specific to this beat, not generic journalism advice) \
-and a **Calendar & Recurring Events** section, where a list is appropriate \
-because the items are genuinely list-shaped (a meeting on the second \
-Tuesday of every month).
+beat covers and why it matters. Move into **Key Topics & Themes**, organized \
+around the topics the reporter selected; each topic describes who is doing \
+what, what is at stake, and the recurring tension or arc in the coverage. \
+Cover **Key Sources & Players** — the people, organizations, and \
+institutions that appear repeatedly — explaining their role and how they \
+tend to surface. Include **Story Ideas & Angles** — a short numbered list, \
+introduced with a sentence or two framing the gap in coverage. Provide \
+**Background & Context**: the history, policy, and institutional knowledge \
+a new reporter would need. End with **Reporting Tips** (practical advice \
+specific to this beat, not generic journalism advice) and a **Calendar & \
+Recurring Events** section.\
+"""
 
+_NO_TOC = """\
+**Do NOT include a table of contents.** The viewer provides its own \
+navigation from the document's headings, so a TOC in the Markdown is \
+redundant. Start the document with the title and subtitle, then go directly \
+into the Beat Overview.\
+"""
+
+# ── Style presets ──────────────────────────────────────────────────────────
+
+STYLE_PRESETS = {
+    "narrative": """\
 **Writing style.** Write in connected prose, the way a senior reporter would \
 brief a colleague picking up the beat — not as an outline. Use bullets only \
 for genuinely list-shaped content: a roster of named sources, a short list \
@@ -238,15 +243,47 @@ board: 6-1 vote, March, property tax increase"). Reference actual stories, \
 names, and details from the corpus, not generic advice. The result should \
 read like a piece of journalism about the beat, useful enough that a \
 brand-new reporter could pick it up and start producing informed coverage \
-the same day.
+the same day.\
+""",
 
-**Do NOT include a table of contents.** The viewer provides its own \
-navigation from the document's headings, so a TOC in the Markdown is \
-redundant. Start the document with the title and subtitle, then go directly \
-into the Beat Overview.\
-"""
+    "scannable": """\
+**Writing style.** Optimize for quick reference. Keep paragraphs short \
+(2–3 sentences). Open each topic section with a **bolded lead sentence** \
+that states the single most important thing, then use bullet points for \
+supporting details. Per-topic sub-headers (e.g. "Key players", "What to \
+watch") are encouraged — they help a reporter scan. Bold key names, \
+organizations, and institutions on first mention. Use complete sentences \
+with concrete subjects and verbs, and reference actual stories, names, and \
+details from the corpus. A reporter should be able to flip to any section \
+and find what they need in seconds.\
+""",
 
-SYSTEM_PROMPT = """\
+    "briefing": """\
+**Writing style.** Write like an editor's desk memo — terse, direct, and \
+action-oriented. Use present tense and imperative mood where it fits \
+("Watch for…", "Talk to…", "The key number is…"). Paragraphs are 2–3 \
+sentences max. Each section opens with the single most important takeaway, \
+then supporting detail. Prioritize actionable intelligence over background: \
+who to call, what to FOIA, which meetings to attend, what numbers to track. \
+The **Background & Context** section should cover only what a reporter \
+needs this week — skip deep history unless it directly informs current \
+coverage. Reference actual stories, names, and details from the corpus. \
+The result should read like a senior editor handing a beat folder to a \
+reporter walking out the door.\
+""",
+}
+
+VALID_STYLES = list(STYLE_PRESETS.keys())
+
+
+def _build_doc_spec(style: str = "narrative") -> str:
+    style_text = STYLE_PRESETS.get(style, STYLE_PRESETS["narrative"])
+    return f"{_DOC_STRUCTURE}\n\n{style_text}\n\n{_NO_TOC}"
+
+
+# ── System prompt templates ────────────────────────────────────────────────
+
+_EXPLORE_TEMPLATE = """\
 You are an expert journalism mentor and beat-book author. Your job is to help \
 a reporter create a comprehensive "beat book" — a practical reporting guide for \
 covering a specific beat (topic area).
@@ -265,17 +302,14 @@ showing per-topic read status — once all topics show "OK", you can generate.
 2. **Generate** — Call `generate_beat_book` once every topic shows "OK" in \
 the progress block.
 
-""" + _DOC_SPEC + """
+{doc_spec}
 
 Keep your conversational messages concise. Use tools frequently.\
 """
 
-# System prompt for the forced final-write turn. The explore prompt's
-# "call generate_beat_book" instruction directly conflicts with the
-# tool_choice="none" the final write uses — Sonnet 4.6 resolves that
-# conflict by ending the turn with empty content. This prompt makes the
-# text reply the explicitly correct action.
-WRITE_SYSTEM_PROMPT = """\
+# The final-write prompt avoids the "call generate_beat_book" instruction
+# that conflicts with tool_choice="none".
+_WRITE_TEMPLATE = """\
 You are an expert journalism mentor and beat-book author. You have finished \
 researching a set of news stories on behalf of a reporter, and your research \
 notes are in the conversation above. Your only job now is to write the \
@@ -284,7 +318,8 @@ complete beat book.
 Reply with ONLY the finished Markdown document — no preamble, no \
 acknowledgement, no tool calls. Start directly with the title (`# ...`).
 
-""" + _DOC_SPEC
+{doc_spec}\
+"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -481,6 +516,7 @@ async def run_agent(
     on_agent_progress: Callable[[float, str], Awaitable[None]] = None,
     on_exploration_done: Callable[[str], Awaitable[None]] = None,
     selected_topics: list[str] | None = None,
+    style: str = "narrative",
 ) -> None:
     """
     Run the agent loop.
@@ -494,6 +530,10 @@ async def run_agent(
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
     """
+    doc_spec = _build_doc_spec(style)
+    system_prompt = _EXPLORE_TEMPLATE.format(doc_spec=doc_spec)
+    write_system_prompt = _WRITE_TEMPLATE.format(doc_spec=doc_spec)
+
     client = chat_client(anthropic_key)
 
     def _streamed_create(**kwargs):
@@ -677,7 +717,7 @@ async def run_agent(
                         max_tokens=MAX_TOKENS_FINAL_GENERATE,
                         system=[{
                             "type": "text",
-                            "text": WRITE_SYSTEM_PROMPT,
+                            "text": write_system_prompt,
                             "cache_control": {"type": "ephemeral"},
                         }],
                         tools=TOOLS,
@@ -690,7 +730,7 @@ async def run_agent(
                         max_tokens=4096,
                         system=[{
                             "type": "text",
-                            "text": SYSTEM_PROMPT,
+                            "text": system_prompt,
                             "cache_control": {"type": "ephemeral"},
                         }],
                         tools=TOOLS,

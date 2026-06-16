@@ -374,10 +374,14 @@ def _prettify_stem(stem: str) -> str:
     return s.title() if s else "Beat Book"
 
 
+VALID_STYLES = ("narrative", "scannable", "briefing")
+
+
 class CreateBookRequest(BaseModel):
     session_id: str
     selected_topics: List[str] = Field(default_factory=list)
     title: Optional[str] = None
+    style: str = "narrative"
 
 
 class PatchBookRequest(BaseModel):
@@ -412,6 +416,8 @@ async def create_book_endpoint(body: CreateBookRequest):
             {"error": "Invalid or expired session. Please re-run the pipeline."},
             status_code=404,
         )
+    style = body.style if body.style in VALID_STYLES else "narrative"
+
     valid = set(pr.topics.keys())
     selected = [t for t in body.selected_topics if t in valid]
     if not selected:
@@ -428,9 +434,10 @@ async def create_book_endpoint(body: CreateBookRequest):
         num_stories=len(pr.stories),
         num_topics=len(selected),
         selected_topics=selected,
+        style=style,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])
