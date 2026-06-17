@@ -20,7 +20,6 @@ import numpy as np
 # Type for progress callbacks: (step_name, progress_fraction 0.0–1.0, detail_text)
 ProgressCallback = Callable[[str, float, str], None]
 
-from openai import OpenAI
 import umap
 import hdbscan
 
@@ -32,15 +31,12 @@ from claude_client import (
     chat_client,
     rate_limit_pause,
 )
+from embed_client import EmbedClient
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Embeddings stay on OpenAI: Anthropic doesn't host an embedding API, and we
-# want this to run anywhere without requiring a local model.
-EMBED_MODEL = "text-embedding-3-small"
-# Cluster labels are 2-5 words — Haiku is sufficient and ~10x faster than Sonnet.
 LABEL_MODEL = "claude-haiku-4-5-20251001"
 CACHE_DIR   = Path(".cache")
 SAMPLE_SIZE_FOR_LABEL = 8
@@ -111,27 +107,24 @@ def _story_to_text(story: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _embed_batch(client: OpenAI, texts: List[str]) -> np.ndarray:
+def _embed_batch(client: EmbedClient, texts: List[str]) -> np.ndarray:
     all_vectors = []
     for i in tqdm(range(0, len(texts), EMBED_BATCH_SIZE), desc="Embedding"):
         chunk = texts[i : i + EMBED_BATCH_SIZE]
-        # OpenAI rejects empty strings; sub a space.
-        cleaned = [t if t.strip() else " " for t in chunk]
-        resp  = client.embeddings.create(input=cleaned, model=EMBED_MODEL)
-        vecs  = [item.embedding for item in sorted(resp.data, key=lambda x: x.index)]
+        vecs = client.embed(chunk)
         all_vectors.extend(vecs)
     return np.array(all_vectors, dtype=np.float32)
 
 
-def _cache_key(texts: List[str]) -> str:
+def _cache_key(texts: List[str], model_name: str) -> str:
     combined = "\n---\n".join(texts)
-    return hashlib.md5((combined + EMBED_MODEL).encode()).hexdigest()
+    return hashlib.md5((combined + model_name).encode()).hexdigest()
 
 
-def _load_or_embed(client: OpenAI, texts: List[str]) -> np.ndarray:
+def _load_or_embed(client: EmbedClient, texts: List[str]) -> np.ndarray:
     CACHE_DIR.mkdir(exist_ok=True)
     cache_file = CACHE_DIR / "embeddings.pkl"
-    key = _cache_key(texts)
+    key = _cache_key(texts, client.model_name)
     if cache_file.exists():
         with open(cache_file, "rb") as f:
             cached = pickle.load(f)
@@ -152,8 +145,8 @@ def _umap_params(n: int) -> dict:
 
 
 def _cluster_sizes(n: int) -> Tuple[int, int]:
-    broad    = max(4, n // 25)
-    specific = max(2, n // 60)
+    broad    = max(8, n // 6)
+    specific = max(4, n // 20)
     return broad, specific
 
 
@@ -184,12 +177,12 @@ def _reduce(vectors: np.ndarray) -> np.ndarray:
     raise RuntimeError("UMAP failed with every init strategy")
 
 
-def _cluster(reduced: np.ndarray, min_cluster_size: int):
+def _cluster(reduced: np.ndarray, min_cluster_size: int, broad: bool = False):
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=min_cluster_size,
-        min_samples=2,
+        min_samples=max(2, min_cluster_size // 2) if broad else 2,
         metric="euclidean",
-        cluster_selection_method="eom",
+        cluster_selection_method="leaf" if broad else "eom",
         prediction_data=True,
     )
     labels = clusterer.fit_predict(reduced)
@@ -366,17 +359,14 @@ def _label_all(client, stories, labels, reduced, level_name, on_progress=None):
 # PUBLIC API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(stories: List[dict], openai_key: str, anthropic_key: str,
+def run_pipeline(stories: List[dict], embed_client: EmbedClient, anthropic_key: str,
                  on_progress: Optional[ProgressCallback] = None) -> PipelineResult:
-    """Full pipeline: embed \u2192 reduce \u2192 cluster \u2192 label \u2192 return PipelineResult.
-
-    Embeds via OpenAI (text-embedding-3-small); labels via Claude Sonnet 4.6.
-    """
+    """Full pipeline: embed \u2192 reduce \u2192 cluster \u2192 label \u2192 return PipelineResult."""
     def _p(step, frac, detail=""):
         if on_progress:
             on_progress(step, frac, detail)
 
-    embed_clt = OpenAI(api_key=openai_key)
+    embed_clt = embed_client
     chat_clt  = chat_client(anthropic_key)
 
     _p("embedding", 0.0, f"Generating embeddings for {len(stories)} stories\u2026")
@@ -412,11 +402,17 @@ def run_pipeline(stories: List[dict], openai_key: str, anthropic_key: str,
     print(f"Cluster sizes: broad_min={broad_min}, specific_min={specific_min}")
 
     _p("clustering", 0.0, "Clustering stories\u2026")
-    broad_labels, _  = _cluster(reduced, broad_min)
-    broad_labels      = _assign_outliers(reduced, broad_labels)
-    _p("clustering", 0.5, "Broad clusters found")
+    # Progressively increase min_cluster_size until we get \u22644 broad topics.
+    max_broad_topics = max(3, len(stories) // 15)
+    for attempt_min in range(broad_min, len(stories) // 2, 2):
+        broad_labels, _ = _cluster(reduced, attempt_min, broad=True)
+        broad_labels = _assign_outliers(reduced, broad_labels)
+        n_broad = len(set(broad_labels))
+        if n_broad <= max_broad_topics:
+            break
+    _p("clustering", 0.5, f"Broad clusters found ({n_broad} topics)")
 
-    spec_labels, _   = _cluster(reduced, specific_min)
+    spec_labels, _   = _cluster(reduced, specific_min, broad=False)
     spec_labels       = _assign_outliers(reduced, spec_labels)
     _p("clustering", 1.0, "All clusters found")
 

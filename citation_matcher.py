@@ -12,7 +12,7 @@ Pipeline
 1. Chunk each source story into ~100-word sliding windows (16-word overlap),
    keeping the char offset back into the original source so we can resolve a
    passage hit to a quoted span later.
-2. Embed every source passage with OpenAI `text-embedding-3-small`. Embed every
+2. Embed every source passage (via the configured embedding provider). Embed every
    sentence in the beat book the same way, plus a "context-sum" variant that
    adds weighted neighbors (`0.6 * prev + 1.0 * self + 0.4 * next`) — helps
    pronoun-heavy / short sentences attribute correctly.
@@ -28,8 +28,8 @@ Pipeline
 
 Public entry points
 ~~~~~~~~~~~~~~~~~~~
-- `embed_source_stories(stories, openai_key, on_progress)` → source index
-- `markdown_to_beatbook_entries(markdown, source_index, openai_key,
+- `embed_source_stories(stories, embed_client, on_progress)` → source index
+- `markdown_to_beatbook_entries(markdown, source_index, embed_client,
    on_progress)` → list of citation entries (one per Markdown line/sentence)
 - `build_sources_file(stories, source_index)` → sources JSON for the viewer
 
@@ -44,19 +44,13 @@ import re
 from typing import Callable, List, Dict, Any, Optional, Tuple
 
 import numpy as np
-from openai import OpenAI
+
+from embed_client import EmbedClient
 
 # Progress callback signature: (stage_label, fraction_0_to_1, detail)
 ProgressCallback = Callable[[str, float, str], None]
 
-# Anthropic doesn't host an embedding API, so embeddings stay on OpenAI.
-EMBED_MODEL = "text-embedding-3-small"
-# The API accepts up to 2048 inputs per request, but we cap lower to keep
-# individual HTTP payloads reasonable.
 EMBED_BATCH_SIZE = 256
-# Parallel HTTP workers when there are multiple batches to send. OpenAI's
-# embedding RPM ceiling for paid accounts comfortably accommodates 6 in-flight
-# requests per second; if you see 429s, drop this.
 EMBED_PARALLEL_WORKERS = 6
 
 # Passage chunking (source side). 100 words with 16-word overlap maps to
@@ -273,18 +267,15 @@ def _passage_windows(
 # EMBEDDINGS (OpenAI batch)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _embed_batch(client: OpenAI, texts: List[str]) -> List[List[float]]:
-    """Embed a list of texts in one API call."""
+def _embed_batch(client: EmbedClient, texts: List[str]) -> List[List[float]]:
+    """Embed a list of texts in one call."""
     if not texts:
         return []
-    # OpenAI treats empty strings as an error; replace with a single space.
-    cleaned = [t if t.strip() else " " for t in texts]
-    resp = client.embeddings.create(model=EMBED_MODEL, input=cleaned)
-    return [item.embedding for item in resp.data]
+    return client.embed(texts)
 
 
 def _embed_many(
-    client: OpenAI,
+    client: EmbedClient,
     texts: List[str],
     on_progress: Optional[ProgressCallback],
     stage: str,
@@ -292,7 +283,7 @@ def _embed_many(
     """Embed an arbitrary number of texts in parallel batches and return an
     (n, d) float32 numpy array. Result order matches input order."""
     if not texts:
-        return np.zeros((0, 1536), dtype=np.float32)
+        return np.zeros((0, client.dimensions), dtype=np.float32)
 
     # Slice into ordered batches.
     batches: List[List[str]] = []
@@ -345,7 +336,7 @@ def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
 
 def embed_source_stories(
     stories: List[dict],
-    openai_key: str,
+    embed_client: EmbedClient,
     on_progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """Build the source index: chunk every story into sliding passage windows,
@@ -372,7 +363,7 @@ def embed_source_stories(
                         L2-normalized (so similarity = embeddings @ q.T).
         }
     """
-    client = OpenAI(api_key=openai_key)
+    client = embed_client
 
     articles: List[Dict[str, Any]] = []
     global_passages: List[Dict[str, Any]] = []
@@ -525,7 +516,7 @@ def _context_sum_embeddings(
 def markdown_to_beatbook_entries(
     markdown: str,
     source_index: Dict[str, Any],
-    openai_key: str,
+    embed_client: EmbedClient,
     on_progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, Any]:
     """Convert a Markdown beat book into a citation-annotated entry list.
@@ -564,7 +555,7 @@ def markdown_to_beatbook_entries(
           ],
         }
     """
-    client = OpenAI(api_key=openai_key)
+    client = embed_client
 
     entries = _segment_markdown(markdown)
 
@@ -710,7 +701,7 @@ def markdown_to_beatbook_entries(
         loo_embs = _embed_many(client, loo_minus_texts, on_progress, "highlighting")
         loo_embs_norm = _l2_normalize(loo_embs)
     else:
-        loo_embs_norm = np.zeros((0, 1536), dtype=np.float32)
+        loo_embs_norm = np.zeros((0, client.dimensions), dtype=np.float32)
 
     # ── Phase 3: compute highlight contributions per (sentence, passage) pair.
     for meta in loo_meta:

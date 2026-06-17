@@ -46,6 +46,7 @@ if _env_file.exists():
 from pipeline import run_pipeline, PipelineResult
 from agent import _derive_filename
 from ingest import ingest_file, ingest_url
+from embed_client import get_embed_client, get_embed_provider, list_ollama_models
 import store
 from jobs import BookJob, generation_worker
 
@@ -89,15 +90,20 @@ app = FastAPI(title="Beat Book Builder", lifespan=lifespan)
 # concurrent-request limit (ingest.py itself runs chunks serially too).
 _INGEST_CONCURRENCY = 4
 
-# In-memory handoff between /process and POST /books: session_id → PipelineResult.
+@dataclass
+class SessionData:
+    pipeline_result: PipelineResult
+    embed_model: Optional[str] = None
+
+# In-memory handoff between /process and POST /books: session_id → SessionData.
 # Bounded so heavy corpora don't leak — once POST /books runs, the BookJob owns
 # the corpus, so eviction here is safe.
 _SESSIONS_CAP = 16
-sessions: "OrderedDict[str, PipelineResult]" = OrderedDict()
+sessions: "OrderedDict[str, SessionData]" = OrderedDict()
 
 
-def _remember_session(session_id: str, result: PipelineResult) -> None:
-    sessions[session_id] = result
+def _remember_session(session_id: str, result: PipelineResult, embed_model: Optional[str] = None) -> None:
+    sessions[session_id] = SessionData(pipeline_result=result, embed_model=embed_model)
     sessions.move_to_end(session_id)
     while len(sessions) > _SESSIONS_CAP:
         sessions.popitem(last=False)
@@ -130,6 +136,7 @@ class StoryIn(BaseModel):
 
 class ProcessRequest(BaseModel):
     stories: List[StoryIn] = Field(default_factory=list)
+    embed_model: Optional[str] = None
 
 OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -143,6 +150,20 @@ SANDBOX_ROOT.mkdir(exist_ok=True)
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
+
+
+@app.get("/api/embed-config")
+async def embed_config():
+    provider = get_embed_provider()
+    result: dict = {"provider": provider}
+    if provider == "ollama":
+        try:
+            result["models"] = list_ollama_models()
+            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:4b")
+        except Exception:
+            result["models"] = []
+            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:4b")
+    return JSONResponse(result)
 
 
 async def _run_ingest_job(
@@ -308,9 +329,10 @@ async def process(body: ProcessRequest):
     if not stories:
         return JSONResponse({"error": "No stories provided."}, status_code=400)
 
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-    if not openai_key:
-        return JSONResponse({"error": "OPENAI_API_KEY not configured (used for embeddings)."}, status_code=500)
+    try:
+        embed_clt = get_embed_client(model_override=body.embed_model)
+    except RuntimeError as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not anthropic_key:
         return JSONResponse({"error": "ANTHROPIC_API_KEY not configured (used for cluster labeling)."}, status_code=500)
@@ -323,7 +345,7 @@ async def process(body: ProcessRequest):
     async def event_stream():
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
-            None, run_pipeline, stories, openai_key, anthropic_key, on_progress
+            None, run_pipeline, stories, embed_clt, anthropic_key, on_progress
         )
 
         while not future.done():
@@ -347,7 +369,7 @@ async def process(body: ProcessRequest):
             return
 
         session_id = str(uuid.uuid4())[:8]
-        _remember_session(session_id, result)
+        _remember_session(session_id, result, embed_model=body.embed_model)
 
         yield (
             "data: " + json.dumps({
@@ -410,12 +432,13 @@ async def get_book_endpoint(book_id: str):
 async def create_book_endpoint(body: CreateBookRequest):
     """Enqueue a beat book for background generation. Returns immediately with a
     book_id; progress streams over WS /ws/books/{book_id}."""
-    pr = sessions.get(body.session_id)
-    if pr is None:
+    sess = sessions.get(body.session_id)
+    if sess is None:
         return JSONResponse(
             {"error": "Invalid or expired session. Please re-run the pipeline."},
             status_code=404,
         )
+    pr = sess.pipeline_result
     style = body.style if body.style in VALID_STYLES else "narrative"
 
     valid = set(pr.topics.keys())
@@ -437,7 +460,7 @@ async def create_book_endpoint(body: CreateBookRequest):
         style=style,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, embed_model=sess.embed_model)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])

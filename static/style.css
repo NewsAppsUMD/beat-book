@@ -369,6 +369,33 @@ a:hover { text-decoration: underline; }
   color: var(--text-faint);
 }
 
+/* ── Embed model selector (upload screen) ────────────────────────────── */
+.embed-model-selector {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+.embed-model-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.embed-model-select {
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.embed-model-select:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 /* ── Style selector (topic screen) ────────────────────────────────────── */
 .style-selector {
   margin-top: 1.5rem;
