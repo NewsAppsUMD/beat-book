@@ -42,6 +42,7 @@ from citation_matcher import (
     build_sources_file,
 )
 from embed_client import get_embed_client
+from chat_provider import ChatProvider, get_chat_provider
 
 OUTPUT_DIR = Path("output")
 SANDBOX_ROOT = OUTPUT_DIR / "sandboxes"
@@ -113,6 +114,7 @@ async def run_generation(
     anthropic_key: str,
     embed_client=None,
     style: str = "narrative",
+    chat_provider: Optional[ChatProvider] = None,
 ) -> None:
     """Run one beat book end to end. Never raises — terminal state is recorded
     in the store and emitted as a ``beat_book`` or ``error`` event."""
@@ -311,10 +313,12 @@ async def run_generation(
         book_written = True
 
     # ── Run the agent loop ───────────────────────────────────────────────────
+    if chat_provider is None:
+        chat_provider = get_chat_provider(api_key=anthropic_key)
     try:
         await run_agent(
             pipeline_result=pipeline_result,
-            anthropic_key=anthropic_key,
+            provider=chat_provider,
             on_message=on_message,
             on_beat_book=on_beat_book,
             on_tool_status=on_tool_status,
@@ -360,11 +364,13 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
                 embed_clt = get_embed_client(model_override=job.embed_model)
             except RuntimeError:
                 embed_clt = None
+            chat_pvd = get_chat_provider(api_key=anthropic_key)
             try:
                 await run_generation(
                     book_id, job.pipeline_result, job.selected_topics,
                     emit, anthropic_key, embed_clt,
                     style=job.style,
+                    chat_provider=chat_pvd,
                 )
             except Exception:
                 # run_generation already handles its own errors; this is a backstop

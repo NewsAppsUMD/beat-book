@@ -8,8 +8,8 @@ Two stages:
    Format dispatcher. markitdown handles docx/pdf/html/pptx/xlsx/rtf.
    stdlib handles txt/md/json. Unknown extensions get a utf-8 best-effort.
 
-2. normalize(text, source_label, anthropic_key) → list[Story]
-   Claude Sonnet 4.6 tool-use call with a strict schema. Documents that fit
+2. normalize(text, source_label, provider) → list[Story]
+   LLM tool-use call with a strict schema (via ChatProvider). Documents that fit
    in one window get a single call; larger documents are split into
    overlapping windows, processed concurrently, and deduplicated on merge.
    The LLM only infers metadata (title/date/author) and returns verbatim
@@ -40,6 +40,13 @@ import anthropic
 import feedparser
 import httpx
 
+from chat_provider import (
+    ChatProvider,
+    ChatProviderError,
+    ChatRateLimitError,
+    get_chat_provider,
+    retry_pause as cp_retry_pause,
+)
 from claude_client import (
     ANTHROPIC_SEMAPHORE,
     RATE_LIMIT_MAX_RETRIES,
@@ -79,6 +86,7 @@ WINDOW_OVERLAP = 15_000          # chars of overlap between adjacent chunks
 # (≈50 MB of HTML-stripped text at ~100 KB per chunk).
 MAX_CHUNKS = 500
 NORMALIZE_CONCURRENCY = 4
+_NORMALIZE_SEMAPHORE = threading.Semaphore(NORMALIZE_CONCURRENCY)
 # Record separator emitted by _extract_json for top-level JSON lists.
 # When present in the extracted text, _make_chunks packs whole records
 # into each chunk so a story body is never split across two chunks.
@@ -1162,9 +1170,9 @@ def _dedup_key(story: Story) -> str:
 def _normalize_chunk(
     text: str,
     source_label: str,
-    anthropic_key: str,
+    provider: ChatProvider,
     *,
-    model: str = NORMALIZE_MODEL,
+    model: str | None = None,
     link_hint: str = "",
     user_hint: str = "",
     allow_full_doc_fallback: bool = True,
@@ -1176,7 +1184,7 @@ def _normalize_chunk(
     that story's body. Safe only for whole-document calls; in chunked mode
     it would splice in content from adjacent stories.
     """
-    client = chat_client(anthropic_key)
+    model = model or provider.normalize_model
 
     user_prefix = f"Source label: {source_label}\n"
     if link_hint:
@@ -1187,56 +1195,45 @@ def _normalize_chunk(
     user_prefix += "----- BEGIN DOCUMENT -----\n"
     user_suffix = "\n----- END DOCUMENT -----"
 
-    tool_use_block = None
+    payload = None
     for attempt in range(NORMALIZE_MAX_ATTEMPTS):
-        # Inner retry loop catches RateLimitError (Anthropic concurrent-
-        # connection 429s) and logs every wait at WARNING so the operator
-        # can see what's happening instead of staring at a silent spinner.
-        resp = None
+        chat_resp = None
         for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
-                # Extended thinking is incompatible with forced tool_choice,
-                # so we don't pass `thinking` here — omission == disabled.
-                with ANTHROPIC_SEMAPHORE:
-                    resp = client.messages.create(
+                with _NORMALIZE_SEMAPHORE:
+                    chat_resp = provider.create(
                         model=model,
-                        max_tokens=NORMALIZE_MAX_TOKENS,
-                        system=[{
-                            "type": "text",
-                            "text": _NORMALIZE_SYSTEM,
-                            "cache_control": {"type": "ephemeral"},
-                        }],
+                        system=_NORMALIZE_SYSTEM,
                         messages=[
                             {"role": "user", "content": user_prefix + text + user_suffix},
                         ],
-                        tools=[{**_NORMALIZE_TOOL, "cache_control": {"type": "ephemeral"}}],
+                        tools=[_NORMALIZE_TOOL],
+                        max_tokens=NORMALIZE_MAX_TOKENS,
                         tool_choice={"type": "tool", "name": "register_stories"},
                     )
                 break
-            except anthropic.RateLimitError as e:
+            except ChatRateLimitError as e:
                 if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                     raise IngestError(
                         f"{source_label}: rate limit not cleared after "
                         f"{RATE_LIMIT_MAX_RETRIES} retries — {e}"
                     ) from e
-                pause = rate_limit_pause(rl_attempt, e)
+                pause = cp_retry_pause(rl_attempt, e)
                 logger.warning(
                     "Rate limited on %s; waiting %.0fs (attempt %d/%d).",
                     source_label, pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES,
                 )
                 time.sleep(pause)
-            except Exception as e:
+            except ChatProviderError as e:
                 raise IngestError(
                     f"{source_label}: LLM normalization failed — {type(e).__name__}: {e}"
                 ) from e
 
-        assert resp is not None  # loop above either sets resp or raises
+        assert chat_resp is not None
 
-        tool_use_block = next(
-            (b for b in resp.content if getattr(b, "type", None) == "tool_use"),
-            None,
-        )
-        if tool_use_block is not None:
+        tool_calls = chat_resp.tool_calls
+        if tool_calls:
+            payload = tool_calls[0]["input"]
             break
         if attempt + 1 < NORMALIZE_MAX_ATTEMPTS:
             logger.warning(
@@ -1244,13 +1241,12 @@ def _normalize_chunk(
                 source_label, attempt + 1, NORMALIZE_MAX_ATTEMPTS,
             )
 
-    if tool_use_block is None:
+    if payload is None:
         raise IngestError(
             f"{source_label}: LLM did not return structured stories after "
             f"{NORMALIZE_MAX_ATTEMPTS} attempts."
         )
 
-    payload = tool_use_block.input if isinstance(tool_use_block.input, dict) else {}
     return _stories_from_payload(
         payload, text, source_label, link_hint, allow_full_doc_fallback
     )
@@ -1340,23 +1336,24 @@ def _stories_from_payload(
 def normalize(
     text: str,
     source_label: str,
-    anthropic_key: str,
+    provider: ChatProvider,
     *,
-    model: str = NORMALIZE_MODEL,
+    model: str | None = None,
     concurrency: int = NORMALIZE_CONCURRENCY,
     link_hint: str = "",
     user_hint: str = "",
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> Tuple[list[Story], bool, str]:
-    """Stage 2. Run extracted text through Haiku to produce structured entries.
-    Single call for documents that fit in one window; for larger documents fan
-    out into overlapping windows processed concurrently and deduplicate on merge.
+    """Stage 2. Run extracted text through the chat provider to produce
+    structured entries.  Single call for documents that fit in one window;
+    for larger documents fan out into overlapping windows processed
+    concurrently and deduplicate on merge.
 
     Returns (stories, is_news_content, skip_reason).
     """
     def _chunk_fn(chunk_text: str, fallback: bool) -> Tuple[list[Story], bool, str]:
         return _normalize_chunk(
-            chunk_text, source_label, anthropic_key,
+            chunk_text, source_label, provider,
             model=model, link_hint=link_hint, user_hint=user_hint,
             allow_full_doc_fallback=fallback,
         )
@@ -1472,10 +1469,13 @@ def ingest_file(
     raw: bytes,
     anthropic_key: str,
     *,
+    provider: "ChatProvider | None" = None,
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> IngestedSource:
     """Run both stages on an uploaded file. Never raises; failure is reported
     via excluded/skip_reason/extract_error on the returned IngestedSource."""
+    if provider is None:
+        provider = get_chat_provider(api_key=anthropic_key or None)
     source = IngestedSource(source_label=filename, kind="file")
 
     # Fast path: structured JSON with explicit story fields skips the LLM.
@@ -1542,7 +1542,7 @@ def ingest_file(
 
     try:
         stories, _, skip_reason = normalize(
-            text, filename, anthropic_key,
+            text, filename, provider,
             user_hint=user_hint,
             on_progress=on_progress,
         )
@@ -1563,9 +1563,12 @@ def ingest_url(
     url: str,
     anthropic_key: str,
     *,
+    provider: "ChatProvider | None" = None,
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> IngestedSource:
     """Fetch a URL, then run both stages. Same failure semantics as ingest_file."""
+    if provider is None:
+        provider = get_chat_provider(api_key=anthropic_key or None)
     source = IngestedSource(source_label=url, kind="url")
 
     try:
@@ -1606,7 +1609,7 @@ def ingest_url(
 
     try:
         stories, _, skip_reason = normalize(
-            text, url, anthropic_key,
+            text, url, provider,
             link_hint=url,
             on_progress=on_progress,
         )

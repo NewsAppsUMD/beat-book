@@ -47,6 +47,7 @@ from pipeline import run_pipeline, PipelineResult
 from agent import _derive_filename
 from ingest import ingest_file, ingest_url
 from embed_client import get_embed_client, get_embed_provider, list_ollama_models
+from chat_provider import get_chat_provider
 import store
 from jobs import BookJob, generation_worker
 
@@ -172,6 +173,7 @@ async def _run_ingest_job(
     url_list: List[str],
     *,
     anthropic_key: str,
+    provider: "Any" = None,
 ) -> None:
     loop = asyncio.get_event_loop()
     semaphore = asyncio.Semaphore(_INGEST_CONCURRENCY)
@@ -196,6 +198,7 @@ async def _run_ingest_job(
                     name,
                     raw,
                     anthropic_key,
+                    provider=provider,
                     on_progress=on_progress,
                 ),
             )
@@ -223,6 +226,7 @@ async def _run_ingest_job(
                 lambda: ingest_url(
                     url,
                     anthropic_key,
+                    provider=provider,
                     on_progress=on_progress,
                 ),
             )
@@ -265,10 +269,12 @@ async def ingest_start(
 ):
     """Start ingest in the background and return a job id."""
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
+    chat_provider_name = os.environ.get("CHAT_PROVIDER", "anthropic").strip().lower()
+    if not anthropic_key and chat_provider_name == "anthropic":
         return JSONResponse(
             {"error": "ANTHROPIC_API_KEY not configured."}, status_code=500
         )
+    ingest_provider = get_chat_provider(api_key=anthropic_key or None)
 
     url_list = [u.strip() for u in urls.splitlines() if u.strip()]
 
@@ -292,6 +298,7 @@ async def ingest_start(
             buffered_files,
             url_list,
             anthropic_key=anthropic_key,
+            provider=ingest_provider,
         )
     )
 
@@ -333,9 +340,10 @@ async def process(body: ProcessRequest):
         embed_clt = get_embed_client(model_override=body.embed_model)
     except RuntimeError as e:
         return JSONResponse({"error": str(e)}, status_code=500)
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
-        return JSONResponse({"error": "ANTHROPIC_API_KEY not configured (used for cluster labeling)."}, status_code=500)
+    try:
+        chat_pvd = get_chat_provider()
+    except Exception as e:
+        return JSONResponse({"error": f"Chat provider not configured: {e}"}, status_code=500)
 
     progress_queue: queue.Queue = queue.Queue()
 
@@ -345,7 +353,7 @@ async def process(body: ProcessRequest):
     async def event_stream():
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
-            None, run_pipeline, stories, embed_clt, anthropic_key, on_progress
+            None, run_pipeline, stories, embed_clt, chat_pvd, on_progress
         )
 
         while not future.done():
