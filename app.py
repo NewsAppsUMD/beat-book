@@ -160,10 +160,10 @@ async def embed_config():
     if provider == "ollama":
         try:
             result["models"] = list_ollama_models()
-            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:4b")
+            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:0.6b")
         except Exception:
             result["models"] = []
-            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:4b")
+            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:0.6b")
     else:
         model = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
         result["models"] = [{"name": model}]
