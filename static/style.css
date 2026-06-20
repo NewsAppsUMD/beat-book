@@ -369,6 +369,65 @@ a:hover { text-decoration: underline; }
   color: var(--text-faint);
 }
 
+/* ── Style selector (topic screen) ────────────────────────────────────── */
+.style-selector {
+  margin-top: 1.5rem;
+}
+
+.style-heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+}
+
+.style-options {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.style-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem 1rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.style-option:hover {
+  border-color: var(--border-strong);
+}
+
+.style-option.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.style-option input[type="radio"] {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.style-name {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+
+.style-desc {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
 .topic-select-actions {
   display: flex;
   align-items: center;
@@ -676,6 +735,7 @@ a:focus-visible {
   .generating-card { padding: 1.75rem 1.5rem 1.25rem; }
   .work-card-hero h1 { font-size: 1.2rem; }
   .step-heading h1 { font-size: 1.35rem; }
+  .style-options { flex-direction: column; }
   .work-card-footer {
     flex-direction: column;
     align-items: flex-start;

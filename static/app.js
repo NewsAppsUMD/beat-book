@@ -808,6 +808,13 @@
   $("topic-select-all").addEventListener("click", () => { document.querySelectorAll("#topic-list input").forEach(cb => { cb.checked = true; cb.closest(".topic-item").classList.add("selected"); }); updateTopicBtn(); });
   $("topic-deselect-all").addEventListener("click", () => { document.querySelectorAll("#topic-list input").forEach(cb => { cb.checked = false; cb.closest(".topic-item").classList.remove("selected"); }); updateTopicBtn(); });
 
+  document.querySelectorAll(".style-option").forEach(label => {
+    label.addEventListener("click", () => {
+      document.querySelectorAll(".style-option").forEach(l => l.classList.remove("selected"));
+      label.classList.add("selected");
+    });
+  });
+
   $("topic-generate-btn").addEventListener("click", async () => {
     const selected = [...document.querySelectorAll("#topic-list input:checked")].map(cb => cb.value);
     if (!pendingSession || selected.length === 0) return;
@@ -820,7 +827,9 @@
     showGeneratingActions(null);
 
     try {
-      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected }) });
+      const styleRadio = document.querySelector('input[name="style"]:checked');
+      const style = styleRadio ? styleRadio.value : "narrative";
+      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style }) });
       const data = await resp.json();
       if (!resp.ok) { setGenerating("Couldn't start", data.error || "Failed to enqueue generation."); setShimmerIndeterminate(); return; }
       setWorking(false);                          // generation is server-side now
