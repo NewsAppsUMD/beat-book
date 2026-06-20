@@ -744,7 +744,7 @@
 
     try {
       const embedModelSel = $("embed-model-select");
-      const embedModel = (embedConfig && embedConfig.provider === "ollama" && embedModelSel) ? embedModelSel.value : null;
+      const embedModel = (embedConfig && embedModelSel && embedModelSel.value) ? embedModelSel.value : null;
       const processBody = { stories };
       if (embedModel) processBody.embed_model = embedModel;
       const resp = await fetch("/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(processBody) });
@@ -903,7 +903,7 @@
   // Fetch embedding provider config (shows model selector when Ollama is active)
   fetch("/api/embed-config").then(r => r.json()).then(cfg => {
     embedConfig = cfg;
-    if (cfg.provider === "ollama" && cfg.models && cfg.models.length > 0) {
+    if (cfg.models && cfg.models.length > 0) {
       const selector = $("embed-model-selector");
       const select = $("embed-model-select");
       select.innerHTML = "";

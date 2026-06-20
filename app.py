@@ -164,6 +164,10 @@ async def embed_config():
         except Exception:
             result["models"] = []
             result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:4b")
+    else:
+        model = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+        result["models"] = [{"name": model}]
+        result["default_model"] = model
     return JSONResponse(result)
 
 

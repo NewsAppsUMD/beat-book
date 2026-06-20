@@ -96,11 +96,6 @@
                 <textarea id="url-input" class="url-input" rows="3" placeholder="https://example.com/article-1&#10;https://example.com/article-2"></textarea>
               </div>
 
-              <div id="embed-model-selector" class="embed-model-selector" hidden>
-                <label for="embed-model-select" class="embed-model-label">Embedding model</label>
-                <select id="embed-model-select" class="embed-model-select"></select>
-              </div>
-
               <button id="upload-btn" class="btn primary" disabled>
                 Read &amp; Detect Stories
               </button>
@@ -135,6 +130,10 @@
                   </button>
                 </div>
                 <div class="preview-toolbar-right">
+                  <div id="embed-model-selector" class="embed-model-selector" hidden>
+                    <label for="embed-model-select" class="embed-model-label">Embeddings</label>
+                    <select id="embed-model-select" class="embed-model-select"></select>
+                  </div>
                   <span id="preview-included-count" class="submit-hint"></span>
                   <button id="preview-run-btn" class="btn primary">Run pipeline</button>
                 </div>
