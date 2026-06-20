@@ -382,6 +382,7 @@ class CreateBookRequest(BaseModel):
     selected_topics: List[str] = Field(default_factory=list)
     title: Optional[str] = None
     style: str = "narrative"
+    custom_instructions: str = ""
 
 
 class PatchBookRequest(BaseModel):
@@ -417,6 +418,7 @@ async def create_book_endpoint(body: CreateBookRequest):
             status_code=404,
         )
     style = body.style if body.style in VALID_STYLES else "narrative"
+    custom_instructions = (body.custom_instructions or "").strip()
 
     valid = set(pr.topics.keys())
     selected = [t for t in body.selected_topics if t in valid]
@@ -435,9 +437,10 @@ async def create_book_endpoint(body: CreateBookRequest):
         num_topics=len(selected),
         selected_topics=selected,
         style=style,
+        custom_instructions=custom_instructions,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, custom_instructions=custom_instructions)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])

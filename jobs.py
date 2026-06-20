@@ -61,6 +61,7 @@ class BookJob:
     pipeline_result: Any = None              # PipelineResult; nulled after run
     selected_topics: List[str] = field(default_factory=list)
     style: str = "narrative"
+    custom_instructions: str = ""
     status: str = "queued"
     events: List[dict] = field(default_factory=list)
     subscribers: set = field(default_factory=set)        # set[asyncio.Queue]
@@ -111,6 +112,7 @@ async def run_generation(
     anthropic_key: str,
     openai_key: str,
     style: str = "narrative",
+    custom_instructions: str = "",
 ) -> None:
     """Run one beat book end to end. Never raises — terminal state is recorded
     in the store and emitted as a ``beat_book`` or ``error`` event."""
@@ -321,6 +323,7 @@ async def run_generation(
             on_exploration_done=on_exploration_done,
             selected_topics=selected_topics,
             style=style,
+            custom_instructions=custom_instructions,
         )
     except Exception as e:
         traceback.print_exc()
@@ -360,6 +363,7 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
                     book_id, job.pipeline_result, job.selected_topics,
                     emit, anthropic_key, openai_key,
                     style=job.style,
+                    custom_instructions=job.custom_instructions,
                 )
             except Exception:
                 # run_generation already handles its own errors; this is a backstop

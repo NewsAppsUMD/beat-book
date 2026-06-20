@@ -829,7 +829,8 @@
     try {
       const styleRadio = document.querySelector('input[name="style"]:checked');
       const style = styleRadio ? styleRadio.value : "narrative";
-      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style }) });
+      const customInstructions = $("custom-instructions-input").value.trim();
+      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style, custom_instructions: customInstructions }) });
       const data = await resp.json();
       if (!resp.ok) { setGenerating("Couldn't start", data.error || "Failed to enqueue generation."); setShimmerIndeterminate(); return; }
       setWorking(false);                          // generation is server-side now
