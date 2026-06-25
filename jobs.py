@@ -146,16 +146,21 @@ async def run_generation(
     async def on_agent_progress(pct: float, label: str):
         await emit({"type": "agent_progress", "pct": pct, "label": label})
 
-    _research_task: asyncio.Task | None = None
-    _exploration_context: str | None = None
     book_written = False
 
     async def on_exploration_done(context_doc: str):
-        """Start the Opus research agent as soon as exploration finishes, in
-        parallel with the draft write."""
-        nonlocal _research_task, _exploration_context
-        _exploration_context = context_doc
+        pass
+
+    async def on_beat_book(_agent_filename: str, markdown: str):
+        """Run research on the real draft, write outputs, run citations."""
+        nonlocal book_written
+
+        # 1. Persist the raw draft.
+        (OUTPUT_DIR / f"{stem}.draft.md").write_text(markdown, encoding="utf-8")
+
+        # 2. Run research sequentially on the real draft.
         await emit({"type": "research_started", "filename": filename})
+        (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
 
         async def on_research_progress(stage, detail):
             await emit({"type": "research_progress", "stage": stage, "detail": detail})
@@ -166,62 +171,20 @@ async def run_generation(
         async def on_research_text(text):
             await emit({"type": "research_message", "text": text})
 
-        async def _run():
-            try:
-                return await run_research_agent(
-                    sandbox_dir=sandbox_dir,
-                    markdown_filename=filename,
-                    anthropic_api_key=anthropic_key,
-                    on_progress=on_research_progress,
-                    on_tool_status=on_research_tool_status,
-                    on_text=on_research_text,
-                    initial_content=context_doc,
-                )
-            except Exception:
-                traceback.print_exc()
-                return None  # fall back to the draft
-
-        _research_task = asyncio.create_task(_run())
-
-    async def on_beat_book(_agent_filename: str, markdown: str):
-        """Merge draft + research, write outputs (onto the reserved stem), run
-        the citation matcher, emit the final beat_book event."""
-        nonlocal book_written
-
-        # 1. Persist the raw draft.
-        (OUTPUT_DIR / f"{stem}.draft.md").write_text(markdown, encoding="utf-8")
-
-        # 2. Await research (parallel path), or run it now (sequential fallback).
         research_result: str | None = None
-        if _research_task is not None:
-            (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
-            research_result = await _research_task
-        else:
-            await emit({"type": "research_started", "filename": filename})
-            (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
-
-            async def on_research_progress(stage, detail):
-                await emit({"type": "research_progress", "stage": stage, "detail": detail})
-
-            async def on_research_tool_status(tool_name, desc, detail):
-                await emit({"type": "research_tool_status", "tool_name": tool_name, "tool": desc, "detail": detail})
-
-            async def on_research_text(text):
-                await emit({"type": "research_message", "text": text})
-
-            try:
-                research_result = await run_research_agent(
-                    sandbox_dir=sandbox_dir,
-                    markdown_filename=filename,
-                    anthropic_api_key=anthropic_key,
-                    on_progress=on_research_progress,
-                    on_tool_status=on_research_tool_status,
-                    on_text=on_research_text,
-                )
-            except Exception as e:
-                traceback.print_exc()
-                await emit({"type": "error",
-                            "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft."})
+        try:
+            research_result = await run_research_agent(
+                sandbox_dir=sandbox_dir,
+                markdown_filename=filename,
+                anthropic_api_key=anthropic_key,
+                on_progress=on_research_progress,
+                on_tool_status=on_research_tool_status,
+                on_text=on_research_text,
+            )
+        except Exception as e:
+            traceback.print_exc()
+            await emit({"type": "error",
+                        "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft."})
 
         # 3. The research agent receives the draft beat book in its sandbox,
         #    enriches it with web research, and returns the full revised
@@ -238,7 +201,7 @@ async def run_generation(
         (OUTPUT_DIR / filename).write_text(revised_markdown, encoding="utf-8")
         await emit({"type": "beat_book_markdown_saved", "filename": filename})
 
-        final_title = _title_from_markdown(revised_markdown) or (book["title"] if book else stem)
+        final_title = _title_from_markdown(markdown) or _title_from_markdown(revised_markdown) or (book["title"] if book else stem)
 
         def _finish_ready():
             """Mark ready + emit the terminal beat_book event (shared by the
