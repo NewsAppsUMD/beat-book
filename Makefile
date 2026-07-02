@@ -34,7 +34,7 @@ run: $(VENV)/bin/activate
 	$(UVICORN) app:app --host $(HOST) --port $(PORT)
 
 dev: $(VENV)/bin/activate
-	$(UVICORN) app:app --host $(HOST) --port $(PORT) --reload
+	$(UVICORN) app:app --host $(HOST) --port $(PORT) --reload --reload-exclude output
 
 # ── Quality ───────────────────────────────────────────────────────────────────
 
