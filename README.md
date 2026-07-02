@@ -121,7 +121,7 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 | Purpose | Model | Pull command | Notes |
 |---------|-------|-------------|-------|
 | Chat (default) | `qwen3.5:397b-cloud` | `ollama pull qwen3.5:397b-cloud` | Good balance of quality and speed for normalization, labeling, and writing |
-| Chat (larger) | `glm-5.2:cloud` | `ollama pull glm-5.2:cloud` | Higher quality beat books; requires ~20 GB RAM |
+| Chat (larger) | `glm-5.2:cloud` | `ollama pull glm-5.2:cloud` | Higher quality beat books; runs on Ollama's cloud, not local hardware — requires `OLLAMA_API_KEY` |
 | Embeddings | `qwen3-embedding:0.6b` | `ollama pull qwen3-embedding:0.6b` | replaces OpenAI embeddings |
 
 Other Ollama-compatible models will work — set the model name in your `.env` file. Models with tool-use support will get the best results, since the agent relies on structured tool calls.
@@ -135,7 +135,7 @@ Add these variables to your `.env` file. You can enable Ollama for chat, embeddi
 ```
 CHAT_PROVIDER=ollama
 OLLAMA_CHAT_HOST=http://localhost:11434
-OLLAMA_CHAT_MODEL=qwen3.5:8b
+OLLAMA_CHAT_MODEL=qwen3:8b
 ```
 
 For [Ollama cloud](https://ollama.com/) instead of a local instance:
@@ -154,6 +154,8 @@ EMBED_PROVIDER=ollama
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
 ```
+
+Pointing `OLLAMA_HOST` at Ollama cloud (`https://ollama.com`) instead of a local instance also requires `OLLAMA_EMBED_API_KEY=your-key-here` (separate from the chat `OLLAMA_API_KEY`, since embeddings and chat can point at different hosts).
 
 **Full Ollama setup** (no OpenAI needed; Anthropic only for OCR and research):
 

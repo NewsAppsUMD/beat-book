@@ -46,8 +46,13 @@ if _env_file.exists():
 from pipeline import run_pipeline, PipelineResult
 from agent import _derive_filename
 from ingest import ingest_file, ingest_url
-from embed_client import get_embed_client, get_embed_provider, list_ollama_models
-from chat_provider import get_chat_provider
+from embed_client import (
+    DEFAULT_OLLAMA_EMBED_MODEL,
+    get_embed_client,
+    get_embed_provider,
+    list_ollama_models,
+)
+from chat_provider import ChatProvider, get_chat_provider
 import store
 from jobs import BookJob, generation_worker
 
@@ -160,10 +165,9 @@ async def embed_config():
     if provider == "ollama":
         try:
             result["models"] = list_ollama_models()
-            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:0.6b")
         except Exception:
             result["models"] = []
-            result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", "qwen3-embedding:0.6b")
+        result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", DEFAULT_OLLAMA_EMBED_MODEL)
     else:
         model = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
         result["models"] = [{"name": model}]
@@ -177,7 +181,7 @@ async def _run_ingest_job(
     url_list: List[str],
     *,
     anthropic_key: str,
-    provider: "Any" = None,
+    provider: Optional[ChatProvider] = None,
 ) -> None:
     loop = asyncio.get_event_loop()
     semaphore = asyncio.Semaphore(_INGEST_CONCURRENCY)
@@ -342,8 +346,8 @@ async def process(body: ProcessRequest):
 
     try:
         embed_clt = get_embed_client(model_override=body.embed_model)
-    except RuntimeError as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": f"Embedding provider not configured: {e}"}, status_code=500)
     try:
         chat_pvd = get_chat_provider()
     except Exception as e:

@@ -86,7 +86,6 @@ WINDOW_OVERLAP = 15_000          # chars of overlap between adjacent chunks
 # (≈50 MB of HTML-stripped text at ~100 KB per chunk).
 MAX_CHUNKS = 500
 NORMALIZE_CONCURRENCY = 4
-_NORMALIZE_SEMAPHORE = threading.Semaphore(NORMALIZE_CONCURRENCY)
 # Record separator emitted by _extract_json for top-level JSON lists.
 # When present in the extracted text, _make_chunks packs whole records
 # into each chunk so a story body is never split across two chunks.
@@ -1200,17 +1199,16 @@ def _normalize_chunk(
         chat_resp = None
         for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
-                with _NORMALIZE_SEMAPHORE:
-                    chat_resp = provider.create(
-                        model=model,
-                        system=_NORMALIZE_SYSTEM,
-                        messages=[
-                            {"role": "user", "content": user_prefix + text + user_suffix},
-                        ],
-                        tools=[_NORMALIZE_TOOL],
-                        max_tokens=NORMALIZE_MAX_TOKENS,
-                        tool_choice={"type": "tool", "name": "register_stories"},
-                    )
+                chat_resp = provider.create(
+                    model=model,
+                    system=_NORMALIZE_SYSTEM,
+                    messages=[
+                        {"role": "user", "content": user_prefix + text + user_suffix},
+                    ],
+                    tools=[_NORMALIZE_TOOL],
+                    max_tokens=NORMALIZE_MAX_TOKENS,
+                    tool_choice={"type": "tool", "name": "register_stories"},
+                )
                 break
             except ChatRateLimitError as e:
                 if rl_attempt >= RATE_LIMIT_MAX_RETRIES:

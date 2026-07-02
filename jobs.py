@@ -362,7 +362,13 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
             anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
             try:
                 embed_clt = get_embed_client(model_override=job.embed_model)
-            except RuntimeError:
+            except Exception:
+                # Missing key, unreachable Ollama host, bad model name, etc.
+                # Citation matching is best-effort — the beat book is still
+                # usable without it (see run_generation's embed_client=None
+                # branch) — but a live exception here must never escape and
+                # kill the single-consumer worker loop.
+                traceback.print_exc()
                 embed_clt = None
             chat_pvd = get_chat_provider(api_key=anthropic_key)
             try:

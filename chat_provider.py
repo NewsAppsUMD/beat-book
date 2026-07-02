@@ -106,6 +106,18 @@ def retry_pause(attempt: int, exc: ChatProviderError) -> float:
     return base + random.uniform(0, base * 0.2)
 
 
+def thinking_enabled() -> bool:
+    """Whether extended/reasoning mode should be requested from the model.
+
+    Controlled by the ENABLE_THINKING env var (default off — higher quality
+    but materially slower). Applies to both providers: Anthropic's extended
+    thinking and Ollama's `think` request field. Incompatible with a forced
+    tool_choice, so callers that force a specific tool (e.g. ingest
+    normalization) never pass this through.
+    """
+    return (os.environ.get("ENABLE_THINKING") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 # ---------------------------------------------------------------------------
 # Anthropic
 # ---------------------------------------------------------------------------
@@ -114,7 +126,12 @@ class AnthropicChatProvider:
 
     def __init__(self, api_key: str | None = None):
         from anthropic import Anthropic
-        from claude_client import CHAT_MODEL, CHAT_TIMEOUT_SECONDS, CHAT_MAX_RETRIES
+        from claude_client import (
+            CHAT_MODEL,
+            CHAT_TIMEOUT_SECONDS,
+            CHAT_MAX_RETRIES,
+            ANTHROPIC_SEMAPHORE,
+        )
 
         key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self._client = Anthropic(
@@ -122,6 +139,10 @@ class AnthropicChatProvider:
             timeout=CHAT_TIMEOUT_SECONDS,
             max_retries=CHAT_MAX_RETRIES,
         )
+        # Shared with OCR (ingest.py) so the total number of concurrent
+        # Anthropic calls across normalization, labeling, the agent, and OCR
+        # never exceeds MAX_ANTHROPIC_CONCURRENT.
+        self._semaphore = ANTHROPIC_SEMAPHORE
         self.explore_model = "claude-haiku-4-5-20251001"
         self.agent_model = CHAT_MODEL
         self.label_model = "claude-haiku-4-5-20251001"
@@ -179,19 +200,26 @@ class AnthropicChatProvider:
         kwargs: dict[str, Any] = dict(
             model=model,
             max_tokens=max_tokens,
-            system=[{
+            messages=self._add_cache_breakpoints(messages),
+        )
+        # The Anthropic API rejects an empty text block, so only attach
+        # `system` when the caller actually has one (pipeline cluster-label
+        # calls pass "").
+        if system:
+            kwargs["system"] = [{
                 "type": "text",
                 "text": system,
                 "cache_control": {"type": "ephemeral"},
-            }],
-            messages=self._add_cache_breakpoints(messages),
-        )
+            }]
         if tools:
             kwargs["tools"] = [
                 {**t, "cache_control": {"type": "ephemeral"}} for t in tools
             ]
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
+        # Extended thinking is incompatible with a forced tool_choice.
+        if think and not (tool_choice and tool_choice.get("type") == "tool"):
+            kwargs["thinking"] = {"type": "adaptive"}
 
         print(
             f"[chat.anthropic] calling {model}, max_tokens={max_tokens}, "
@@ -200,10 +228,11 @@ class AnthropicChatProvider:
         )
 
         try:
-            with self._client.messages.stream(**kwargs) as stream:
-                for _event in stream:
-                    pass
-                response = stream.get_final_message()
+            with self._semaphore:
+                with self._client.messages.stream(**kwargs) as stream:
+                    for _event in stream:
+                        pass
+                    response = stream.get_final_message()
         except anthropic.RateLimitError as e:
             err = ChatRateLimitError(str(e))
             resp = getattr(e, "response", None)
@@ -271,10 +300,14 @@ _THINK_UNCLOSED_RE = re.compile(r"<think>.*", re.DOTALL)
 
 
 def _strip_think_tags(text: str) -> str:
-    """Remove Qwen-style <think>…</think> blocks from model output."""
+    """Remove Qwen-style <think>…</think> blocks from model output.
+
+    Returns "" if the response was reasoning-only — falling back to the raw
+    text would leak the <think> block instead of suppressing it.
+    """
     stripped = _THINK_RE.sub("", text)
     stripped = _THINK_UNCLOSED_RE.sub("", stripped).strip()
-    return stripped if stripped else text
+    return stripped
 
 
 class OllamaChatProvider:
@@ -386,7 +419,7 @@ class OllamaChatProvider:
     ) -> ChatResponse:
         import httpx
 
-        actual_model = self.agent_model
+        actual_model = model or self.agent_model
         ollama_messages = self._convert_messages(system, messages)
 
         msg_chars = sum(len(m.get("content", "")) for m in ollama_messages)
@@ -455,7 +488,8 @@ class OllamaChatProvider:
             raise err
         if resp.status_code >= 500:
             raise ChatServerError(f"Ollama {resp.status_code}: {resp.text}")
-        resp.raise_for_status()
+        if resp.status_code >= 400:
+            raise ChatProviderError(f"Ollama {resp.status_code}: {resp.text}")
 
         data = resp.json()
         message = data.get("message", {})

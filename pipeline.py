@@ -394,9 +394,12 @@ def run_pipeline(stories: List[dict], embed_client: EmbedClient, chat_provider: 
     print(f"Cluster sizes: broad_min={broad_min}, specific_min={specific_min}")
 
     _p("clustering", 0.0, "Clustering stories\u2026")
-    # Progressively increase min_cluster_size until we get \u22644 broad topics.
+    # Progressively increase min_cluster_size until we get \u2264max_broad_topics
+    # broad topics. The range always includes at least broad_min itself, so a
+    # small corpus (where len(stories)//2 <= broad_min) still gets one attempt.
     max_broad_topics = max(3, len(stories) // 15)
-    for attempt_min in range(broad_min, len(stories) // 2, 2):
+    attempt_stop = max(broad_min + 1, len(stories) // 2)
+    for attempt_min in range(broad_min, attempt_stop, 2):
         broad_labels, _ = _cluster(reduced, attempt_min, broad=True)
         broad_labels = _assign_outliers(reduced, broad_labels)
         n_broad = len(set(broad_labels))

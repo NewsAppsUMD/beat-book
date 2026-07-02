@@ -13,12 +13,12 @@ from pipeline import PipelineResult
 from chat_provider import (
     ChatProvider,
     ChatResponse,
-    ChatProviderError,
     ChatRateLimitError,
     ChatConnectionError,
     ChatServerError,
     RATE_LIMIT_MAX_RETRIES,
     retry_pause,
+    thinking_enabled,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -625,7 +625,7 @@ async def run_agent(
                         tools=TOOLS,
                         tool_choice={"type": "none"},
                         messages=write_messages,
-                        think=True,
+                        think=thinking_enabled(),
                     )
                 else:
                     request_kwargs = dict(
@@ -804,7 +804,11 @@ async def run_agent(
                         listed_topics.add(topic)
                         indices = pipeline_result.topics[topic]
                         scan_credit = min(5, len(indices))
-                        read_indices.update(list(indices)[:scan_credit])
+                        # Credit the tail of the list: read_story calls tend to
+                        # start from the front, so crediting the front here
+                        # would make those calls look like zero progress.
+                        if scan_credit:
+                            read_indices.update(list(indices)[-scan_credit:])
                 elif tool_name == "read_story":
                     idx = tool_input.get("index")
                     if isinstance(idx, int) and 0 <= idx < len(pipeline_result.stories):

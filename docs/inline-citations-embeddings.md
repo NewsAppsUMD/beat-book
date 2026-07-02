@@ -105,9 +105,9 @@ Every passage carries the character offset back into the original source text. T
 
 ## Step 4: batched embeddings
 
-Both passes — embedding the source passages and embedding the beat-book sentences — go through `_embed_many`, which slices texts into chunks of `EMBED_BATCH_SIZE = 256` and dispatches each chunk to OpenAI's `text-embedding-3-small` in a single HTTP call.
+Both passes — embedding the source passages and embedding the beat-book sentences — go through `_embed_many`, which slices texts into chunks of `EMBED_BATCH_SIZE = 256` and dispatches each chunk through the configured `EmbedClient` (`embed_client.py`) in a single HTTP call: OpenAI's `text-embedding-3-small` by default, or a local/cloud Ollama embedding model when `EMBED_PROVIDER=ollama` (see the [README](../README.md#using-ollama)).
 
-The OpenAI embeddings API accepts up to 2048 inputs per call; the lower cap of 256 keeps individual payloads small enough that a transient connection problem retries cheaply. The empty-string defense (`t if t.strip() else " "`) is mandatory: the API rejects an empty input and the rejection is for the *whole batch*, so a single zero-length sentence anywhere in the list nukes the round-trip.
+OpenAI's embeddings API accepts up to 2048 inputs per call; the lower cap of 256 keeps individual payloads small enough that a transient connection problem retries cheaply. The empty-string defense (`t if t.strip() else " "`) is mandatory for OpenAI: the API rejects an empty input and the rejection is for the *whole batch*, so a single zero-length sentence anywhere in the list nukes the round-trip. `OllamaEmbedClient` applies the same defense for parity.
 
 A typical small corpus — a few hundred articles, each maybe ten passages — is a few thousand passages plus a few hundred beat-book sentences, which is a handful of HTTP calls. Even on an unhurried connection that completes in well under a minute. There's no caching layer between this code and the API; if you re-run the pipeline you re-embed.
 
@@ -248,7 +248,7 @@ It's worth being honest about the failure modes:
 - **Passages on the source side, sentences on the beat-book side.** The asymmetry is intentional. The beat-book is what we're trying to attribute — sentence-level granularity is the natural unit of a claim. The source corpus is what we're attributing *from* — passage-level chunks give the embedding model real context to encode against and are what make paraphrased and synthesized claims attribute correctly.
 - **NumPy, not a vector database.** At a few thousand vectors per side, a single matmul is faster than any approximate-nearest-neighbor index would be after the query overhead. The day a single beat book sources from a million articles, that calculus changes; today it doesn't.
 - **Calibration in the data, not in the viewer.** Hardcoding a threshold per book meant every new beat book required hand-tuning. Sampling random pairs is one shot, deterministic (we seed the RNG at 42), and produces a number any reader of the JSON can interrogate.
-- **`text-embedding-3-small`, hosted.** Anthropic — which hosts the project's chat slots — does not offer an embedding API. A local Ollama with `mxbai-embed-large` would work, but the project is meant to run anywhere without a local daemon, so a hosted embedding API was the only path that wouldn't bind a fresh checkout to a particular machine.
+- **`text-embedding-3-small` by default, Ollama optional.** Anthropic — which hosts the project's chat slots — does not offer an embedding API, so a hosted OpenAI model is the default: it lets a fresh checkout run anywhere without a local daemon. Setting `EMBED_PROVIDER=ollama` swaps in a local or cloud Ollama embedding model (e.g. `qwen3-embedding`) for reporters who'd rather keep source material off third-party servers; see `embed_client.py`.
 
 ## How this stage cohabits with the research agent
 
