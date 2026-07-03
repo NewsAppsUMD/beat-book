@@ -17,6 +17,7 @@ Env vars (Ollama):
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -92,6 +93,7 @@ class ChatProvider(Protocol):
         max_tokens: int = 4096,
         tool_choice: dict | None = None,
         think: bool = False,
+        throttle: bool = True,
     ) -> ChatResponse: ...
 
 
@@ -193,6 +195,7 @@ class AnthropicChatProvider:
         max_tokens: int = 4096,
         tool_choice: dict | None = None,
         think: bool = False,
+        throttle: bool = True,
     ) -> ChatResponse:
         import anthropic
 
@@ -227,8 +230,13 @@ class AnthropicChatProvider:
             flush=True,
         )
 
+        # Background batch work (ingest normalization, cluster labeling)
+        # shares a concurrency cap; interactive paths (the beat-book agent,
+        # the research agent) opt out so they're never queued behind
+        # background ingestion — see MAX_ANTHROPIC_CONCURRENT in claude_client.py.
+        semaphore_cm = self._semaphore if throttle else contextlib.nullcontext()
         try:
-            with self._semaphore:
+            with semaphore_cm:
                 with self._client.messages.stream(**kwargs) as stream:
                     for _event in stream:
                         pass
@@ -416,6 +424,7 @@ class OllamaChatProvider:
         max_tokens: int = 4096,
         tool_choice: dict | None = None,
         think: bool = False,
+        throttle: bool = True,  # no-op: Ollama has no shared concurrency cap
     ) -> ChatResponse:
         import httpx
 

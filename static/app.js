@@ -903,7 +903,9 @@
   // Fetch embedding provider config (shows model selector when Ollama is active)
   fetch("/api/embed-config").then(r => r.json()).then(cfg => {
     embedConfig = cfg;
-    if (cfg.models && cfg.models.length > 0) {
+    // Only worth showing when there's an actual choice to make — the
+    // OpenAI path always reports exactly one (fixed) model.
+    if (cfg.models && cfg.models.length > 1) {
       const selector = $("embed-model-selector");
       const select = $("embed-model-select");
       select.innerHTML = "";

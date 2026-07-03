@@ -599,7 +599,9 @@ async def run_agent(
                 "This step takes 1–3 minutes."
             )
         # Provider call blocks; offload to a worker thread so the
-        # WebSocket handler stays responsive.
+        # WebSocket handler stays responsive. throttle=False: this is the
+        # interactive path — it must never queue behind background ingest
+        # normalization or cluster labeling (see AnthropicChatProvider.create).
         response: ChatResponse | None = None
         for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
@@ -626,6 +628,7 @@ async def run_agent(
                         tool_choice={"type": "none"},
                         messages=write_messages,
                         think=thinking_enabled(),
+                        throttle=False,
                     )
                 else:
                     request_kwargs = dict(
@@ -634,6 +637,7 @@ async def run_agent(
                         system=system_prompt,
                         tools=TOOLS,
                         messages=messages,
+                        throttle=False,
                     )
                 print(f"[agent] turn {_turn}: calling "
                       f"{request_kwargs['model']} "
