@@ -20,28 +20,21 @@ import numpy as np
 # Type for progress callbacks: (step_name, progress_fraction 0.0–1.0, detail_text)
 ProgressCallback = Callable[[str, float, str], None]
 
-from openai import OpenAI
 import umap
 import hdbscan
 
-import anthropic as anthropic_sdk
-
-from claude_client import (
-    ANTHROPIC_SEMAPHORE,
+from chat_provider import (
+    ChatProvider,
+    ChatRateLimitError,
     RATE_LIMIT_MAX_RETRIES,
-    chat_client,
-    rate_limit_pause,
+    retry_pause,
 )
+from embed_client import EmbedClient
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Embeddings stay on OpenAI: Anthropic doesn't host an embedding API, and we
-# want this to run anywhere without requiring a local model.
-EMBED_MODEL = "text-embedding-3-small"
-# Cluster labels are 2-5 words — Haiku is sufficient and ~10x faster than Sonnet.
-LABEL_MODEL = "claude-haiku-4-5-20251001"
 CACHE_DIR   = Path(".cache")
 SAMPLE_SIZE_FOR_LABEL = 8
 EMBED_BATCH_SIZE = 100
@@ -111,27 +104,24 @@ def _story_to_text(story: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _embed_batch(client: OpenAI, texts: List[str]) -> np.ndarray:
+def _embed_batch(client: EmbedClient, texts: List[str]) -> np.ndarray:
     all_vectors = []
     for i in tqdm(range(0, len(texts), EMBED_BATCH_SIZE), desc="Embedding"):
         chunk = texts[i : i + EMBED_BATCH_SIZE]
-        # OpenAI rejects empty strings; sub a space.
-        cleaned = [t if t.strip() else " " for t in chunk]
-        resp  = client.embeddings.create(input=cleaned, model=EMBED_MODEL)
-        vecs  = [item.embedding for item in sorted(resp.data, key=lambda x: x.index)]
+        vecs = client.embed(chunk)
         all_vectors.extend(vecs)
     return np.array(all_vectors, dtype=np.float32)
 
 
-def _cache_key(texts: List[str]) -> str:
+def _cache_key(texts: List[str], model_name: str) -> str:
     combined = "\n---\n".join(texts)
-    return hashlib.md5((combined + EMBED_MODEL).encode()).hexdigest()
+    return hashlib.md5((combined + model_name).encode()).hexdigest()
 
 
-def _load_or_embed(client: OpenAI, texts: List[str]) -> np.ndarray:
+def _load_or_embed(client: EmbedClient, texts: List[str]) -> np.ndarray:
     CACHE_DIR.mkdir(exist_ok=True)
     cache_file = CACHE_DIR / "embeddings.pkl"
-    key = _cache_key(texts)
+    key = _cache_key(texts, client.model_name)
     if cache_file.exists():
         with open(cache_file, "rb") as f:
             cached = pickle.load(f)
@@ -152,8 +142,8 @@ def _umap_params(n: int) -> dict:
 
 
 def _cluster_sizes(n: int) -> Tuple[int, int]:
-    broad    = max(4, n // 25)
-    specific = max(2, n // 60)
+    broad    = max(8, n // 6)
+    specific = max(4, n // 20)
     return broad, specific
 
 
@@ -184,12 +174,12 @@ def _reduce(vectors: np.ndarray) -> np.ndarray:
     raise RuntimeError("UMAP failed with every init strategy")
 
 
-def _cluster(reduced: np.ndarray, min_cluster_size: int):
+def _cluster(reduced: np.ndarray, min_cluster_size: int, broad: bool = False):
     clusterer = hdbscan.HDBSCAN(
         min_cluster_size=min_cluster_size,
-        min_samples=2,
+        min_samples=max(2, min_cluster_size // 2) if broad else 2,
         metric="euclidean",
-        cluster_selection_method="eom",
+        cluster_selection_method="leaf" if broad else "eom",
         prediction_data=True,
     )
     labels = clusterer.fit_predict(reduced)
@@ -215,7 +205,7 @@ def _assign_outliers(reduced: np.ndarray, labels: np.ndarray) -> np.ndarray:
     return labels
 
 
-def _label_cluster(client, stories: List[dict], indices: List[int], reduced: np.ndarray) -> str:
+def _label_cluster(provider: ChatProvider, stories: List[dict], indices: List[int], reduced: np.ndarray) -> str:
     cluster_vecs = reduced[indices]
     centroid     = cluster_vecs.mean(axis=0)
     dists        = np.linalg.norm(cluster_vecs - centroid, axis=1)
@@ -243,26 +233,22 @@ def _label_cluster(client, stories: List[dict], indices: List[int], reduced: np.
 
     for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
         try:
-            with ANTHROPIC_SEMAPHORE:
-                resp = client.messages.create(
-                    model=LABEL_MODEL,
-                    max_tokens=LABEL_MAX_TOKENS,
-                    messages=[{"role": "user", "content": prompt}],
-                )
+            resp = provider.create(
+                model=provider.label_model,
+                system="",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=LABEL_MAX_TOKENS,
+            )
             break
-        except anthropic_sdk.RateLimitError as e:
+        except ChatRateLimitError as e:
             if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                 raise
-            pause = rate_limit_pause(rl_attempt, e)
+            pause = retry_pause(rl_attempt, e)
             logging.warning("Pipeline label rate limited; waiting %.0fs (attempt %d/%d).",
                             pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
             time.sleep(pause)
 
-    text = "".join(
-        b.text for b in resp.content
-        if getattr(b, "type", None) == "text"
-    )
-    return text.strip().strip('"').strip("'")
+    return resp.text.strip().strip('"').strip("'")
 
 
 def _cluster_snippets(stories, indices, reduced):
@@ -280,8 +266,8 @@ def _cluster_snippets(stories, indices, reduced):
     return "\n".join(out)
 
 
-def _label_all(client, stories, labels, reduced, level_name, on_progress=None):
-    """Label all clusters at this level in a single Haiku call.
+def _label_all(provider: ChatProvider, stories, labels, reduced, level_name, on_progress=None):
+    """Label all clusters at this level in a single LLM call.
 
     Falls back to per-cluster labeling if the batched call's JSON parse fails.
     """
@@ -317,22 +303,22 @@ def _label_all(client, stories, labels, reduced, level_name, on_progress=None):
 
     for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
         try:
-            with ANTHROPIC_SEMAPHORE:
-                resp = client.messages.create(
-                    model=LABEL_MODEL,
-                    max_tokens=min(2048, 128 + 32 * len(unique)),
-                    messages=[{"role": "user", "content": prompt}],
-                )
+            resp = provider.create(
+                model=provider.label_model,
+                system="",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=min(2048, 128 + 32 * len(unique)),
+            )
             break
-        except anthropic_sdk.RateLimitError as e:
+        except ChatRateLimitError as e:
             if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                 raise
-            pause = rate_limit_pause(rl_attempt, e)
+            pause = retry_pause(rl_attempt, e)
             logging.warning("Batch label rate limited; waiting %.0fs (attempt %d/%d).",
                             pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
             time.sleep(pause)
 
-    text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    text = resp.text
     match = re.search(r"\{.*\}", text, re.DOTALL)
     parsed = None
     if match:
@@ -354,7 +340,7 @@ def _label_all(client, stories, labels, reduced, level_name, on_progress=None):
                         len(missing), len(unique))
         for cid in missing:
             indices = list(np.where(labels == cid)[0])
-            result[cid] = _label_cluster(client, stories, indices, reduced)
+            result[cid] = _label_cluster(provider, stories, indices, reduced)
 
     if on_progress:
         on_progress(f"labeling_{level_name}", 1.0,
@@ -366,18 +352,14 @@ def _label_all(client, stories, labels, reduced, level_name, on_progress=None):
 # PUBLIC API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run_pipeline(stories: List[dict], openai_key: str, anthropic_key: str,
+def run_pipeline(stories: List[dict], embed_client: EmbedClient, chat_provider: ChatProvider,
                  on_progress: Optional[ProgressCallback] = None) -> PipelineResult:
-    """Full pipeline: embed \u2192 reduce \u2192 cluster \u2192 label \u2192 return PipelineResult.
-
-    Embeds via OpenAI (text-embedding-3-small); labels via Claude Sonnet 4.6.
-    """
+    """Full pipeline: embed \u2192 reduce \u2192 cluster \u2192 label \u2192 return PipelineResult."""
     def _p(step, frac, detail=""):
         if on_progress:
             on_progress(step, frac, detail)
 
-    embed_clt = OpenAI(api_key=openai_key)
-    chat_clt  = chat_client(anthropic_key)
+    embed_clt = embed_client
 
     _p("embedding", 0.0, f"Generating embeddings for {len(stories)} stories\u2026")
     texts   = [_story_to_text(s) for s in stories]
@@ -392,7 +374,7 @@ def run_pipeline(stories: List[dict], openai_key: str, anthropic_key: str,
         _p("clustering", 1.0, "Skipping clustering (small corpus)")
         _p("labeling", 0.0, "Labeling combined topic\u2026")
         all_indices = list(range(len(stories)))
-        label = _label_cluster(chat_clt, stories, all_indices, vectors)
+        label = _label_cluster(chat_provider, stories, all_indices, vectors)
         topics = {label: all_indices}
         story_topics = [[label] for _ in stories]
         _p("labeling", 1.0, "Done")
@@ -412,18 +394,27 @@ def run_pipeline(stories: List[dict], openai_key: str, anthropic_key: str,
     print(f"Cluster sizes: broad_min={broad_min}, specific_min={specific_min}")
 
     _p("clustering", 0.0, "Clustering stories\u2026")
-    broad_labels, _  = _cluster(reduced, broad_min)
-    broad_labels      = _assign_outliers(reduced, broad_labels)
-    _p("clustering", 0.5, "Broad clusters found")
+    # Progressively increase min_cluster_size until we get \u2264max_broad_topics
+    # broad topics. The range always includes at least broad_min itself, so a
+    # small corpus (where len(stories)//2 <= broad_min) still gets one attempt.
+    max_broad_topics = max(3, len(stories) // 15)
+    attempt_stop = max(broad_min + 1, len(stories) // 2)
+    for attempt_min in range(broad_min, attempt_stop, 2):
+        broad_labels, _ = _cluster(reduced, attempt_min, broad=True)
+        broad_labels = _assign_outliers(reduced, broad_labels)
+        n_broad = len(set(broad_labels))
+        if n_broad <= max_broad_topics:
+            break
+    _p("clustering", 0.5, f"Broad clusters found ({n_broad} topics)")
 
-    spec_labels, _   = _cluster(reduced, specific_min)
+    spec_labels, _   = _cluster(reduced, specific_min, broad=False)
     spec_labels       = _assign_outliers(reduced, spec_labels)
     _p("clustering", 1.0, "All clusters found")
 
     _p("labeling", 0.0, "Labeling topics with LLM\u2026")
-    broad_map = _label_all(chat_clt, stories, broad_labels, reduced, "broad",
+    broad_map = _label_all(chat_provider, stories, broad_labels, reduced, "broad",
                            lambda s, f, d: _p("labeling", f * 0.4, d))
-    spec_map  = _label_all(chat_clt, stories, spec_labels,  reduced, "specific",
+    spec_map  = _label_all(chat_provider, stories, spec_labels,  reduced, "specific",
                            lambda s, f, d: _p("labeling", 0.4 + f * 0.6, d))
 
     # Build lookup dicts

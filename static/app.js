@@ -71,6 +71,7 @@
   let elapsedTimer = null, elapsedStart = null;
   const confidenceFilter = { high: true, medium: true, low: true };
   const MAX_FILE_BYTES = 25 * 1024 * 1024;
+  let embedConfig = null;  // fetched from /api/embed-config
 
   function setWorking(on) { working = on; }
   window.addEventListener("beforeunload", (e) => {
@@ -742,7 +743,11 @@
     previewProgressBar.style.width = "0%"; previewProgressDetail.textContent = "";
 
     try {
-      const resp = await fetch("/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stories }) });
+      const embedModelSel = $("embed-model-select");
+      const embedModel = (embedConfig && embedModelSel && embedModelSel.value) ? embedModelSel.value : null;
+      const processBody = { stories };
+      if (embedModel) processBody.embed_model = embedModel;
+      const resp = await fetch("/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(processBody) });
       if (!resp.ok) { const err = await resp.json().catch(() => ({})); previewProgressStep.textContent = err.error || "Pipeline failed"; previewRunBtn.disabled = false; previewBackBtn.disabled = false; setWorking(false); return; }
 
       const reader = resp.body.getReader();
@@ -894,6 +899,26 @@
   // ═══════════════════════════════════════════════════════════════════════
   window.addEventListener("focus", () => fetchBooks());
   document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchBooks(); });
+
+  // Fetch embedding provider config (shows model selector when Ollama is active)
+  fetch("/api/embed-config").then(r => r.json()).then(cfg => {
+    embedConfig = cfg;
+    // Only worth showing when there's an actual choice to make — the
+    // OpenAI path always reports exactly one (fixed) model.
+    if (cfg.models && cfg.models.length > 1) {
+      const selector = $("embed-model-selector");
+      const select = $("embed-model-select");
+      select.innerHTML = "";
+      for (const m of cfg.models) {
+        const opt = document.createElement("option");
+        opt.value = m.name;
+        opt.textContent = m.name;
+        if (m.name === cfg.default_model) opt.selected = true;
+        select.appendChild(opt);
+      }
+      selector.hidden = false;
+    }
+  }).catch(() => {});
 
   showView("library");
   fetchBooks().then(() => {
