@@ -41,6 +41,8 @@ from citation_matcher import (
     markdown_to_beatbook_entries,
     build_sources_file,
 )
+from embed_client import get_embed_client
+from chat_provider import ChatProvider, get_chat_provider
 
 OUTPUT_DIR = Path("output")
 SANDBOX_ROOT = OUTPUT_DIR / "sandboxes"
@@ -62,6 +64,7 @@ class BookJob:
     selected_topics: List[str] = field(default_factory=list)
     style: str = "narrative"
     custom_instructions: str = ""
+    embed_model: Optional[str] = None
     status: str = "queued"
     events: List[dict] = field(default_factory=list)
     subscribers: set = field(default_factory=set)        # set[asyncio.Queue]
@@ -110,9 +113,10 @@ async def run_generation(
     selected_topics: List[str],
     emit: Callable[[dict], Awaitable[None]],
     anthropic_key: str,
-    openai_key: str,
+    embed_client=None,
     style: str = "narrative",
     custom_instructions: str = "",
+    chat_provider: Optional[ChatProvider] = None,
 ) -> None:
     """Run one beat book end to end. Never raises — terminal state is recorded
     in the store and emitted as a ``beat_book`` or ``error`` event."""
@@ -220,9 +224,9 @@ async def run_generation(
 
         # 5. Citation matching (OpenAI embeddings). If unavailable, the book is
         #    still usable as raw markdown — mark ready and deliver it.
-        if not openai_key:
+        if embed_client is None:
             await emit({"type": "error",
-                        "text": "OPENAI_API_KEY not configured; skipping citation matching."})
+                        "text": "Embedding provider not configured; skipping citation matching."})
             _finish_ready()
             await _emit_beat_book()
             book_written = True
@@ -235,8 +239,8 @@ async def run_generation(
             cpq.put({"stage": stage, "fraction": fraction, "detail": detail})
 
         def run_matcher():
-            source_embeddings = embed_source_stories(stories, openai_key, on_matcher_progress)
-            entries = markdown_to_beatbook_entries(revised_markdown, source_embeddings, openai_key, on_matcher_progress)
+            source_embeddings = embed_source_stories(stories, embed_client, on_matcher_progress)
+            entries = markdown_to_beatbook_entries(revised_markdown, source_embeddings, embed_client, on_matcher_progress)
             sources = build_sources_file(stories, source_embeddings)
             return entries, sources
 
@@ -274,10 +278,12 @@ async def run_generation(
         book_written = True
 
     # ── Run the agent loop ───────────────────────────────────────────────────
+    if chat_provider is None:
+        chat_provider = get_chat_provider(api_key=anthropic_key)
     try:
         await run_agent(
             pipeline_result=pipeline_result,
-            anthropic_key=anthropic_key,
+            provider=chat_provider,
             on_message=on_message,
             on_beat_book=on_beat_book,
             on_tool_status=on_tool_status,
@@ -320,13 +326,24 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
             emit = make_emit(job)
             job.status = "generating"
             anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-            openai_key = os.environ.get("OPENAI_API_KEY", "")
+            try:
+                embed_clt = get_embed_client(model_override=job.embed_model)
+            except Exception:
+                # Missing key, unreachable Ollama host, bad model name, etc.
+                # Citation matching is best-effort — the beat book is still
+                # usable without it (see run_generation's embed_client=None
+                # branch) — but a live exception here must never escape and
+                # kill the single-consumer worker loop.
+                traceback.print_exc()
+                embed_clt = None
+            chat_pvd = get_chat_provider(api_key=anthropic_key)
             try:
                 await run_generation(
                     book_id, job.pipeline_result, job.selected_topics,
-                    emit, anthropic_key, openai_key,
+                    emit, anthropic_key, embed_clt,
                     style=job.style,
                     custom_instructions=job.custom_instructions,
+                    chat_provider=chat_pvd,
                 )
             except Exception:
                 # run_generation already handles its own errors; this is a backstop

@@ -72,27 +72,3 @@ def chat_client(api_key: Optional[str] = None) -> Anthropic:
         timeout=CHAT_TIMEOUT_SECONDS,
         max_retries=CHAT_MAX_RETRIES,
     )
-
-
-def thinking_enabled() -> bool:
-    """Whether extended thinking should be enabled for the chat models.
-
-    Controlled by the ENABLE_THINKING env var. Default is off — extended
-    thinking is higher quality but materially slower. Set ENABLE_THINKING=
-    true to re-enable. Note: extended thinking is incompatible with
-    forced tool_choice ("any"/"tool"), so callers that force a specific
-    tool ignore this flag.
-    """
-    return (os.environ.get("ENABLE_THINKING") or "").strip().lower() in {"1", "true", "yes", "on"}
-
-
-def thinking_param() -> dict:
-    """Top-level `thinking` parameter for messages.create.
-
-    Returns {"type": "adaptive"} when ENABLE_THINKING is on,
-    {"type": "disabled"} otherwise.  Both Sonnet 4.6 and Opus 4.7+
-    support adaptive thinking; budget_tokens is deprecated.
-    """
-    if thinking_enabled():
-        return {"type": "adaptive"}
-    return {"type": "disabled"}

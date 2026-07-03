@@ -13,10 +13,10 @@ Originally built around [Chicago Public Media](https://chicago.suntimes.com/) st
 ### Prerequisites
 
 - **Python 3.11–3.13.** (3.14 is not yet recommended — `umap-learn`'s `numba`/`llvmlite` dependency has no prebuilt wheels for it and must compile from source, which often fails.)
-- An [OpenAI API key](https://platform.openai.com/api-keys) — used only for embeddings (`text-embedding-3-small`), for both topic clustering and citation matching. (Anthropic has no embedding API.)
-- An [Anthropic API key](https://console.anthropic.com/) — used for every text-generation slot: story normalization and cluster labeling (`claude-haiku-4-5`), the beat-book writing agent (`claude-sonnet-4-6`), and the web-research agent (`claude-opus-4-7`).
+- An [OpenAI API key](https://platform.openai.com/api-keys) — used for embeddings (`text-embedding-3-small`) unless you switch to Ollama embeddings. (Anthropic has no embedding API.)
+- An [Anthropic API key](https://console.anthropic.com/) — used for the web-research agent (`claude-opus-4-7`) and OCR. Also used for story normalization, cluster labeling, and the beat-book writing agent when running the default Anthropic chat provider.
 
-No local daemons required — everything runs through hosted APIs.
+Both API providers can be partially or fully replaced by [Ollama](#using-ollama) for local/private inference.
 
 ### Install
 
@@ -45,6 +45,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 # ENABLE_THINKING=true
 ```
 
+To use Ollama instead of the hosted APIs, see [Using Ollama](#using-ollama) below.
+
 ### Run
 
 ```bash
@@ -66,6 +68,7 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 ## Table of Contents
 
 - [Setup & Running](#setup--running)
+- [Using Ollama](#using-ollama)
 - [How It Works](#how-it-works)
 - [Architecture Overview](#architecture-overview)
 - [The App Shell](#the-app-shell)
@@ -76,6 +79,111 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 - [The Reader](#the-reader)
 - [Tech Stack](#tech-stack)
 - [Project Structure](#project-structure)
+
+---
+
+## Using Ollama
+
+[Ollama](https://ollama.com/) lets you run LLMs locally, keeping your source material off third-party servers. Beat Book supports Ollama for both **chat** (story normalization, cluster labeling, beat-book writing) and **embeddings** (topic clustering, citation matching). You can use Ollama for one or both, mixing with the hosted APIs as needed.
+
+### Installing Ollama
+
+1. **Download and install** from [ollama.com/download](https://ollama.com/download). Available for macOS, Linux, and Windows.
+
+2. **Verify the install:**
+
+   ```bash
+   ollama --version
+   ```
+
+3. **Pull a chat model.** Qwen 3.5 cloud is the tested default:
+
+   ```bash
+   ollama pull qwen3.5:397b-cloud
+   ```
+
+4. **Pull an embedding model** (if you want local embeddings):
+
+   ```bash
+   ollama pull qwen3-embedding:0.6b
+   ```
+
+5. **Confirm your models are available:**
+
+   ```bash
+   ollama list
+   ```
+
+   You should see both models listed. Ollama serves on `http://localhost:11434` by default.
+
+### Recommended Models
+
+| Purpose | Model | Pull command | Notes |
+|---------|-------|-------------|-------|
+| Chat (default) | `qwen3.5:397b-cloud` | `ollama pull qwen3.5:397b-cloud` | Good balance of quality and speed for normalization, labeling, and writing |
+| Chat (larger) | `glm-5.2:cloud` | `ollama pull glm-5.2:cloud` | Higher quality beat books; runs on Ollama's cloud, not local hardware — requires `OLLAMA_API_KEY` |
+| Embeddings | `qwen3-embedding:0.6b` | `ollama pull qwen3-embedding:0.6b` | replaces OpenAI embeddings |
+
+Other Ollama-compatible models will work — set the model name in your `.env` file. Models with tool-use support will get the best results, since the agent relies on structured tool calls.
+
+### Configuring Ollama in `.env`
+
+Add these variables to your `.env` file. You can enable Ollama for chat, embeddings, or both independently.
+
+**Chat via Ollama** (replaces Anthropic for normalization, labeling, and beat-book writing):
+
+```
+CHAT_PROVIDER=ollama
+OLLAMA_CHAT_HOST=http://localhost:11434
+OLLAMA_CHAT_MODEL=qwen3:8b
+```
+
+For [Ollama cloud](https://ollama.com/) instead of a local instance:
+
+```
+CHAT_PROVIDER=ollama
+OLLAMA_CHAT_HOST=https://ollama.com
+OLLAMA_CHAT_MODEL=qwen3.5:397b-cloud
+OLLAMA_API_KEY=your-key-here
+```
+
+**Embeddings via Ollama** (replaces OpenAI for topic clustering and citation matching):
+
+```
+EMBED_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
+```
+
+Pointing `OLLAMA_HOST` at Ollama cloud (`https://ollama.com`) instead of a local instance also requires `OLLAMA_EMBED_API_KEY=your-key-here` (separate from the chat `OLLAMA_API_KEY`, since embeddings and chat can point at different hosts).
+
+**Full Ollama setup** (no OpenAI needed; Anthropic only for OCR and research):
+
+```
+CHAT_PROVIDER=ollama
+OLLAMA_CHAT_HOST=http://localhost:11434
+OLLAMA_CHAT_MODEL=qwen3:8b
+
+EMBED_PROVIDER=ollama
+OLLAMA_HOST=http://localhost:11434
+OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
+
+# Still needed for scanned-PDF OCR and the research agent
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+### What stays on Anthropic
+
+Even with `CHAT_PROVIDER=ollama`, two features still use the Anthropic API:
+
+- **Scanned-PDF OCR** — uses Haiku vision to transcribe page images. Only triggered when a PDF has no extractable text. If you don't upload scanned PDFs, this never runs.
+- **Research agent** — uses Claude Opus to browse the web and enrich the beat book with public context. This runs after the writing agent finishes.
+
+If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely.
+
+### Selecting the embedding model in the UI
+
+When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the preview toolbar (next to the "Run pipeline" button) showing the available embedding model. For Ollama, this lists models pulled on your instance; for OpenAI, it shows the configured model.
 
 ---
 
