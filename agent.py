@@ -9,25 +9,25 @@ import asyncio
 import json
 from typing import Callable, Awaitable
 
-import anthropic
-
 from pipeline import PipelineResult
-from claude_client import (
-    CHAT_MODEL,
+from chat_provider import (
+    ChatProvider,
+    ChatResponse,
+    ChatRateLimitError,
+    ChatConnectionError,
+    ChatServerError,
     RATE_LIMIT_MAX_RETRIES,
-    chat_client,
-    rate_limit_pause,
+    retry_pause,
+    thinking_enabled,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MODEL
 # ─────────────────────────────────────────────────────────────────────────────
 
-AGENT_MODEL = CHAT_MODEL
-# Exploration (deciding which topics/stories to look at) is mechanical and
-# uses Haiku for ~5-10x faster turns. The final beat-book write switches
-# back to Sonnet for prose quality.
-EXPLORE_MODEL = "claude-haiku-4-5-20251001"
+# Model names are read from the ChatProvider at runtime.
+# For Anthropic: explore=Haiku, agent=Sonnet.
+# For Ollama: both use the configured OLLAMA_CHAT_MODEL.
 
 # Generous output cap — beat books can be long. Sonnet 4.6 supports a
 # 1M token context window and up to 128k output tokens; 32k per turn is
@@ -43,6 +43,7 @@ MAX_TOOL_RESULT_CHARS = 60_000
 # When the conversation exceeds this many messages, old tool result turns
 # are replaced with a stub so the history stays within the 1M token limit.
 MAX_HISTORY_MESSAGES = 40
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOOL DEFINITIONS (Anthropic tool-use schema)
@@ -150,7 +151,7 @@ TOOLS = [
                 },
                 "filename": {
                     "type": "string",
-                    "description": "Filename for the beat book (e.g. 'sports_beat_book.md').",
+                    "description": "Descriptive filename based on the beat's topic, using snake_case and ending in _beat_book.md (e.g. 'chicago_immigration_enforcement_beat_book.md', 'bears_stadium_beat_book.md').",
                 },
             },
             "required": ["markdown_content", "filename"],
@@ -163,47 +164,36 @@ TOOLS = [
 # SYSTEM PROMPT
 # ─────────────────────────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """\
-You are an expert journalism mentor and beat-book author. Your job is to help \
-a reporter create a comprehensive "beat book" — a practical reporting guide for \
-covering a specific beat (topic area).
+# ── Document structure (shared by all styles) ──────────────────────────────
 
-You have been given a set of news stories that the reporter has uploaded. These \
-stories have already been analyzed and grouped into topics automatically.
-
-Your workflow:
-1. **Explore** — Call `view_topics` to see the full topic list. Then call \
-`read_stories_in_topic` for each topic — it returns every story with a \
-2000-character excerpt and immediately satisfies the research requirement for \
-that topic. Use `read_story` only when you need the full text of a specific \
-document. Use `search_stories` to surface specific people, institutions, or \
-themes across topics. Every tool result includes a `[Research progress]` block \
-showing per-topic read status — once all topics show "OK", you can generate.
-2. **Generate** — Call `generate_beat_book` once every topic shows "OK" in \
-the progress block.
-
-The beat book is a narrative document, not an outline. A reporter should be \
-able to read it cover-to-cover the way they'd read a long-form magazine \
-feature about their own beat. Structure it as follows.
+_DOC_STRUCTURE = """\
+Structure the beat book as follows.
 
 Open with a **Beat Overview** of two or three paragraphs explaining what the \
-beat covers and why it matters — written as prose, not as bullets. Move into \
-**Key Topics & Themes**, organized around the topics the reporter selected; \
-each topic gets a few paragraphs describing who is doing what, what is at \
-stake, and the recurring tension or arc in the coverage. Cover **Key Sources \
-& Players** — the people, organizations, and institutions that appear \
-repeatedly — by writing about them in sentences, explaining their role and \
-how they tend to surface; do not reduce them to a bulleted roster. **Story \
-Ideas & Angles** can be a short numbered list because each idea is a \
-discrete thought, but introduce the list with a sentence or two framing the \
-gap in coverage it addresses. Provide **Background & Context** as flowing \
-prose: the history, policy, and institutional knowledge a new reporter would \
-need to make sense of the beat. End with **Reporting Tips** (a few sentences \
-of practical advice specific to this beat, not generic journalism advice) \
-and a **Calendar & Recurring Events** section, where a list is appropriate \
-because the items are genuinely list-shaped (a meeting on the second \
-Tuesday of every month).
+beat covers and why it matters. Move into **Key Topics & Themes**, organized \
+around the topics the reporter selected; each topic describes who is doing \
+what, what is at stake, and the recurring tension or arc in the coverage. \
+Cover **Key Sources & Players** — the people, organizations, and \
+institutions that appear repeatedly — explaining their role and how they \
+tend to surface. Include **Story Ideas & Angles** — a short numbered list, \
+introduced with a sentence or two framing the gap in coverage. Provide \
+**Background & Context**: the history, policy, and institutional knowledge \
+a new reporter would need. End with **Reporting Tips** (practical advice \
+specific to this beat, not generic journalism advice) and a **Calendar & \
+Recurring Events** section.\
+"""
 
+_NO_TOC = """\
+**Do NOT include a table of contents.** The viewer provides its own \
+navigation from the document's headings, so a TOC in the Markdown is \
+redundant. Start the document with the title and subtitle, then go directly \
+into the Beat Overview.\
+"""
+
+# ── Style presets ──────────────────────────────────────────────────────────
+
+STYLE_PRESETS = {
+    "narrative": """\
 **Writing style.** Write in connected prose, the way a senior reporter would \
 brief a colleague picking up the beat — not as an outline. Use bullets only \
 for genuinely list-shaped content: a roster of named sources, a short list \
@@ -215,14 +205,83 @@ board: 6-1 vote, March, property tax increase"). Reference actual stories, \
 names, and details from the corpus, not generic advice. The result should \
 read like a piece of journalism about the beat, useful enough that a \
 brand-new reporter could pick it up and start producing informed coverage \
-the same day.
+the same day.\
+""",
 
-**Do NOT include a table of contents.** The viewer provides its own \
-navigation from the document's headings, so a TOC in the Markdown is \
-redundant. Start the document with the title and subtitle, then go directly \
-into the Beat Overview.
+    "scannable": """\
+**Writing style.** Optimize for quick reference. Keep paragraphs short \
+(2–3 sentences). Open each topic section with a **bolded lead sentence** \
+that states the single most important thing, then use bullet points for \
+supporting details. Per-topic sub-headers (e.g. "Key players", "What to \
+watch") are encouraged — they help a reporter scan. Bold key names, \
+organizations, and institutions on first mention. Use complete sentences \
+with concrete subjects and verbs, and reference actual stories, names, and \
+details from the corpus. A reporter should be able to flip to any section \
+and find what they need in seconds.\
+""",
+
+    "briefing": """\
+**Writing style.** Write like an editor's desk memo — terse, direct, and \
+action-oriented. Use present tense and imperative mood where it fits \
+("Watch for…", "Talk to…", "The key number is…"). Paragraphs are 2–3 \
+sentences max. Each section opens with the single most important takeaway, \
+then supporting detail. Prioritize actionable intelligence over background: \
+who to call, what to FOIA, which meetings to attend, what numbers to track. \
+The **Background & Context** section should cover only what a reporter \
+needs this week — skip deep history unless it directly informs current \
+coverage. Reference actual stories, names, and details from the corpus. \
+The result should read like a senior editor handing a beat folder to a \
+reporter walking out the door.\
+""",
+}
+
+VALID_STYLES = list(STYLE_PRESETS.keys())
+
+
+def _build_doc_spec(style: str = "narrative") -> str:
+    style_text = STYLE_PRESETS.get(style, STYLE_PRESETS["narrative"])
+    return f"{_DOC_STRUCTURE}\n\n{style_text}\n\n{_NO_TOC}"
+
+
+# ── System prompt templates ────────────────────────────────────────────────
+
+_EXPLORE_TEMPLATE = """\
+You are an expert journalism mentor and beat-book author. Your job is to help \
+a reporter create a comprehensive "beat book" — a practical reporting guide for \
+covering a specific beat (topic area).
+
+You have been given a set of news stories that the reporter has uploaded. These \
+stories have already been analyzed and grouped into topics automatically.
+
+Your workflow:
+1. **Scan** — Call `view_topics` to see the full topic list. Then call \
+`read_stories_in_topic` for each topic — it returns every story with a \
+2000-character excerpt so you can survey the landscape.
+2. **Deep read** — After scanning, call `read_story` on individual stories \
+to get their full text. Prioritize stories that appear most important, cover \
+different angles, or cite unique sources. The `[Research progress]` block in \
+every tool result shows per-topic read counts — keep calling `read_story` \
+until every topic shows "OK". A scan alone is not enough; you need deep reads.
+3. **Generate** — Call `generate_beat_book` once every topic shows "OK" in \
+the progress block.
+
+{doc_spec}
 
 Keep your conversational messages concise. Use tools frequently.\
+"""
+
+# The final-write prompt avoids the "call generate_beat_book" instruction
+# that conflicts with tool_choice="none".
+_WRITE_TEMPLATE = """\
+You are an expert journalism mentor and beat-book author. You have finished \
+researching a set of news stories on behalf of a reporter, and your research \
+notes are in the conversation above. Your only job now is to write the \
+complete beat book.
+
+Reply with ONLY the finished Markdown document — no preamble, no \
+acknowledgement, no tool calls. Start directly with the title (`# ...`).
+
+{doc_spec}\
 """
 
 
@@ -232,10 +291,27 @@ Keep your conversational messages concise. Use tools frequently.\
 
 def _target_for_topic(topic_size: int) -> int:
     """Per-topic minimum read count: every story if the topic has fewer than
-    15, otherwise half (rounded up)."""
+    15, otherwise half (rounded up), capped at 25."""
     if topic_size < 15:
         return topic_size
-    return (topic_size + 1) // 2
+    return min(25, (topic_size + 1) // 2)
+
+
+def _derive_filename(pipeline_result: PipelineResult) -> str:
+    """Build a descriptive snake_case filename from the top broad topic."""
+    import re
+    topics = sorted(
+        pipeline_result.broad_topics.items(),
+        key=lambda x: -len(x[1]),
+    )
+    if not topics:
+        return "beat_book.md"
+    label = topics[0][0].lower()
+    words = re.sub(r"[^a-z0-9]+", " ", label).split()
+    words = words[:3]
+    if not words:
+        return "beat_book.md"
+    return "_".join(words) + "_beat_book.md"
 
 
 def _progress_report(
@@ -271,12 +347,15 @@ def _progress_report(
         )
     lines.append(
         f"Total stories read (unique): {len(read_indices)}. "
-        "Targets: every story in topics with <15 stories, otherwise half."
+        "Targets: every story in topics with <15 stories, otherwise half (max 25). "
+        "Scanning a topic with read_stories_in_topic credits 5 reads; "
+        "use read_story for the rest."
     )
     if not all_met:
         lines.append(
             "generate_beat_book will be rejected until every listed topic "
-            "meets its target. Keep reading."
+            "meets its target. Call read_story on individual stories to "
+            "increase your read count."
         )
     return "\n".join(lines), all_met
 
@@ -302,7 +381,7 @@ def execute_local_tool(name: str, input_data: dict, result: PipelineResult) -> s
             "author": story.get("author", ""),
             "date": story.get("date", ""),
             "topics": result.story_topics[input_data["index"]],
-            "content": story.get("content", "")[:1500],
+            "content": story.get("content", "")[:4000],
         }, indent=2)
 
     if name == "read_stories_in_topic":
@@ -323,7 +402,7 @@ def execute_local_tool(name: str, input_data: dict, result: PipelineResult) -> s
                 "organization": story.get("organization", ""),
                 "content_type": story.get("content_type", "article"),
                 "metadata": story.get("metadata", {}),
-                "excerpt": story.get("content", "")[:600],
+                "excerpt": story.get("content", "")[:2000],
             })
         return json.dumps(entries, indent=2)
 
@@ -395,7 +474,7 @@ def _prune_history(messages: list) -> list:
 
 async def run_agent(
     pipeline_result: PipelineResult,
-    anthropic_key: str,
+    provider: ChatProvider,
     on_message: MessageCallback,
     on_beat_book: Callable[[str, str], Awaitable[None]],
     on_tool_status: ToolStatusCallback = None,
@@ -403,66 +482,30 @@ async def run_agent(
     on_agent_progress: Callable[[float, str], Awaitable[None]] = None,
     on_exploration_done: Callable[[str], Awaitable[None]] = None,
     selected_topics: list[str] | None = None,
+    style: str = "narrative",
 ) -> None:
     """
     Run the agent loop.
 
     Args:
         pipeline_result: Output from the embedding/clustering pipeline.
-        anthropic_key: Anthropic API key (claude-sonnet-4-6).
+        provider: ChatProvider instance (Anthropic or Ollama).
         on_message: async callback(text) — sends agent text to the frontend.
         on_beat_book: async callback(filename, markdown) — saves/delivers the beat book.
         on_tool_status: async callback(tool_name, detail) — reports tool execution status.
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
     """
-    client = chat_client(anthropic_key)
+    doc_spec = _build_doc_spec(style)
+    system_prompt = _EXPLORE_TEMPLATE.format(doc_spec=doc_spec)
+    write_system_prompt = _WRITE_TEMPLATE.format(doc_spec=doc_spec)
 
-    def _streamed_create(**kwargs):
-        """Blocking streaming call. Using `messages.stream` instead of
-        `messages.create` keeps the HTTP connection alive while Sonnet
-        writes long output; the non-streaming endpoint silently disconnects
-        on multi-minute responses (RemoteProtocolError)."""
-        import time as _t
-        t0 = _t.time()
-        print(f"[agent.stream] entering stream context, model={kwargs.get('model')}, "
-              f"max_tokens={kwargs.get('max_tokens')}", flush=True)
-        chars = 0
-        events = 0
-        last_print = t0
-        try:
-            stream_ctx = client.messages.stream(**kwargs)
-        except Exception as e:
-            print(f"[agent.stream] stream() raised before entering: {type(e).__name__}: {e}",
-                  flush=True)
-            raise
-        with stream_ctx as stream:
-            print(f"[agent.stream] context open at {_t.time()-t0:.1f}s, "
-                  f"iterating events…", flush=True)
-            for event in stream:
-                events += 1
-                if events == 1:
-                    print(f"[agent.stream] first event at {_t.time()-t0:.1f}s "
-                          f"type={type(event).__name__}", flush=True)
-                delta = getattr(event, "delta", None)
-                if delta is not None:
-                    text = getattr(delta, "text", None) or getattr(delta, "partial_json", None)
-                    if text:
-                        chars += len(text)
-                now = _t.time()
-                if now - last_print >= 5:
-                    print(f"[agent.stream] {now-t0:.1f}s, {events} events, "
-                          f"{chars} chars streamed", flush=True)
-                    last_print = now
-            final = stream.get_final_message()
-        print(f"[agent.stream] done in {_t.time()-t0:.1f}s, "
-              f"{events} events, stop_reason={final.stop_reason}", flush=True)
-        return final
-
-    async def _api_call_with_heartbeat(**kwargs):
-        """Run the streaming API call in a thread while sending heartbeats
+    async def _api_call_with_heartbeat(**kwargs) -> ChatResponse:
+        """Run the provider call in a thread while sending heartbeats
         every 15 seconds so the WebSocket doesn't time out during long turns."""
-        api_task = asyncio.create_task(asyncio.to_thread(_streamed_create, **kwargs))
+        api_task = asyncio.create_task(
+            asyncio.to_thread(provider.create, **kwargs)
+        )
         while not api_task.done():
             try:
                 await asyncio.wait_for(asyncio.shield(api_task), timeout=15)
@@ -473,13 +516,11 @@ async def run_agent(
                     except Exception:
                         pass
             except Exception:
-                # surface the real exception from api_task below
                 break
         return await api_task
 
     # Restrict to reporter-selected topics if provided.
     if selected_topics:
-        from pipeline import PipelineResult as _PR
         from dataclasses import replace as _replace
         filtered = {t: v for t, v in pipeline_result.topics.items()
                     if t in set(selected_topics)}
@@ -488,7 +529,6 @@ async def run_agent(
     n_stories = len(pipeline_result.stories)
     n_topics  = len(pipeline_result.topics)
 
-    # Anthropic conversation: `system` is a top-level kwarg, not a message.
     messages: list[dict] = [
         {
             "role": "user",
@@ -558,112 +598,103 @@ async def run_agent(
                 "Coverage target met — writing the beat book now. "
                 "This step takes 1–3 minutes."
             )
-        # SDK blocks the event loop; offload to a worker thread so the
-        # WebSocket handler stays responsive. If the SDK exhausts its own
-        # 429-retry budget, the outer loop here pauses and tries again
-        # before tearing down the session.
-        response = None
+        # Provider call blocks; offload to a worker thread so the
+        # WebSocket handler stays responsive. throttle=False: this is the
+        # interactive path — it must never queue behind background ingest
+        # normalization or cluster labeling (see AnthropicChatProvider.create).
+        response: ChatResponse | None = None
         for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
                 if force_generate:
-                    # Final-write strategy: no tools at all, no tool_choice.
-                    # The model emits the beat book as plain Markdown text,
-                    # which streams reliably (forcing a tool_use that
-                    # contains 16k tokens of stringified JSON hangs at TTFT
-                    # for both Sonnet and Haiku — confirmed empirically).
-                    write_messages = list(messages) + [{
-                        "role": "user",
-                        "content": (
-                            "Now write the full beat book in Markdown. "
-                            "Reply with ONLY the Markdown document — no "
-                            "preamble, no acknowledgement. Start directly "
-                            "with the title (`# ...`)."
-                        ),
-                    }]
+                    write_messages = list(messages) + [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Now write the full beat book in Markdown. "
+                                "The exploration phase is over and tools are "
+                                "disabled — the earlier instruction to call "
+                                "tools no longer applies. Reply with ONLY "
+                                "the Markdown document — no preamble, no "
+                                "acknowledgement. Start directly with the "
+                                "title (`# ...`)."
+                            ),
+                        },
+                    ]
                     request_kwargs = dict(
-                        model=EXPLORE_MODEL,
+                        model=provider.agent_model,
                         max_tokens=MAX_TOKENS_FINAL_GENERATE,
-                        system=[{
-                            "type": "text",
-                            "text": SYSTEM_PROMPT,
-                            "cache_control": {"type": "ephemeral"},
-                        }],
+                        system=write_system_prompt,
+                        tools=TOOLS,
+                        tool_choice={"type": "none"},
                         messages=write_messages,
+                        think=thinking_enabled(),
+                        throttle=False,
                     )
                 else:
                     request_kwargs = dict(
-                        model=EXPLORE_MODEL,
+                        model=provider.explore_model,
                         max_tokens=4096,
-                        system=[{
-                            "type": "text",
-                            "text": SYSTEM_PROMPT,
-                            "cache_control": {"type": "ephemeral"},
-                        }],
+                        system=system_prompt,
                         tools=TOOLS,
                         messages=messages,
+                        throttle=False,
                     )
-                print(f"[agent] turn {_turn}: calling Sonnet "
+                print(f"[agent] turn {_turn}: calling "
+                      f"{request_kwargs['model']} "
                       f"(force_generate={force_generate}, "
                       f"max_tokens={request_kwargs['max_tokens']}, "
                       f"messages={len(messages)})", flush=True)
                 response = await _api_call_with_heartbeat(**request_kwargs)
                 print(f"[agent] turn {_turn}: stop_reason={response.stop_reason} "
-                      f"blocks={[getattr(b,'type',None) for b in response.content]}",
+                      f"blocks={[b.get('type') for b in response.content]} "
+                      f"usage={response.usage}",
                       flush=True)
                 break
-            except anthropic.RateLimitError as e:
+            except ChatRateLimitError as e:
                 if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                     await on_message(
-                        "⚠️ Anthropic's concurrent-connection rate limit "
-                        "is persistently exceeded — please wait a few "
-                        "minutes and start a new session."
+                        "⚠️ Rate limit persistently exceeded — please wait "
+                        "a few minutes and start a new session."
                     )
                     return
-                pause = rate_limit_pause(rl_attempt, e)
+                pause = retry_pause(rl_attempt, e)
                 await on_message(
-                    f"⏸ Hit Anthropic's rate limit. "
-                    f"Waiting {pause:.0f}s before retrying "
+                    f"⏸ Hit rate limit. Waiting {pause:.0f}s before retrying "
                     f"(attempt {rl_attempt + 1}/{RATE_LIMIT_MAX_RETRIES})…"
                 )
                 await asyncio.sleep(pause)
-            except (anthropic.APIConnectionError, anthropic.APITimeoutError) as e:
+            except ChatConnectionError as e:
                 if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                     await on_message(
-                        f"⚠️ Connection to Anthropic kept failing ({e}). "
+                        f"⚠️ Connection kept failing ({e}). "
                         "Please check your network and start a new session."
                     )
                     return
                 pause = min(30.0, 5.0 * (2 ** rl_attempt))
                 await on_message(
-                    f"⏸ Connection error talking to Anthropic ({e}). "
+                    f"⏸ Connection error ({e}). "
                     f"Retrying in {pause:.0f}s "
                     f"(attempt {rl_attempt + 1}/{RATE_LIMIT_MAX_RETRIES})…"
                 )
                 await asyncio.sleep(pause)
-            except anthropic.APIStatusError as e:
-                status = getattr(e, "status_code", None)
-                if status and 500 <= status < 600 and rl_attempt < RATE_LIMIT_MAX_RETRIES:
-                    pause = min(30.0, 5.0 * (2 ** rl_attempt))
-                    await on_message(
-                        f"⏸ Anthropic returned {status}. Retrying in "
-                        f"{pause:.0f}s (attempt {rl_attempt + 1}/"
-                        f"{RATE_LIMIT_MAX_RETRIES})…"
-                    )
-                    await asyncio.sleep(pause)
-                else:
+            except ChatServerError as e:
+                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                     raise
+                pause = min(30.0, 5.0 * (2 ** rl_attempt))
+                await on_message(
+                    f"⏸ Server error. Retrying in "
+                    f"{pause:.0f}s (attempt {rl_attempt + 1}/"
+                    f"{RATE_LIMIT_MAX_RETRIES})…"
+                )
+                await asyncio.sleep(pause)
         assert response is not None  # loop above either sets or returns
 
-        # Forward any plain-text narration to the frontend (dedup repeats).
-        text_combined = "".join(
-            b.text for b in response.content
-            if getattr(b, "type", None) == "text"
-        ).strip()
+        text_combined = response.text.strip()
 
         if force_generate:
             # Final-write turn: the text body IS the beat book.
             if text_combined:
-                await on_beat_book("beat_book.md", text_combined)
+                await on_beat_book(_derive_filename(pipeline_result), text_combined)
                 beat_book_done = True
                 break
             else:
@@ -720,12 +751,12 @@ async def run_agent(
 
         tool_results: list[dict] = []
         for block in response.content:
-            if getattr(block, "type", None) != "tool_use":
+            if block.get("type") != "tool_use":
                 continue
 
-            tool_name = block.name
-            tool_id = block.id
-            tool_input = block.input or {}
+            tool_name = block["name"]
+            tool_id = block["id"]
+            tool_input = block.get("input", {})
 
             # Report tool status to the frontend
             if on_tool_status:
@@ -775,7 +806,13 @@ async def run_agent(
                     topic = tool_input.get("topic", "")
                     if topic and topic in pipeline_result.topics:
                         listed_topics.add(topic)
-                        read_indices.update(pipeline_result.topics[topic])
+                        indices = pipeline_result.topics[topic]
+                        scan_credit = min(5, len(indices))
+                        # Credit the tail of the list: read_story calls tend to
+                        # start from the front, so crediting the front here
+                        # would make those calls look like zero progress.
+                        if scan_credit:
+                            read_indices.update(list(indices)[-scan_credit:])
                 elif tool_name == "read_story":
                     idx = tool_input.get("index")
                     if isinstance(idx, int) and 0 <= idx < len(pipeline_result.stories):

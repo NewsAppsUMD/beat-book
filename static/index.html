@@ -4,209 +4,338 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Beat Book Builder</title>
+  <title>Beat Book</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=PT+Sans+Caption:wght@400;700&display=swap"
     rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/vendor/marked.min.js"></script>
 </head>
 
 <body>
-  <div id="app">
+  <div class="app-shell">
 
-    <!-- ── UPLOAD SCREEN ────────────────────────────────────────── -->
-    <div id="upload-screen" class="screen active">
-      <div class="work-card upload-card">
-        <h1>Beat Book Builder</h1>
-        <p class="subtitle">Add the source material for your beat — any format, any size up to 25 MB per file.</p>
+    <!-- Mobile drawer toggle + backdrop (hidden on desktop) -->
+    <button class="sidebar-toggle" id="sidebar-toggle" aria-label="Open menu">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M3 12h18M3 18h18"/></svg>
+    </button>
+    <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
 
-        <div id="drop-zone" class="drop-zone">
-          <div class="drop-zone-inner">
-            <p>Drag &amp; drop files here</p>
-            <p class="small">Word, PDF, HTML, text, markdown, JSON, RTF, and more</p>
-            <label class="file-btn">
-              Browse Files
-              <input type="file" id="file-input" multiple hidden>
-            </label>
-          </div>
-        </div>
+    <!-- ── SIDEBAR ─────────────────────────────────────────────── -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">Beat Book</div>
 
-        <div id="file-list" class="file-list" hidden></div>
+      <button class="sidebar-btn sidebar-new" id="new-book-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        New Beat Book
+      </button>
 
-        <div class="url-section">
-          <label class="url-label" for="url-input">Or paste article URLs (one per line)</label>
-          <textarea id="url-input" class="url-input" rows="3" placeholder="https://example.com/article-1&#10;https://example.com/article-2"></textarea>
-        </div>
+      <button class="sidebar-btn sidebar-search" id="open-search-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
+        </svg>
+        <span>Search</span>
+        <span class="kbd" aria-hidden="true">⌘K</span>
+      </button>
 
-        <button id="upload-btn" class="btn primary" disabled>
-          Read &amp; Detect Stories
-        </button>
+      <div class="sidebar-section-label">Beat books</div>
+      <nav class="sidebar-books" id="book-list" aria-label="Past beat books"></nav>
+    </aside>
 
-        <div id="upload-status" class="status" hidden>
-          <div class="ingest-spinner">
-            <span class="pulse-dot" aria-hidden="true"></span>
-            <span id="ingest-step">Reading your sources…</span>
-          </div>
-          <div class="progress-detail" id="ingest-detail"></div>
-        </div>
-      </div>
-    </div>
+    <!-- ── MAIN ────────────────────────────────────────────────── -->
+    <main class="main" id="main">
 
-    <!-- ── PREVIEW SCREEN ───────────────────────────────────────── -->
-    <div id="preview-screen" class="screen">
-      <header class="app-header">
-        <h2>Beat Book Builder</h2>
-        <div id="preview-session-info" class="session-info"></div>
-      </header>
-      <div class="preview-toolbar">
-        <div class="preview-toolbar-row">
-          <button id="preview-back-btn" class="btn">Back to upload</button>
-          <div class="preview-filters" id="preview-filters" role="group" aria-label="Filter by confidence">
-            <button type="button" class="confidence-filter high active" data-level="high" aria-pressed="true">
-              <span class="filter-label">High</span>
-              <span class="filter-count" id="filter-count-high">0</span>
-            </button>
-            <button type="button" class="confidence-filter medium active" data-level="medium" aria-pressed="true">
-              <span class="filter-label">Medium</span>
-              <span class="filter-count" id="filter-count-medium">0</span>
-            </button>
-            <button type="button" class="confidence-filter low active" data-level="low" aria-pressed="true">
-              <span class="filter-label">Low</span>
-              <span class="filter-count" id="filter-count-low">0</span>
-            </button>
-          </div>
-          <div class="preview-toolbar-right">
-            <span id="preview-included-count" class="submit-hint"></span>
-            <button id="preview-run-btn" class="btn primary">Run pipeline</button>
-          </div>
-        </div>
-        <div id="preview-status" class="preview-toolbar-progress" hidden>
-          <div class="progress-step" id="preview-progress-step">Preparing…</div>
-          <div class="progress-bar-track">
-            <div class="progress-bar-fill" id="preview-progress-bar"></div>
-          </div>
-          <div class="progress-detail" id="preview-progress-detail"></div>
-        </div>
-      </div>
-      <div class="screen-body">
-        <div class="screen-content">
-          <div class="interview-heading">
-            <div class="eyebrow">Step 1 of 3 · Review detected stories</div>
-            <h1 id="preview-title">Detected stories</h1>
-            <p class="interview-lede" id="preview-summary"></p>
-          </div>
-
-          <div id="preview-excluded" class="preview-excluded-list" hidden></div>
-          <div id="preview-sources" class="preview-sources"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── TOPIC SELECT SCREEN ────────────────────────────────── -->
-    <div id="topic-screen" class="screen">
-      <header class="app-header">
-        <h2>Beat Book Builder</h2>
-        <div id="topic-session-info" class="session-info"></div>
-      </header>
-      <div class="screen-body">
-        <div class="screen-content">
-          <div class="interview-heading">
-            <div class="eyebrow">Step 2 of 3 · Choose your focus</div>
-            <h1>What topics do you want to cover?</h1>
-            <p class="interview-lede">Select the topics to include in your beat book. The agent will focus only on what you pick.</p>
-          </div>
-          <div id="topic-list" class="topic-select-list"></div>
-          <div class="topic-select-actions">
-            <div class="topic-select-toggles">
-              <button id="topic-select-all" class="btn-link">Select all</button>
-              <span class="separator">·</span>
-              <button id="topic-deselect-all" class="btn-link">Deselect all</button>
+      <!-- ── LIBRARY VIEW ──────────────────────────────────────── -->
+      <section id="view-library" class="view active">
+        <div class="view-scroll">
+          <div class="library">
+            <header class="library-header">
+              <h1>Your beat books</h1>
+              <p class="library-sub">Reporting guides built from your source material. Start a new one any time.</p>
+            </header>
+            <div class="library-grid" id="library-grid"></div>
+            <div class="library-empty" id="library-empty" hidden>
+              <div class="library-empty-inner">
+                <h2>No beat books yet</h2>
+                <p>Turn a collection of articles into a practical reporting guide for your beat.</p>
+                <button class="btn primary large" id="library-empty-new">+ New Beat Book</button>
+              </div>
             </div>
-            <button id="topic-generate-btn" class="btn primary" disabled>Generate beat book</button>
           </div>
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- ── GENERATING SCREEN ────────────────────────────────────── -->
-    <div id="generating-screen" class="screen">
-      <header class="app-header">
-        <h2>Beat Book Builder</h2>
-        <div id="generating-session-info" class="session-info"></div>
-      </header>
-      <div class="screen-body centered">
-        <div class="work-card generating-card">
-          <div class="work-card-hero">
-            <span class="pulse-dot" aria-hidden="true"></span>
-            <h1 id="generating-label">Generating your beat book</h1>
+      <!-- ── CREATE VIEW (wizard) ──────────────────────────────── -->
+      <section id="view-create" class="view">
+        <div class="view-scroll" id="create-scroll">
+
+          <!-- UPLOAD -->
+          <div id="upload-screen" class="screen active">
+            <div class="work-card upload-card">
+              <h1>New beat book</h1>
+              <p class="subtitle">Add the source material for your beat — any format, any size up to 25 MB per file.</p>
+
+              <div id="drop-zone" class="drop-zone">
+                <div class="drop-zone-inner">
+                  <p>Drag &amp; drop files here</p>
+                  <p class="small">Word, PDF, HTML, text, markdown, JSON, RTF, and more</p>
+                  <label class="file-btn">
+                    Browse Files
+                    <input type="file" id="file-input" multiple hidden>
+                  </label>
+                </div>
+              </div>
+
+              <div id="file-list" class="file-list" hidden></div>
+
+              <div class="url-section">
+                <label class="url-label" for="url-input">Or paste article URLs (one per line)</label>
+                <textarea id="url-input" class="url-input" rows="3" placeholder="https://example.com/article-1&#10;https://example.com/article-2"></textarea>
+              </div>
+
+              <button id="upload-btn" class="btn primary" disabled>
+                Read &amp; Detect Stories
+              </button>
+
+              <div id="upload-status" class="status" hidden>
+                <div class="ingest-spinner">
+                  <span class="pulse-dot" aria-hidden="true"></span>
+                  <span id="ingest-step">Reading your sources…</span>
+                </div>
+                <div class="progress-detail" id="ingest-detail"></div>
+              </div>
+            </div>
           </div>
-          <p id="generating-detail" class="work-card-detail">Analyzing your uploads…</p>
 
-          <div class="shimmer-bar" aria-hidden="true"><div class="shimmer-bar-fill"></div></div>
+          <!-- PREVIEW -->
+          <div id="preview-screen" class="screen">
+            <div class="preview-toolbar">
+              <div class="preview-toolbar-row">
+                <button id="preview-back-btn" class="btn">Back to upload</button>
+                <div class="preview-filters" id="preview-filters" role="group" aria-label="Filter by confidence">
+                  <button type="button" class="confidence-filter high active" data-level="high" aria-pressed="true">
+                    <span class="filter-label">High</span>
+                    <span class="filter-count" id="filter-count-high">0</span>
+                  </button>
+                  <button type="button" class="confidence-filter medium active" data-level="medium" aria-pressed="true">
+                    <span class="filter-label">Medium</span>
+                    <span class="filter-count" id="filter-count-medium">0</span>
+                  </button>
+                  <button type="button" class="confidence-filter low active" data-level="low" aria-pressed="true">
+                    <span class="filter-label">Low</span>
+                    <span class="filter-count" id="filter-count-low">0</span>
+                  </button>
+                </div>
+                <div class="preview-toolbar-right">
+                  <div id="embed-model-selector" class="embed-model-selector" hidden>
+                    <label for="embed-model-select" class="embed-model-label">Embeddings</label>
+                    <select id="embed-model-select" class="embed-model-select"></select>
+                  </div>
+                  <span id="preview-included-count" class="submit-hint"></span>
+                  <button id="preview-run-btn" class="btn primary">Run pipeline</button>
+                </div>
+              </div>
+              <div id="preview-status" class="preview-toolbar-progress" hidden>
+                <div class="progress-step" id="preview-progress-step">Preparing…</div>
+                <div class="progress-bar-track">
+                  <div class="progress-bar-fill" id="preview-progress-bar"></div>
+                </div>
+                <div class="progress-detail" id="preview-progress-detail"></div>
+              </div>
+            </div>
+            <div class="screen-body">
+              <div class="screen-content">
+                <div class="step-heading">
+                  <div class="eyebrow">Step 1 of 3 · Review detected stories</div>
+                  <h1 id="preview-title">Detected stories</h1>
+                  <p class="step-lede" id="preview-summary"></p>
+                </div>
 
-          <ol class="stepper" id="stepper" aria-label="Progress">
-            <li class="step" data-step="review">
-              <span class="step-icon" aria-hidden="true"></span>
-              <div class="step-body">
-                <div class="step-title">Review coverage</div>
-                <div class="step-sub">Scanning topics and uploaded stories</div>
+                <div id="preview-excluded" class="preview-excluded-list" hidden></div>
+                <div id="preview-sources" class="preview-sources"></div>
               </div>
-            </li>
-            <li class="step" data-step="write">
-              <span class="step-icon" aria-hidden="true"></span>
-              <div class="step-body">
-                <div class="step-title">Write beat book</div>
-                <div class="step-sub">Drafting sections from source material</div>
-              </div>
-            </li>
-            <li class="step" data-step="research">
-              <span class="step-icon" aria-hidden="true"></span>
-              <div class="step-body">
-                <div class="step-title">Research context</div>
-                <div class="step-sub">Browsing the web for additional reporting context</div>
-              </div>
-            </li>
-            <li class="step" data-step="cite">
-              <span class="step-icon" aria-hidden="true"></span>
-              <div class="step-body">
-                <div class="step-title">Match citations</div>
-                <div class="step-sub">Linking each claim back to its source</div>
-              </div>
-            </li>
-          </ol>
-
-          <div class="work-card-footer">
-            <div id="generating-stats" class="stats-chips"></div>
-            <div class="elapsed" id="generating-elapsed" aria-live="polite">0:00</div>
+            </div>
           </div>
+
+          <!-- TOPIC SELECT -->
+          <div id="topic-screen" class="screen">
+            <div class="screen-body">
+              <div class="screen-content">
+                <div class="step-heading">
+                  <div class="eyebrow">Step 2 of 3 · Choose your focus</div>
+                  <h1>What topics do you want to cover?</h1>
+                  <p class="step-lede">Select the topics to include in your beat book. The agent will focus only on what you pick.</p>
+                </div>
+                <div id="topic-list" class="topic-select-list"></div>
+
+                <div class="style-selector">
+                  <div class="style-heading">Writing style</div>
+                  <div class="style-options">
+                    <label class="style-option selected" data-style="narrative">
+                      <input type="radio" name="style" value="narrative" checked>
+                      <span class="style-name">Narrative</span>
+                      <span class="style-desc">Flowing prose, like a magazine feature</span>
+                    </label>
+                    <label class="style-option" data-style="scannable">
+                      <input type="radio" name="style" value="scannable">
+                      <span class="style-name">Scannable</span>
+                      <span class="style-desc">Quick reference — short paragraphs, more headers and bullets</span>
+                    </label>
+                    <label class="style-option" data-style="briefing">
+                      <input type="radio" name="style" value="briefing">
+                      <span class="style-name">Briefing</span>
+                      <span class="style-desc">Editor's desk memo — terse, action-oriented, what matters now</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="topic-select-actions">
+                  <div class="topic-select-toggles">
+                    <button id="topic-select-all" class="btn-link">Select all</button>
+                    <span class="separator">·</span>
+                    <button id="topic-deselect-all" class="btn-link">Deselect all</button>
+                  </div>
+                  <button id="topic-generate-btn" class="btn primary" disabled>Generate beat book</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- GENERATING -->
+          <div id="generating-screen" class="screen">
+            <div class="screen-body centered">
+              <div class="work-card generating-card">
+                <div class="work-card-hero">
+                  <span class="pulse-dot" aria-hidden="true"></span>
+                  <h1 id="generating-label">Generating your beat book</h1>
+                </div>
+                <p id="generating-detail" class="work-card-detail">Analyzing your uploads…</p>
+
+                <div class="shimmer-bar" aria-hidden="true"><div class="shimmer-bar-fill"></div></div>
+
+                <ol class="stepper" id="stepper" aria-label="Progress">
+                  <li class="step" data-step="review">
+                    <span class="step-icon" aria-hidden="true"></span>
+                    <div class="step-body">
+                      <div class="step-title">Review coverage</div>
+                      <div class="step-sub">Scanning topics and uploaded stories</div>
+                    </div>
+                  </li>
+                  <li class="step" data-step="write">
+                    <span class="step-icon" aria-hidden="true"></span>
+                    <div class="step-body">
+                      <div class="step-title">Write beat book</div>
+                      <div class="step-sub">Drafting sections from source material</div>
+                    </div>
+                  </li>
+                  <li class="step" data-step="research">
+                    <span class="step-icon" aria-hidden="true"></span>
+                    <div class="step-body">
+                      <div class="step-title">Research context</div>
+                      <div class="step-sub">Browsing the web for additional reporting context</div>
+                    </div>
+                  </li>
+                  <li class="step" data-step="cite">
+                    <span class="step-icon" aria-hidden="true"></span>
+                    <div class="step-body">
+                      <div class="step-title">Match citations</div>
+                      <div class="step-sub">Linking each claim back to its source</div>
+                    </div>
+                  </li>
+                </ol>
+
+                <div class="work-card-footer">
+                  <div id="generating-stats" class="stats-chips"></div>
+                  <div class="elapsed" id="generating-elapsed" aria-live="polite">0:00</div>
+                </div>
+
+                <div class="generating-actions" id="generating-actions" hidden>
+                  <button class="btn-link" id="generating-to-library">Working in the background — back to library</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
         </div>
-      </div>
-    </div>
+      </section>
 
-    <!-- ── DONE SCREEN ──────────────────────────────────────────── -->
-    <div id="done-screen" class="screen">
-      <header class="app-header">
-        <h2>Beat Book Builder</h2>
-        <div id="done-session-info" class="session-info"></div>
-      </header>
-      <div class="screen-body centered">
-        <div class="work-card done-card">
-          <div class="success-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="5 12.5 10 17.5 19 7.5"></polyline>
+      <!-- ── READER VIEW (ported viewer) ───────────────────────── -->
+      <section id="view-reader" class="view reader-root">
+        <div class="reader-subheader">
+          <button class="reader-back" id="reader-back" title="Back to library" aria-label="Back to library">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M15 18l-6-6 6-6" />
             </svg>
+          </button>
+          <div class="reader-title" id="reader-title">Beat Book</div>
+          <div class="section-navigator" id="sectionNavigator">
+            <button class="current-section-btn" id="currentSectionBtn">
+              <span id="currentSectionText">Introduction</span>
+              <svg class="chevron-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+            <div class="section-menu" id="sectionMenu"></div>
           </div>
-          <h1>Your beat book is ready</h1>
-          <p class="done-subtitle" id="done-subtitle"></p>
-          <a id="done-viewer-link" class="btn primary large" target="_blank" rel="noopener">Open with inline citations →</a>
-          <p class="done-secondary"><a id="done-markdown-link" target="_blank" rel="noopener">Download raw Markdown</a></p>
+          <div class="reading-progress" id="readingProgress"></div>
         </div>
-      </div>
-    </div>
 
+        <div class="reader-split" id="reader-split">
+          <div class="reader-main" id="reader-main">
+            <div class="reader-container">
+              <div id="reader-content"></div>
+            </div>
+          </div>
+
+          <div class="reader-article-panel" id="articlePanel">
+            <div class="article-panel-header">
+              <h2 class="article-panel-title" id="articlePanelTitle">Article Title</h2>
+              <button class="close-btn" id="article-close-btn" aria-label="Close source">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M18.0121 4.92865C18.305 4.63576 18.7798 4.63576 19.0727 4.92865C19.3656 5.22155 19.3656 5.69642 19.0727 5.98931L13.0623 11.9997L19.0727 18.0101C19.3656 18.303 19.3656 18.7779 19.0727 19.0708C18.7798 19.3637 18.305 19.3637 18.0121 19.0708L12.0016 13.0604L5.99127 19.0707C5.95466 19.1074 5.9152 19.1394 5.87361 19.1669C5.5825 19.3591 5.18689 19.327 4.93061 19.0707C4.63771 18.7779 4.63771 18.303 4.93061 18.0101L10.941 11.9997L4.93061 5.98936C4.63772 5.69647 4.63772 5.22159 4.93061 4.9287C5.2235 4.63581 5.69838 4.63581 5.99127 4.9287L12.0016 10.9391L18.0121 4.92865Z"
+                    fill="currentColor" />
+                </svg>
+              </button>
+            </div>
+            <div class="article-panel-body" id="articleContent"></div>
+          </div>
+        </div>
+      </section>
+
+    </main>
   </div>
 
+  <!-- Hover preview tooltip (fixed; lives at body level) -->
+  <div class="source-preview" id="sourcePreview">
+    <div class="preview-title" id="previewTitle"></div>
+    <div class="preview-meta">
+      <span id="previewAuthor"></span>
+      <span id="previewDate"></span>
+    </div>
+    <div class="preview-content" id="previewContent"></div>
+    <div class="preview-gradient"></div>
+  </div>
+
+  <!-- Search palette (command-style floating pane) -->
+  <div class="search-palette" id="search-palette" hidden>
+    <div class="search-palette-backdrop" id="search-backdrop"></div>
+    <div class="search-palette-modal" role="dialog" aria-modal="true" aria-label="Search beat books">
+      <div class="search-palette-input-row">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" />
+        </svg>
+        <input class="search-palette-input" id="search-input" placeholder="Search beat books…" autocomplete="off" spellcheck="false">
+        <button class="search-palette-close" id="search-close" aria-label="Close">Esc</button>
+      </div>
+      <div class="search-palette-results" id="search-results"></div>
+    </div>
+  </div>
+
+  <script src="/static/reader.js"></script>
   <script src="/static/app.js"></script>
 </body>
 

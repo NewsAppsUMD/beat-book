@@ -10,7 +10,7 @@ sandbox directory, does its own research on the open internet, and rewrites the
 file in place with additional contextual material a reporter would find
 useful (history, key figures, related policy, adjacent coverage, recent news).
 
-Model: Claude Opus 4.7 with adaptive thinking + high effort.
+Model: Claude Sonnet 4.6.
 
 Tools given to the model:
   - bash_20250124            (client-executed, CWD pinned to sandbox)
@@ -33,19 +33,47 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from anthropic import Anthropic
 
-from claude_client import thinking_enabled, thinking_param
-
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-MODEL = "claude-opus-4-7"
+MODEL = "claude-sonnet-4-6"
 MAX_TOKENS_PER_TURN = 16000
-MAX_TURNS = 12
+MAX_TURNS = 6
 BASH_TIMEOUT_SECONDS = 30
-WEB_SEARCH_MAX_USES = 8
-WEB_FETCH_MAX_USES = 8
+WEB_SEARCH_MAX_USES = 6
+WEB_FETCH_MAX_USES = 6
 WEB_FETCH_MAX_CONTENT_TOKENS = 15_000
+
+def _add_cache_breakpoints(messages: List[Dict]) -> List[Dict]:
+    """Stamp cache_control on the last user message's final content block."""
+    if not messages:
+        return messages
+    msgs = list(messages)
+    for i in range(len(msgs) - 1, -1, -1):
+        msg = msgs[i]
+        role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+        if role != "user":
+            continue
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if content is None:
+            break
+        if isinstance(content, str):
+            msgs[i] = {**msg, "content": [{
+                "type": "text",
+                "text": content,
+                "cache_control": {"type": "ephemeral"},
+            }]}
+        elif isinstance(content, list) and content:
+            new_content = list(content)
+            last_block = new_content[-1]
+            if isinstance(last_block, dict):
+                last_block = {**last_block, "cache_control": {"type": "ephemeral"}}
+            new_content[-1] = last_block
+            msgs[i] = {**msg, "content": new_content}
+        break
+    return msgs
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TOOL DEFINITIONS
@@ -54,7 +82,7 @@ WEB_FETCH_MAX_CONTENT_TOKENS = 15_000
 FINALIZE_TOOL_NAME = "finalize_beat_book"
 
 def build_tools() -> List[Dict[str, Any]]:
-    """Tool list passed to the Opus 4.7 API.
+    """Tool list passed to the API.
 
     Do NOT add a standalone code_execution tool — the `_20260209` web tools
     run their dynamic filtering inside a managed code-execution sandbox on
@@ -285,36 +313,13 @@ promising pages in depth. Web fetch can only retrieve URLs that have \
 already appeared in the conversation (including from prior search results), \
 so you must search before fetching an unfamiliar URL.
 
-# Build at least one scraper
+# Optional: build a scraper
 
-Before you finalize, you MUST write and run at least one small Python \
-scraper that pulls structured data from a live web page relevant to this \
-beat. This is non-negotiable — shell `curl` or `web_fetch` alone do not \
-count. The scraper should:
-
-- Live in the sandbox as a `.py` file you create (e.g. `scrape_meetings.py`).
-- Use the standard library (`urllib.request`, `html.parser`, `json`, `re`, \
-  `csv`) or any of `requests`, `beautifulsoup4` (import `bs4`), or `lxml` \
-  — all three are installed.
-- Target something the reporter would actually want in structured form: \
-  an upcoming meetings / hearings calendar, a roster of officials, a \
-  court docket listing, press-release archive, budget line items, an \
-  RSS/Atom feed, a JSON API response, etc. Many of the portals listed \
-  in the `<suggested_sources>` block (below) are good candidates when \
-  the beat falls in their geographic scope.
-- Write its parsed output to a file in the sandbox (JSON or Markdown \
-  works well) and print a short summary to stdout.
-- Be polite: a reasonable `User-Agent` header, no tight loops, respect \
-  obvious `robots.txt` hints. One page fetch is enough to count.
-
-Run the scraper with `python3 scraper_name.py`, inspect the output, then \
-fold the most useful rows into the beat book (e.g. a "Calendar" or "Key \
-People" section). Keep the scraper file in the sandbox — the reporter may \
-reuse it.
-
-If your first target 4xx / 5xxs or returns unexpected HTML, try a \
-different source rather than scraping something useless; one working \
-scraper beats three broken ones.
+If a Socrata JSON API or other structured data source is an obvious fit \
+for this beat (check the `<suggested_sources>` block), write a small \
+Python scraper and run it. But do NOT spend more than one turn on this — \
+if the first target 4xx/5xxs or returns junk, skip it and move on. The \
+web research itself is more valuable than a scraper.
 
 # How to revise the file
 
@@ -328,14 +333,22 @@ Guidelines:
   pipeline stage will add formal citations from the reporter's own source \
   stories — so you do not need to insert Markdown footnotes, but do keep \
   the inline attribution text short and natural.
-- Add new bullet points, sub-sections, or short paragraphs where the \
-  existing document thins out (e.g. a "Key Sources & Players" section \
-  missing notable figures, or a "Calendar" section missing regular \
-  meetings).
+- **Match the document's existing writing style.** If the file is written \
+  in connected prose, add your material as prose — do not convert it to \
+  bullet points. If it uses a scannable bullet format, follow that. Read \
+  the file first and mirror whatever style you find.
+- Add new sub-sections or short paragraphs where the existing document \
+  thins out (e.g. a "Key Sources & Players" section missing notable \
+  figures, or a "Calendar" section missing regular meetings). Use bullets \
+  only where the existing document already uses them or for genuinely \
+  list-shaped content (rosters, calendars).
 - Prefer specific, verifiable facts (dates, dollar amounts, names with \
   titles, case numbers) over generic color.
-- Do not remove content from the file unless it is demonstrably wrong and \
-  you have a replacement.
+- Do not change the title (the first `# ` heading) or subtitle. They were \
+  chosen by the prior agent to match the beat.
+- Do not remove or condense existing content. The file should only grow. \
+  Never rewrite the file from scratch — use `str_replace` and `insert` to \
+  add material to the existing document.
 - Do not add a table of contents. The viewer builds its own.
 - Do not invent facts. If you can't verify something, leave it out.
 
@@ -352,19 +365,15 @@ for the scraper requirement above.
 # Workflow
 
 1. View the Markdown file.
-2. Plan 2–3 research threads based on the beat and the file's current gaps. Be selective — prioritize the most impactful gaps. You have a limited turn budget so move efficiently.
-3. Search + fetch authoritative sources. Prefer primary sources, major \
-   newspapers, and government/NGO publications. The `<suggested_sources>` \
-   block has vetted starting points when the beat overlaps Chicago, Cook \
-   County, Illinois, or the listed federal sources.
-4. Write and run at least one Python scraper (see "Build at least one \
-   scraper" above) and fold its output into the beat book.
-5. Edit the file incrementally with the text editor's `str_replace` and \
-   `insert` commands. Use `bash` for larger operations (e.g. `cat` to \
-   re-read, `wc -w` to track length).
-6. When the file is meaningfully improved and your scraper has run, call \
-   `finalize_beat_book` immediately — do not keep searching once you have \
-   solid additions.
+2. Pick 1–2 high-impact research threads. You have only {max_turns} turns \
+   total — be ruthlessly selective.
+3. Search + fetch the best sources. Prefer primary sources and major \
+   newspapers. Batch your edits: gather facts from multiple searches, \
+   then edit the file once with all additions.
+4. Optionally write and run a scraper if a structured data source is an \
+   obvious fit (see above). Skip if it would cost more than one turn.
+5. Call `finalize_beat_book` as soon as the file is meaningfully improved. \
+   Do not keep searching once you have solid additions.
 
 Keep your running text messages brief — your real work is in the tools. \
 Do not narrate every step; progress updates are enough.\
@@ -461,6 +470,11 @@ def _run_text_editor(tool_input: Dict[str, Any], sandbox_dir: Path) -> str:
             return "\n".join(numbered) if numbered else "(empty file)"
 
         if command == "create":
+            if resolved.exists():
+                return (
+                    f"Error: '{raw_path}' already exists. Use `str_replace` or "
+                    "`insert` to edit existing files — `create` is only for new files."
+                )
             file_text = tool_input.get("file_text", "")
             resolved.parent.mkdir(parents=True, exist_ok=True)
             resolved.write_text(file_text, encoding="utf-8")
@@ -537,9 +551,14 @@ def _short_detail_for(tool_name: str, tool_input: Dict[str, Any]) -> str:
 async def _emit(cb: Optional[Callable], *args) -> None:
     if cb is None:
         return
-    result = cb(*args)
-    if asyncio.iscoroutine(result):
-        await result
+    try:
+        result = cb(*args)
+        if asyncio.iscoroutine(result):
+            await result
+    except (RuntimeError, Exception) as exc:
+        if "websocket" in str(exc).lower() or "asgi" in str(exc).lower():
+            return
+        raise
 
 
 async def run_research_agent(
@@ -568,11 +587,12 @@ async def run_research_agent(
     if not markdown_path.is_file():
         raise FileNotFoundError(f"Markdown file not found in sandbox: {markdown_path}")
 
-    client = Anthropic(api_key=anthropic_api_key)
+    client = Anthropic(api_key=anthropic_api_key, timeout=600.0)
 
     system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
         markdown_filename=markdown_filename,
         suggested_sources=SUGGESTED_SOURCES,
+        max_turns=MAX_TURNS,
     )
 
     messages: List[Dict[str, Any]] = [
@@ -601,10 +621,7 @@ async def run_research_agent(
         # allocated we must thread its id back on every subsequent request or
         # the API returns: "container_id is required when there are pending
         # tool uses generated by code execution with tools."
-        # Opus 4.7 only supports adaptive thinking (the legacy
-        # type=enabled+budget_tokens shape returns 400). When the flag is off
-        # we send type=disabled — equivalent to omitting the field but makes
-        # the intent explicit in the request.
+        cached_messages = _add_cache_breakpoints(messages)
         request_kwargs: Dict[str, Any] = {
             "model": MODEL,
             "max_tokens": MAX_TOKENS_PER_TURN,
@@ -614,8 +631,8 @@ async def run_research_agent(
                 "cache_control": {"type": "ephemeral"},
             }],
             "tools": tools,
-            "messages": messages,
-            "thinking": thinking_param(),
+            "messages": cached_messages,
+            "temperature": 0.2,
         }
         if container_id is not None:
             request_kwargs["container"] = container_id
@@ -626,11 +643,8 @@ async def run_research_agent(
         )
 
         def _stream_once():
-            # Streaming is required by the SDK for requests whose expected
-            # duration exceeds ~10 minutes. Opus 4.7 with adaptive thinking +
-            # medium effort + 32k max_tokens lands in that regime, so we stream
-            # and collect the final message. Run inside a thread so the async
-            # event loop (FastAPI's WebSocket handler) is never blocked.
+            # Stream so the async event loop (FastAPI's WebSocket handler)
+            # is never blocked.
             #
             # The server-tool container_id is delivered through mid-stream
             # message_start / message_delta events, not the consolidated
@@ -654,7 +668,7 @@ async def run_research_agent(
         try:
             response, streamed_cid = await asyncio.to_thread(_stream_once)
         except Exception as e:
-            raise RuntimeError(f"Opus 4.7 request failed on turn {turn + 1}: {e}") from e
+            raise RuntimeError(f"Research agent request failed on turn {turn + 1}: {e}") from e
 
         if streamed_cid is not None:
             container_id = streamed_cid

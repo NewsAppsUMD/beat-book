@@ -9,15 +9,21 @@ FastAPI web app.
 - POST /process            → run the embedding/clustering pipeline on a
                               confirmed (and optionally edited) story list.
                               Streams SSE progress; ends with a session_id.
-- WS   /ws/{session_id}    → WebSocket for the agent conversation.
+- POST /books              → enqueue a beat book for background generation.
+- GET  /books              → list saved beat books (sidebar + library).
+- WS   /ws/books/{id}      → reconnectable progress stream for a generation.
 - GET  /                   → serves the frontend.
 """
 
 import asyncio
+import contextlib
 import json
 import os
 import queue
+import re
+import shutil
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -38,32 +44,81 @@ if _env_file.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 from pipeline import run_pipeline, PipelineResult
-from agent import run_agent
-from research_agent import run_research_agent
-from citation_matcher import (
-    embed_source_stories,
-    markdown_to_beatbook_entries,
-    build_sources_file,
-)
+from agent import _derive_filename
 from ingest import ingest_file, ingest_url
+from embed_client import (
+    DEFAULT_OLLAMA_EMBED_MODEL,
+    get_embed_client,
+    get_embed_provider,
+    list_ollama_models,
+)
+from chat_provider import ChatProvider, get_chat_provider
+import store
+from jobs import BookJob, generation_worker
 
 # ─────────────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Beat Book Builder")
+# ── Background generation queue (single worker, one book at a time) ──────────
+# Decoupled from any browser tab so generation survives a tab refresh/close.
+# The queue + registry live in process memory, so the app MUST run as a single
+# Uvicorn process (no --reload / --workers).
+job_queue: "asyncio.Queue[str] | None" = None
+book_jobs: Dict[str, BookJob] = {}
+_worker_task: "asyncio.Task | None" = None
+
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    global job_queue, _worker_task
+    n = store.reconcile_on_startup()
+    if n:
+        print(f"[startup] marked {n} interrupted book(s) as failed", flush=True)
+    adopted = store.adopt_orphan_files()
+    if adopted:
+        print(f"[startup] adopted {adopted} pre-existing beat book(s) into library", flush=True)
+    job_queue = asyncio.Queue()
+    _worker_task = asyncio.create_task(generation_worker(job_queue, book_jobs))
+    print("[startup] generation worker started (single process — do not use "
+          "--reload/--workers)", flush=True)
+    try:
+        yield
+    finally:
+        if _worker_task:
+            _worker_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await _worker_task
+
+
+app = FastAPI(title="Beat Book Builder", lifespan=lifespan)
 
 # Files-in-flight per /ingest request. Serial so a multi-file upload
 # doesn't multiply concurrent Claude calls against Anthropic's per-tier
 # concurrent-request limit (ingest.py itself runs chunks serially too).
 _INGEST_CONCURRENCY = 4
 
-# In-memory session store: session_id → PipelineResult
-sessions: Dict[str, PipelineResult] = {}
+@dataclass
+class SessionData:
+    pipeline_result: PipelineResult
+    embed_model: Optional[str] = None
+
+# In-memory handoff between /process and POST /books: session_id → SessionData.
+# Bounded so heavy corpora don't leak — once POST /books runs, the BookJob owns
+# the corpus, so eviction here is safe.
+_SESSIONS_CAP = 16
+sessions: "OrderedDict[str, SessionData]" = OrderedDict()
+
+
+def _remember_session(session_id: str, result: PipelineResult, embed_model: Optional[str] = None) -> None:
+    sessions[session_id] = SessionData(pipeline_result=result, embed_model=embed_model)
+    sessions.move_to_end(session_id)
+    while len(sessions) > _SESSIONS_CAP:
+        sessions.popitem(last=False)
 
 
 @dataclass
 class IngestJob:
     job_id: str
-    queue: queue.Queue = field(default_factory=queue.Queue)
+    msg_queue: queue.Queue = field(default_factory=queue.Queue)
     done: bool = False
     result: Optional[dict] = None
     error: str = ""
@@ -87,6 +142,7 @@ class StoryIn(BaseModel):
 
 class ProcessRequest(BaseModel):
     stories: List[StoryIn] = Field(default_factory=list)
+    embed_model: Optional[str] = None
 
 OUTPUT_DIR = Path("output")
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -102,25 +158,43 @@ async def root():
     return FileResponse("static/index.html")
 
 
+@app.get("/api/embed-config")
+async def embed_config():
+    provider = get_embed_provider()
+    result: dict = {"provider": provider}
+    if provider == "ollama":
+        try:
+            result["models"] = list_ollama_models()
+        except Exception:
+            result["models"] = []
+        result["default_model"] = os.environ.get("OLLAMA_EMBED_MODEL", DEFAULT_OLLAMA_EMBED_MODEL)
+    else:
+        model = os.environ.get("OPENAI_EMBED_MODEL", "text-embedding-3-small")
+        result["models"] = [{"name": model}]
+        result["default_model"] = model
+    return JSONResponse(result)
+
+
 async def _run_ingest_job(
     job: IngestJob,
     buffered_files: List[tuple[str, bytes]],
     url_list: List[str],
     *,
     anthropic_key: str,
+    provider: Optional[ChatProvider] = None,
 ) -> None:
     loop = asyncio.get_event_loop()
     semaphore = asyncio.Semaphore(_INGEST_CONCURRENCY)
     total_sources = len(buffered_files) + len(url_list)
 
-    job.queue.put({"type": "job_started", "total_sources": total_sources})
+    job.msg_queue.put({"type": "job_started", "total_sources": total_sources})
 
     async def run_file(name: str, raw: bytes):
         async with semaphore:
-            job.queue.put({"type": "source_started", "source_label": name})
+            job.msg_queue.put({"type": "source_started", "source_label": name})
 
             def on_progress(payload: dict):
-                job.queue.put({
+                job.msg_queue.put({
                     "type": "source_progress",
                     "source_label": name,
                     **payload,
@@ -132,10 +206,11 @@ async def _run_ingest_job(
                     name,
                     raw,
                     anthropic_key,
+                    provider=provider,
                     on_progress=on_progress,
                 ),
             )
-            job.queue.put({
+            job.msg_queue.put({
                 "type": "source_done",
                 "source_label": name,
                 "num_entries": len(result.stories),
@@ -145,10 +220,10 @@ async def _run_ingest_job(
 
     async def run_url(url: str):
         async with semaphore:
-            job.queue.put({"type": "source_started", "source_label": url})
+            job.msg_queue.put({"type": "source_started", "source_label": url})
 
             def on_progress(payload: dict):
-                job.queue.put({
+                job.msg_queue.put({
                     "type": "source_progress",
                     "source_label": url,
                     **payload,
@@ -159,10 +234,11 @@ async def _run_ingest_job(
                 lambda: ingest_url(
                     url,
                     anthropic_key,
+                    provider=provider,
                     on_progress=on_progress,
                 ),
             )
-            job.queue.put({
+            job.msg_queue.put({
                 "type": "source_done",
                 "source_label": url,
                 "num_entries": len(result.stories),
@@ -179,7 +255,7 @@ async def _run_ingest_job(
         import traceback
         traceback.print_exc()
         job.error = f"Ingestion failed: {type(e).__name__}: {e}"
-        job.queue.put({"type": "error", "error": job.error})
+        job.msg_queue.put({"type": "error", "error": job.error})
         job.done = True
         return
 
@@ -190,7 +266,7 @@ async def _run_ingest_job(
         "total_stories": total_stories,
         "total_sources": len(results),
     }
-    job.queue.put({"type": "done", **job.result})
+    job.msg_queue.put({"type": "done", **job.result})
     job.done = True
 
 
@@ -201,10 +277,12 @@ async def ingest_start(
 ):
     """Start ingest in the background and return a job id."""
     anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
+    chat_provider_name = os.environ.get("CHAT_PROVIDER", "anthropic").strip().lower()
+    if not anthropic_key and chat_provider_name == "anthropic":
         return JSONResponse(
             {"error": "ANTHROPIC_API_KEY not configured."}, status_code=500
         )
+    ingest_provider = get_chat_provider(api_key=anthropic_key or None)
 
     url_list = [u.strip() for u in urls.splitlines() if u.strip()]
 
@@ -228,6 +306,7 @@ async def ingest_start(
             buffered_files,
             url_list,
             anthropic_key=anthropic_key,
+            provider=ingest_provider,
         )
     )
 
@@ -241,9 +320,9 @@ async def ingest_stream(job_id: str):
         return JSONResponse({"error": "Invalid ingest job."}, status_code=404)
 
     async def event_stream():
-        while not job.done or not job.queue.empty():
+        while not job.done or not job.msg_queue.empty():
             try:
-                msg = job.queue.get_nowait()
+                msg = job.msg_queue.get_nowait()
                 yield f"data: {json.dumps(msg)}\n\n"
             except queue.Empty:
                 await asyncio.sleep(0.1)
@@ -265,12 +344,14 @@ async def process(body: ProcessRequest):
     if not stories:
         return JSONResponse({"error": "No stories provided."}, status_code=400)
 
-    openai_key = os.environ.get("OPENAI_API_KEY", "")
-    if not openai_key:
-        return JSONResponse({"error": "OPENAI_API_KEY not configured (used for embeddings)."}, status_code=500)
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
-        return JSONResponse({"error": "ANTHROPIC_API_KEY not configured (used for cluster labeling)."}, status_code=500)
+    try:
+        embed_clt = get_embed_client(model_override=body.embed_model)
+    except Exception as e:
+        return JSONResponse({"error": f"Embedding provider not configured: {e}"}, status_code=500)
+    try:
+        chat_pvd = get_chat_provider()
+    except Exception as e:
+        return JSONResponse({"error": f"Chat provider not configured: {e}"}, status_code=500)
 
     progress_queue: queue.Queue = queue.Queue()
 
@@ -280,7 +361,7 @@ async def process(body: ProcessRequest):
     async def event_stream():
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
-            None, run_pipeline, stories, openai_key, anthropic_key, on_progress
+            None, run_pipeline, stories, embed_clt, chat_pvd, on_progress
         )
 
         while not future.done():
@@ -304,7 +385,7 @@ async def process(body: ProcessRequest):
             return
 
         session_id = str(uuid.uuid4())[:8]
-        sessions[session_id] = result
+        _remember_session(session_id, result, embed_model=body.embed_model)
 
         yield (
             "data: " + json.dumps({
@@ -321,270 +402,181 @@ async def process(body: ProcessRequest):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# WEBSOCKET — Agent conversation
+# BOOKS — library index + background generation
 # ─────────────────────────────────────────────────────────────────────────────
 
-@app.websocket("/ws/{session_id}")
-async def agent_ws(ws: WebSocket, session_id: str):
-    await ws.accept()
+def _prettify_stem(stem: str) -> str:
+    """Human title from a stem (de-underscore, drop the _beat_book suffix)."""
+    s = stem.replace("_beat_book", "").replace("_", " ").replace("-", " ").strip()
+    s = re.sub(r"\s+", " ", s)
+    return s.title() if s else "Beat Book"
 
-    pipeline_result = sessions.get(session_id)
-    if not pipeline_result:
-        await ws.send_json({"type": "error", "text": "Invalid session. Please upload stories first."})
-        await ws.close()
-        return
 
-    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not anthropic_key:
-        await ws.send_json({"type": "error", "text": "ANTHROPIC_API_KEY not configured."})
-        await ws.close()
-        return
+VALID_STYLES = ("narrative", "scannable", "briefing")
 
-    # ── Wait for topic selection from the client ───────────────────────────
-    selected_topics: list[str] = []
-    try:
-        raw = await asyncio.wait_for(ws.receive_text(), timeout=120)
-        msg = json.loads(raw)
-        if msg.get("type") == "select_topics":
-            valid = set(pipeline_result.topics.keys())
-            selected_topics = [t for t in msg.get("topics", []) if t in valid]
-    except (asyncio.TimeoutError, Exception):
-        pass
-    if not selected_topics:
-        selected_topics = list(pipeline_result.topics.keys())
 
-    # ── Callbacks ─────────────────────────────────────────────────────────
+class CreateBookRequest(BaseModel):
+    session_id: str
+    selected_topics: List[str] = Field(default_factory=list)
+    title: Optional[str] = None
+    style: str = "narrative"
 
-    async def on_message(text: str):
-        """Send agent text to the frontend."""
-        await ws.send_json({"type": "message", "text": text})
 
-    async def on_heartbeat():
-        """Keep the WebSocket alive during long Anthropic API calls."""
-        await ws.send_json({"type": "heartbeat"})
+class PatchBookRequest(BaseModel):
+    title: Optional[str] = None
+    opened: Optional[bool] = None
 
-    # research_task is set by on_exploration_done and awaited in on_beat_book.
-    _research_task: asyncio.Task | None = None
-    _research_filename: str = "beat_book.md"
 
-    async def on_exploration_done(context_doc: str):
-        """Start the Opus research agent as soon as exploration is done,
-        in parallel with Haiku's beat-book write."""
-        nonlocal _research_task, _research_filename
-        filename = _research_filename
-        sandbox_dir = SANDBOX_ROOT / session_id
-        sandbox_dir.mkdir(parents=True, exist_ok=True)
+@app.get("/books")
+async def list_books_endpoint():
+    books = store.list_books()
+    for b in books:
+        j = book_jobs.get(b["id"])
+        b["is_active"] = bool(j and not j.done.is_set())
+    return JSONResponse(books)
 
-        await ws.send_json({"type": "research_started", "filename": filename})
 
-        async def on_research_progress(stage: str, detail: str):
-            await ws.send_json({"type": "research_progress", "stage": stage, "detail": detail})
+@app.get("/books/{book_id}")
+async def get_book_endpoint(book_id: str):
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    return JSONResponse(rec)
 
-        async def on_research_tool_status(tool_name: str, desc: str, detail: str):
-            await ws.send_json({"type": "research_tool_status",
-                                "tool_name": tool_name, "tool": desc, "detail": detail})
 
-        async def on_research_text(text: str):
-            await ws.send_json({"type": "research_message", "text": text})
-
-        async def _run():
-            try:
-                return await run_research_agent(
-                    sandbox_dir=sandbox_dir,
-                    markdown_filename=filename,
-                    anthropic_api_key=anthropic_key,
-                    on_progress=on_research_progress,
-                    on_tool_status=on_research_tool_status,
-                    on_text=on_research_text,
-                    initial_content=context_doc,
-                )
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                return None  # fallback: use draft from on_beat_book
-
-        _research_task = asyncio.create_task(_run())
-
-    async def on_beat_book(filename: str, markdown: str):
-        """Merge the Haiku draft with the parallel Opus research, then hand
-        the combined Markdown to the citation matcher.
-
-        Pipeline: [Haiku write ∥ Opus research] → merge → citations.
-        """
-        nonlocal _research_filename
-        _research_filename = filename
-
-        # ── 1. Persist the raw draft ──────────────────────────────────────
-        stem = Path(filename).stem
-        draft_path = OUTPUT_DIR / f"{stem}.draft.md"
-        draft_path.write_text(markdown, encoding="utf-8")
-
-        # ── 2. Await research (may already be done if write was slow) ─────
-        sandbox_dir = SANDBOX_ROOT / session_id
-        sandbox_dir.mkdir(parents=True, exist_ok=True)
-
-        research_result: str | None = None
-        if _research_task is not None:
-            # Update the sandbox file with the real draft so Opus can
-            # reference it if it hasn't already finished.
-            (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
-            research_result = await _research_task
-        else:
-            # on_exploration_done never fired (very small corpus) — fall back
-            # to sequential research.
-            await ws.send_json({"type": "research_started", "filename": filename})
-            (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
-
-            async def on_research_progress(stage: str, detail: str):
-                await ws.send_json({"type": "research_progress",
-                                    "stage": stage, "detail": detail})
-
-            async def on_research_tool_status(tool_name: str, desc: str, detail: str):
-                await ws.send_json({"type": "research_tool_status",
-                                    "tool_name": tool_name, "tool": desc, "detail": detail})
-
-            async def on_research_text(text: str):
-                await ws.send_json({"type": "research_message", "text": text})
-
-            try:
-                research_result = await run_research_agent(
-                    sandbox_dir=sandbox_dir,
-                    markdown_filename=filename,
-                    anthropic_api_key=anthropic_key,
-                    on_progress=on_research_progress,
-                    on_tool_status=on_research_tool_status,
-                    on_text=on_research_text,
-                )
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                await ws.send_json({
-                    "type": "error",
-                    "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft.",
-                })
-
-        # research_result is the Opus-revised content; fall back to draft
-        revised_markdown = research_result if research_result else markdown
-
-        await ws.send_json({"type": "research_complete"})
-
-        # ── 3. Canonical output is the revised markdown ──────────────────
-        filepath = OUTPUT_DIR / filename
-        filepath.write_text(revised_markdown, encoding="utf-8")
-        await ws.send_json({
-            "type": "beat_book_markdown_saved",
-            "filename": filename,
-        })
-
-        # Citation matching uses OpenAI embeddings (Anthropic has no embedding API).
-        openai_key = os.environ.get("OPENAI_API_KEY", "")
-        if not openai_key:
-            await ws.send_json({
-                "type": "error",
-                "text": "OPENAI_API_KEY not configured; skipping citation matching.",
-            })
-            return
-
-        stories = pipeline_result.stories
-
-        citation_progress_queue: queue.Queue = queue.Queue()
-
-        def on_matcher_progress(stage: str, fraction: float, detail: str):
-            citation_progress_queue.put({"stage": stage, "fraction": fraction, "detail": detail})
-
-        def run_matcher():
-            source_embeddings = embed_source_stories(stories, openai_key, on_matcher_progress)
-            entries = markdown_to_beatbook_entries(revised_markdown, source_embeddings, openai_key, on_matcher_progress)
-            sources = build_sources_file(stories, source_embeddings)
-            return entries, sources
-
-        await ws.send_json({
-            "type": "citation_progress",
-            "stage": "starting",
-            "fraction": 0.0,
-            "detail": "Embedding source sentences…",
-        })
-
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(None, run_matcher)
-
-        while not future.done():
-            try:
-                msg = citation_progress_queue.get_nowait()
-                await ws.send_json({"type": "citation_progress", **msg})
-            except queue.Empty:
-                await asyncio.sleep(0.15)
-
-        while not citation_progress_queue.empty():
-            msg = citation_progress_queue.get_nowait()
-            await ws.send_json({"type": "citation_progress", **msg})
-
-        try:
-            entries, sources = future.result()
-        except Exception as e:
-            await ws.send_json({
-                "type": "error",
-                "text": f"Citation matching failed: {e}. The raw Markdown is still available at /output/{filename}.",
-            })
-            return
-
-        json_path = OUTPUT_DIR / f"{stem}.json"
-        sources_path = OUTPUT_DIR / f"{stem}_sources.json"
-        json_path.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
-        sources_path.write_text(json.dumps(sources, indent=2, ensure_ascii=False), encoding="utf-8")
-
-        await ws.send_json({
-            "type": "beat_book",
-            "filename": filename,
-            "markdown_path": f"/output/{quote(filename)}",
-            "viewer_url": f"/static/viewer/viewer.html?book={quote(stem)}",
-            "stem": stem,
-        })
-
-    async def on_tool_status(tool_name: str, tool_desc: str, detail: str):
-        """Send tool execution status to frontend."""
-        await ws.send_json({
-            "type": "tool_status",
-            "tool_name": tool_name,
-            "tool": tool_desc,
-            "detail": detail,
-        })
-
-    async def on_agent_progress(pct: float, label: str):
-        """Send agent coverage-review progress to frontend (0–100)."""
-        await ws.send_json({
-            "type": "agent_progress",
-            "pct": pct,
-            "label": label,
-        })
-
-    # ── Run agent ─────────────────────────────────────────────────────────
-
-    try:
-        await run_agent(
-            pipeline_result=pipeline_result,
-            anthropic_key=anthropic_key,
-            on_message=on_message,
-            on_beat_book=on_beat_book,
-            on_tool_status=on_tool_status,
-            on_heartbeat=on_heartbeat,
-            on_agent_progress=on_agent_progress,
-            on_exploration_done=on_exploration_done,
-            selected_topics=selected_topics,
+@app.post("/books")
+async def create_book_endpoint(body: CreateBookRequest):
+    """Enqueue a beat book for background generation. Returns immediately with a
+    book_id; progress streams over WS /ws/books/{book_id}."""
+    sess = sessions.get(body.session_id)
+    if sess is None:
+        return JSONResponse(
+            {"error": "Invalid or expired session. Please re-run the pipeline."},
+            status_code=404,
         )
-    except WebSocketDisconnect:
-        print(f"Session {session_id}: client disconnected.")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
+    pr = sess.pipeline_result
+    style = body.style if body.style in VALID_STYLES else "narrative"
+
+    valid = set(pr.topics.keys())
+    selected = [t for t in body.selected_topics if t in valid]
+    if not selected:
+        selected = list(pr.topics.keys())
+
+    desired = _derive_filename(pr)
+    if desired.endswith(".md"):
+        desired = desired[:-3]
+    provisional_title = (body.title or "").strip() or _prettify_stem(desired)
+
+    rec = store.create_book(
+        title=provisional_title,
+        desired_stem=desired,
+        num_stories=len(pr.stories),
+        num_topics=len(selected),
+        selected_topics=selected,
+        style=style,
+    )
+
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, embed_model=sess.embed_model)
+    book_jobs[rec["id"]] = job
+    if job_queue is not None:
+        await job_queue.put(rec["id"])
+
+    return JSONResponse({"book_id": rec["id"], "stem": rec["stem"], "status": "queued"})
+
+
+@app.patch("/books/{book_id}")
+async def patch_book_endpoint(book_id: str, body: PatchBookRequest):
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    if body.title is not None:
+        store.update_book(book_id, title=body.title.strip() or rec["title"])
+    if body.opened:
+        store.mark_opened(book_id)
+    return JSONResponse(store.get_book(book_id))
+
+
+@app.delete("/books/{book_id}")
+async def delete_book_endpoint(book_id: str):
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    job = book_jobs.get(book_id)
+    if rec.get("status") == "generating" and job and not job.done.is_set():
+        return JSONResponse(
+            {"error": "Cannot delete a beat book while it is generating."},
+            status_code=409,
+        )
+    removed = store.delete_book(book_id)
+    if removed:
+        stem = removed.get("stem", "")
+        for suffix in (".draft.md", ".md", ".json", "_sources.json"):
+            try:
+                (OUTPUT_DIR / f"{stem}{suffix}").unlink(missing_ok=True)
+            except OSError:
+                pass
+        shutil.rmtree(SANDBOX_ROOT / book_id, ignore_errors=True)
+    book_jobs.pop(book_id, None)
+    return JSONResponse({"ok": True})
+
+
+@app.websocket("/ws/books/{book_id}")
+async def book_ws(ws: WebSocket, book_id: str):
+    """Reconnectable progress for a generating book. On connect: status snapshot
+    + replayed buffer, then live events. Falls back to the durable store record
+    when no live job exists (e.g. refresh after the job finished, or a restart)."""
+    await ws.accept()
+    job = book_jobs.get(book_id)
+
+    if job is not None:
+        sub: asyncio.Queue = asyncio.Queue(maxsize=1000)
+        # Snapshot the buffer AND register under the same lock so the live
+        # stream picks up exactly where the replay ends — no gap, no dupe.
+        async with job.lock:
+            snapshot = list(job.events)
+            job.subscribers.add(sub)
         try:
-            await ws.send_json({
-                "type": "error",
-                "text": f"Agent error ({type(e).__name__}): {e}",
-            })
+            await ws.send_json({"type": "status", "status": job.status})
+            for ev in snapshot:
+                await ws.send_json(ev)
+            while not (job.done.is_set() and sub.empty()):
+                try:
+                    ev = await asyncio.wait_for(sub.get(), timeout=1.0)
+                    await ws.send_json(ev)
+                except asyncio.TimeoutError:
+                    continue
+        except WebSocketDisconnect:
+            pass
         except Exception:
             pass
-        raise
+        finally:
+            async with job.lock:
+                job.subscribers.discard(sub)
+        with contextlib.suppress(Exception):
+            await ws.close()
+        return
+
+    # No live job — synthesize a terminal message from the durable record.
+    rec = store.get_book(book_id)
+    if not rec:
+        with contextlib.suppress(Exception):
+            await ws.send_json({"type": "error", "text": "Unknown beat book."})
+            await ws.close()
+        return
+    with contextlib.suppress(Exception):
+        await ws.send_json({"type": "status", "status": rec["status"]})
+        if rec["status"] == "ready":
+            stem = rec["stem"]
+            filename = f"{stem}.md"
+            await ws.send_json({
+                "type": "beat_book",
+                "filename": filename,
+                "markdown_path": f"/output/{quote(filename)}",
+                "stem": stem,
+            })
+        elif rec["status"] == "failed":
+            await ws.send_json({"type": "error", "text": rec.get("error") or "Generation failed."})
+        await ws.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────

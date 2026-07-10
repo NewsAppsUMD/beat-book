@@ -5,11 +5,13 @@ Multi-format ingestion pipeline: raw bytes / URLs → normalized story dicts.
 
 Two stages:
 1. extract_text(filename, raw_bytes) → plain text/markdown
-   Format dispatcher. markitdown handles docx/pdf/html/pptx/xlsx/rtf.
-   stdlib handles txt/md/json. Unknown extensions get a utf-8 best-effort.
+   Format dispatcher. PDFs go through Firecrawl when FIRECRAWL_API_KEY is set
+   (falling back to PyMuPDF text + Haiku-vision OCR); docx/pptx/xlsx/html/rtf/
+   epub use format-specific libraries; stdlib handles txt/md/csv/json. Unknown
+   extensions get a utf-8 best-effort.
 
-2. normalize(text, source_label, anthropic_key) → list[Story]
-   Claude Sonnet 4.6 tool-use call with a strict schema. Documents that fit
+2. normalize(text, source_label, provider) → list[Story]
+   LLM tool-use call with a strict schema (via ChatProvider). Documents that fit
    in one window get a single call; larger documents are split into
    overlapping windows, processed concurrently, and deduplicated on merge.
    The LLM only infers metadata (title/date/author) and returns verbatim
@@ -24,10 +26,12 @@ from __future__ import annotations
 
 import concurrent.futures
 import html
+import ipaddress
 import json
 import logging
 import os
 import re
+import socket
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -36,10 +40,18 @@ import threading
 from urllib.parse import urlparse
 
 import anthropic
+import feedparser
+import httpx
 
+from chat_provider import (
+    ChatProvider,
+    ChatProviderError,
+    ChatRateLimitError,
+    get_chat_provider,
+    retry_pause as cp_retry_pause,
+)
 from claude_client import (
     ANTHROPIC_SEMAPHORE,
-    CHAT_MODEL,
     RATE_LIMIT_MAX_RETRIES,
     chat_client,
     rate_limit_pause,
@@ -52,7 +64,13 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────────────────────
 
 MAX_FILE_BYTES = 25 * 1024 * 1024            # 25 MB per file
+URL_FETCH_TIMEOUT = 15.0                     # seconds
+URL_USER_AGENT = "BeatBookBuilder/1.0 (+https://github.com/clayludwig/beat-book)"
 NORMALIZE_MODEL = "claude-haiku-4-5-20251001"
+# OCR settings for scanned PDFs (rendered via PyMuPDF, transcribed via Haiku vision).
+OCR_DPI = 150
+OCR_PAGES_PER_BATCH = 4   # images per Haiku vision call
+OCR_MAX_PAGES = 100        # cap for very large scanned PDFs
 # Max tokens per LLM call. Sized to fit marker data for up to ~30 stories
 # per chunk.
 NORMALIZE_MAX_TOKENS = 4096
@@ -76,7 +94,6 @@ NORMALIZE_CONCURRENCY = 4
 # into each chunk so a story body is never split across two chunks.
 RECORD_SEPARATOR = "\n\n---\n\n"
 
-# Extensions markitdown converts to readable markdown.
 # Extensions we read directly as utf-8 text.
 _TEXT_EXTS = {".txt", ".md", ".markdown", ".log", ".csv"}
 
@@ -292,6 +309,42 @@ def _fast_json_stories(
     return stories if stories else None
 
 
+def _fast_feed_stories(
+    raw: bytes, source_label: str
+) -> Optional[list["Story"]]:
+    """Parse RSS/Atom feed XML via feedparser, convert entries to Story objects
+    using the same mapping as structured JSON. Returns None if not a valid feed."""
+    feed = feedparser.parse(raw)
+    if not feed.entries:
+        return None
+
+    stories: list[Story] = []
+    for entry in feed.entries:
+        content_value = ""
+        if hasattr(entry, "content") and entry.content:
+            content_value = entry.content[0].get("value", "")
+        if not content_value:
+            content_value = getattr(entry, "summary", "")
+
+        date_str = ""
+        parsed_time = getattr(entry, "published_parsed", None) or getattr(entry, "updated_parsed", None)
+        if parsed_time:
+            date_str = f"{parsed_time.tm_year:04d}-{parsed_time.tm_mon:02d}-{parsed_time.tm_mday:02d}"
+
+        item = {
+            "title": getattr(entry, "title", ""),
+            "link": getattr(entry, "link", ""),
+            "summary": content_value,
+            "published": date_str,
+            "author": getattr(entry, "author", ""),
+        }
+        story = _map_json_item(item, "")
+        if story is not None:
+            stories.append(story)
+
+    return stories if stories else None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # STAGE 1 — EXTRACT
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,18 +390,36 @@ def _clean_inline_html(s: str) -> str:
     return text.strip()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FIRECRAWL (optional): preferred PDF parser + URL scraper
+# ─────────────────────────────────────────────────────────────────────────────
+# When FIRECRAWL_API_KEY is set, PDFs and URLs are routed through Firecrawl,
+# which parses native + scanned PDFs and renders JS-heavy pages uniformly to
+# markdown. Without the key — or on any Firecrawl failure — we fall back to the
+# local PyMuPDF/OCR path for PDFs and the httpx+SSRF fetch for URLs, so the app
+# works with no Firecrawl account.
+
+
+def _firecrawl_available() -> bool:
+    """True when a Firecrawl API key is configured."""
+    return bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
+
+
 def _firecrawl_client():
-    """Lazy-construct a Firecrawl client from FIRECRAWL_API_KEY."""
+    """Construct a Firecrawl client from FIRECRAWL_API_KEY, or raise IngestError."""
     key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
     if not key:
+        raise IngestError("FIRECRAWL_API_KEY is not set.")
+    try:
+        from firecrawl import Firecrawl
+    except ImportError as e:
         raise IngestError(
-            "FIRECRAWL_API_KEY is not set; required for PDF parsing and URL scraping."
-        )
-    from firecrawl import Firecrawl
+            "The 'firecrawl' package is not installed; run `pip install firecrawl`."
+        ) from e
     return Firecrawl(api_key=key)
 
 
-def _extract_pdf(raw: bytes, filename: str = "document.pdf") -> str:
+def _extract_pdf_firecrawl(raw: bytes, filename: str = "document.pdf") -> str:
     """Parse a PDF via Firecrawl. Handles native and scanned PDFs uniformly."""
     from firecrawl.v2.types import ParseOptions
     client = _firecrawl_client()
@@ -367,6 +438,160 @@ def _extract_pdf(raw: bytes, filename: str = "document.pdf") -> str:
     if not md:
         raise IngestError(f"{filename}: Firecrawl returned no PDF markdown.")
     return md
+
+
+def _scrape_url_firecrawl(url: str) -> str:
+    """Scrape a URL via Firecrawl and return markdown.
+
+    Firecrawl handles HTML, PDFs, and JS-rendered pages uniformly, and makes the
+    outbound request from its own infrastructure — so the SSRF checks the httpx
+    fallback needs don't apply here (internal addresses are unreachable from it).
+    """
+    client = _firecrawl_client()
+    try:
+        result = client.scrape(url, formats=["markdown"], only_main_content=True)
+    except Exception as e:
+        raise IngestError(
+            f"{url}: Firecrawl scrape failed — {type(e).__name__}: {e}"
+        ) from e
+    md = (getattr(result, "markdown", "") or "").strip()
+    if not md:
+        raise IngestError(f"{url}: Firecrawl returned no markdown.")
+    return md
+
+
+def _extract_pdf(raw: bytes, filename: str = "document.pdf") -> str:
+    """Extract a PDF to text/markdown.
+
+    Prefers Firecrawl when FIRECRAWL_API_KEY is set (native + scanned PDFs
+    handled uniformly). Falls back to local PyMuPDF extraction — which raises
+    the ``__SCANNED_PDF__`` sentinel so ``ingest_file`` can run Haiku-vision OCR
+    — when Firecrawl is unconfigured or fails.
+    """
+    if _firecrawl_available():
+        try:
+            return _extract_pdf_firecrawl(raw, filename)
+        except IngestError as e:
+            logger.warning("%s; falling back to local PDF extraction.", e)
+    return _extract_pdf_local(raw)
+
+
+def _extract_pdf_local(raw: bytes) -> str:
+    import fitz  # PyMuPDF
+    doc = fitz.open(stream=raw, filetype="pdf")
+    n_pages = len(doc)
+    pages = [page.get_text().strip() for page in doc if page.get_text().strip()]
+    doc.close()
+    if not pages and n_pages > 0:
+        raise IngestError("__SCANNED_PDF__")
+    return "\n\n".join(pages)
+
+
+def _render_page_png(page) -> bytes:
+    import fitz
+    mat = fitz.Matrix(OCR_DPI / 72, OCR_DPI / 72)
+    pix = page.get_pixmap(matrix=mat, alpha=False)
+    return pix.tobytes("png")
+
+
+def _ocr_pdf(raw: bytes, anthropic_key: str, source_label: str) -> str:
+    """OCR a scanned PDF using Claude Haiku vision.
+
+    Renders pages to PNG at OCR_DPI, batches them into groups of
+    OCR_PAGES_PER_BATCH, sends each batch to Haiku for transcription,
+    and returns the concatenated text. Caps at OCR_MAX_PAGES.
+    """
+    import base64
+    import fitz
+
+    doc = fitz.open(stream=raw, filetype="pdf")
+    n_pages = len(doc)
+    if n_pages == 0:
+        doc.close()
+        raise IngestError(f"{source_label}: PDF has no pages.")
+
+    truncated = n_pages > OCR_MAX_PAGES
+    page_indices = list(range(min(n_pages, OCR_MAX_PAGES)))
+
+    page_pngs: list[bytes] = []
+    for i in page_indices:
+        page_pngs.append(_render_page_png(doc[i]))
+    doc.close()
+
+    client = chat_client(anthropic_key)
+
+    batches = [page_pngs[i:i + OCR_PAGES_PER_BATCH]
+               for i in range(0, len(page_pngs), OCR_PAGES_PER_BATCH)]
+    batch_page_nums = [page_indices[i:i + OCR_PAGES_PER_BATCH]
+                       for i in range(0, len(page_indices), OCR_PAGES_PER_BATCH)]
+
+    def _ocr_batch(pngs: list[bytes], nums: list[int]) -> str:
+        content: list[dict] = []
+        for png in pngs:
+            b64 = base64.standard_b64encode(png).decode()
+            content.append({
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": b64},
+            })
+        label = (f"pages {nums[0]+1}–{nums[-1]+1}" if len(nums) > 1
+                 else f"page {nums[0]+1}")
+        content.append({
+            "type": "text",
+            "text": (
+                f"These are {len(pngs)} consecutive pages ({label}) from a scanned PDF. "
+                "Transcribe ALL text exactly as it appears, in reading order. "
+                "Preserve paragraph structure with blank lines between paragraphs. "
+                "Output only the transcribed text — no commentary, no page labels."
+            ),
+        })
+        for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                with ANTHROPIC_SEMAPHORE:
+                    resp = client.messages.create(
+                        model=NORMALIZE_MODEL,
+                        max_tokens=4096,
+                        messages=[{"role": "user", "content": content}],
+                    )
+                break
+            except anthropic.RateLimitError as e:
+                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
+                    raise
+                pause = rate_limit_pause(rl_attempt, e)
+                logger.warning("OCR rate limited; waiting %.0fs (attempt %d/%d).",
+                               pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
+                time.sleep(pause)
+        return "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        )
+
+    batch_results: list[str | None] = [None] * len(batches)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=NORMALIZE_CONCURRENCY) as ex:
+        futures = {
+            ex.submit(_ocr_batch, batches[i], batch_page_nums[i]): i
+            for i in range(len(batches))
+        }
+        for fut in concurrent.futures.as_completed(futures):
+            i = futures[fut]
+            try:
+                batch_results[i] = fut.result()
+            except Exception as e:
+                logger.warning(
+                    "OCR batch %d/%d failed for %s: %s",
+                    i + 1, len(batches), source_label, e,
+                )
+                batch_results[i] = ""
+
+    combined = "\n\n".join(t for t in batch_results if t).strip()
+    if not combined:
+        raise IngestError(
+            f"{source_label}: OCR produced no text. The PDF may be too degraded to read."
+        )
+    if truncated:
+        combined += (
+            f"\n\n[Note: This PDF has {n_pages} pages. "
+            f"Only the first {OCR_MAX_PAGES} were processed by OCR.]"
+        )
+    return combined
 
 
 # Filename keyword → content type, checked before falling back to "document".
@@ -444,7 +669,6 @@ def _extract_xlsx(raw: bytes) -> str:
 
 
 def _extract_xls(raw: bytes) -> str:
-    import io
     import xlrd
     wb = xlrd.open_workbook(file_contents=raw)
     sheets = []
@@ -543,10 +767,11 @@ def _extract_json(raw: bytes) -> str:
         # Not valid JSON — return raw text; the LLM can still try.
         return text
 
+    # In _extract_json, after rendering each item:
     if isinstance(data, list):
         rendered = [r for r in (_render_value(item) for item in data) if r]
-        return "\n\n---\n\n".join(rendered)
-    return _render_value(data)
+        rendered = [r[:1500] for r in rendered]  # cap per-item length
+    return "\n\n---\n\n".join(rendered)
 
 
 def extract_text(filename: str, raw: bytes) -> str:
@@ -595,39 +820,99 @@ def extract_text(filename: str, raw: bytes) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# URL SCRAPING (via Firecrawl)
+# URL FETCHING (with SSRF protection)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def scrape_url(url: str) -> str:
-    """Scrape a URL via Firecrawl and return markdown.
+def _is_blocked_ip(host: str) -> bool:
+    """Resolve hostname; reject loopback / private / link-local / multicast."""
+    try:
+        # getaddrinfo returns all A/AAAA records — check every one.
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return True  # unresolvable → block
 
-    Firecrawl handles HTML, PDFs, and JS-rendered pages uniformly. The
-    server-side request is made by Firecrawl, so SSRF protections aren't
-    needed on our side — internal addresses are unreachable from their infra.
+    for info in infos:
+        ip_str = info[4][0]
+        try:
+            ip = ipaddress.ip_address(ip_str)
+        except ValueError:
+            continue
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_multicast
+            or ip.is_reserved
+            or ip.is_unspecified
+        ):
+            return True
+    return False
+
+
+def fetch_url(url: str) -> Tuple[str, bytes]:
+    """Fetch a URL, return (suggested_filename, raw_bytes).
+
+    Refuses non-http(s) schemes and private/loopback addresses.
+    Honors MAX_FILE_BYTES.
     """
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https"):
         raise IngestError(f"{url}: only http and https URLs are accepted.")
     if not parsed.hostname:
         raise IngestError(f"{url}: URL is missing a hostname.")
+    if _is_blocked_ip(parsed.hostname):
+        raise IngestError(f"{url}: URL resolves to a private or unreachable address.")
 
-    client = _firecrawl_client()
+    headers = {"User-Agent": URL_USER_AGENT, "Accept": "*/*"}
     try:
-        result = client.scrape(
-            url,
-            formats=["markdown"],
-            only_main_content=True,
-        )
-    except Exception as e:
-        raise IngestError(
-            f"{url}: Firecrawl scrape failed — {type(e).__name__}: {e}"
-        ) from e
+        with httpx.Client(
+            timeout=URL_FETCH_TIMEOUT,
+            follow_redirects=True,
+            headers=headers,
+        ) as client:
+            resp = client.get(url)
+    except httpx.HTTPError as e:
+        raise IngestError(f"{url}: fetch failed — {type(e).__name__}: {e}") from e
 
-    md = (getattr(result, "markdown", "") or "").strip()
-    if not md:
-        raise IngestError(f"{url}: Firecrawl returned no markdown.")
-    return md
+    if resp.status_code >= 400:
+        raise IngestError(f"{url}: server returned HTTP {resp.status_code}.")
+
+    body = resp.content
+    if len(body) > MAX_FILE_BYTES:
+        raise IngestError(
+            f"{url}: response is {len(body) / 1_048_576:.1f} MB; the limit is "
+            f"{MAX_FILE_BYTES / 1_048_576:.0f} MB."
+        )
+
+    # Decide a filename for extension dispatch.
+    content_type = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+    type_to_ext = {
+        "text/html": ".html",
+        "application/xhtml+xml": ".html",
+        "text/plain": ".txt",
+        "text/markdown": ".md",
+        "application/json": ".json",
+        "application/pdf": ".pdf",
+        "application/msword": ".doc",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+        "application/rtf": ".rtf",
+        "text/rtf": ".rtf",
+        "application/rss+xml": ".rss",
+        "application/atom+xml": ".atom",
+        "text/xml": ".xml",
+        "application/xml": ".xml",
+    }
+    suggested_ext = type_to_ext.get(content_type, "")
+    path_part = Path(parsed.path).name or parsed.hostname
+    if suggested_ext and not path_part.lower().endswith(suggested_ext):
+        path_part = f"{path_part}{suggested_ext}" if path_part else f"page{suggested_ext}"
+    elif not _ext_of(path_part):
+        path_part = f"{path_part}.html"  # default for unknown content-type
+
+    return path_part, body
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -972,9 +1257,9 @@ def _dedup_key(story: Story) -> str:
 def _normalize_chunk(
     text: str,
     source_label: str,
-    anthropic_key: str,
+    provider: ChatProvider,
     *,
-    model: str = NORMALIZE_MODEL,
+    model: str | None = None,
     link_hint: str = "",
     user_hint: str = "",
     allow_full_doc_fallback: bool = True,
@@ -986,7 +1271,7 @@ def _normalize_chunk(
     that story's body. Safe only for whole-document calls; in chunked mode
     it would splice in content from adjacent stories.
     """
-    client = chat_client(anthropic_key)
+    model = model or provider.normalize_model
 
     user_prefix = f"Source label: {source_label}\n"
     if link_hint:
@@ -997,56 +1282,44 @@ def _normalize_chunk(
     user_prefix += "----- BEGIN DOCUMENT -----\n"
     user_suffix = "\n----- END DOCUMENT -----"
 
-    tool_use_block = None
+    payload = None
     for attempt in range(NORMALIZE_MAX_ATTEMPTS):
-        # Inner retry loop catches RateLimitError (Anthropic concurrent-
-        # connection 429s) and logs every wait at WARNING so the operator
-        # can see what's happening instead of staring at a silent spinner.
-        resp = None
+        chat_resp = None
         for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
             try:
-                # Extended thinking is incompatible with forced tool_choice,
-                # so we don't pass `thinking` here — omission == disabled.
-                with ANTHROPIC_SEMAPHORE:
-                    resp = client.messages.create(
-                        model=model,
-                        max_tokens=NORMALIZE_MAX_TOKENS,
-                        system=[{
-                            "type": "text",
-                            "text": _NORMALIZE_SYSTEM,
-                            "cache_control": {"type": "ephemeral"},
-                        }],
-                        messages=[
-                            {"role": "user", "content": user_prefix + text + user_suffix},
-                        ],
-                        tools=[{**_NORMALIZE_TOOL, "cache_control": {"type": "ephemeral"}}],
-                        tool_choice={"type": "tool", "name": "register_stories"},
-                    )
+                chat_resp = provider.create(
+                    model=model,
+                    system=_NORMALIZE_SYSTEM,
+                    messages=[
+                        {"role": "user", "content": user_prefix + text + user_suffix},
+                    ],
+                    tools=[_NORMALIZE_TOOL],
+                    max_tokens=NORMALIZE_MAX_TOKENS,
+                    tool_choice={"type": "tool", "name": "register_stories"},
+                )
                 break
-            except anthropic.RateLimitError as e:
+            except ChatRateLimitError as e:
                 if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
                     raise IngestError(
                         f"{source_label}: rate limit not cleared after "
                         f"{RATE_LIMIT_MAX_RETRIES} retries — {e}"
                     ) from e
-                pause = rate_limit_pause(rl_attempt, e)
+                pause = cp_retry_pause(rl_attempt, e)
                 logger.warning(
                     "Rate limited on %s; waiting %.0fs (attempt %d/%d).",
                     source_label, pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES,
                 )
                 time.sleep(pause)
-            except Exception as e:
+            except ChatProviderError as e:
                 raise IngestError(
                     f"{source_label}: LLM normalization failed — {type(e).__name__}: {e}"
                 ) from e
 
-        assert resp is not None  # loop above either sets resp or raises
+        assert chat_resp is not None
 
-        tool_use_block = next(
-            (b for b in resp.content if getattr(b, "type", None) == "tool_use"),
-            None,
-        )
-        if tool_use_block is not None:
+        tool_calls = chat_resp.tool_calls
+        if tool_calls:
+            payload = tool_calls[0]["input"]
             break
         if attempt + 1 < NORMALIZE_MAX_ATTEMPTS:
             logger.warning(
@@ -1054,13 +1327,12 @@ def _normalize_chunk(
                 source_label, attempt + 1, NORMALIZE_MAX_ATTEMPTS,
             )
 
-    if tool_use_block is None:
+    if payload is None:
         raise IngestError(
             f"{source_label}: LLM did not return structured stories after "
             f"{NORMALIZE_MAX_ATTEMPTS} attempts."
         )
 
-    payload = tool_use_block.input if isinstance(tool_use_block.input, dict) else {}
     return _stories_from_payload(
         payload, text, source_label, link_hint, allow_full_doc_fallback
     )
@@ -1075,7 +1347,6 @@ def _stories_from_payload(
 ) -> Tuple[list[Story], bool, str]:
     """Convert a register_stories tool payload into Story objects.
     Shared by both the Anthropic and OpenAI normalization paths."""
-    is_news = bool(payload.get("is_news_content", False))
     skip_reason = (payload.get("skip_reason") or "").strip()
     raw_stories = payload.get("stories") or []
 
@@ -1151,23 +1422,24 @@ def _stories_from_payload(
 def normalize(
     text: str,
     source_label: str,
-    anthropic_key: str,
+    provider: ChatProvider,
     *,
-    model: str = NORMALIZE_MODEL,
+    model: str | None = None,
     concurrency: int = NORMALIZE_CONCURRENCY,
     link_hint: str = "",
     user_hint: str = "",
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> Tuple[list[Story], bool, str]:
-    """Stage 2. Run extracted text through Haiku to produce structured entries.
-    Single call for documents that fit in one window; for larger documents fan
-    out into overlapping windows processed concurrently and deduplicate on merge.
+    """Stage 2. Run extracted text through the chat provider to produce
+    structured entries.  Single call for documents that fit in one window;
+    for larger documents fan out into overlapping windows processed
+    concurrently and deduplicate on merge.
 
     Returns (stories, is_news_content, skip_reason).
     """
     def _chunk_fn(chunk_text: str, fallback: bool) -> Tuple[list[Story], bool, str]:
         return _normalize_chunk(
-            chunk_text, source_label, anthropic_key,
+            chunk_text, source_label, provider,
             model=model, link_hint=link_hint, user_hint=user_hint,
             allow_full_doc_fallback=fallback,
         )
@@ -1283,10 +1555,13 @@ def ingest_file(
     raw: bytes,
     anthropic_key: str,
     *,
+    provider: "ChatProvider | None" = None,
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> IngestedSource:
     """Run both stages on an uploaded file. Never raises; failure is reported
     via excluded/skip_reason/extract_error on the returned IngestedSource."""
+    if provider is None:
+        provider = get_chat_provider(api_key=anthropic_key or None)
     source = IngestedSource(source_label=filename, kind="file")
 
     # Fast path: structured JSON with explicit story fields skips the LLM.
@@ -1299,6 +1574,16 @@ def ingest_file(
                 on_progress({"stage": "done", "detail": "Structured JSON mapped without LLM"})
             return source
 
+    # Fast path: RSS/Atom feed files skip the LLM.
+    if _ext_of(filename) in (".rss", ".atom", ".xml"):
+        fast = _fast_feed_stories(raw, filename)
+        if fast is not None:
+            source.stories = fast
+            source.char_count = sum(len(s.content) for s in fast)
+            if on_progress:
+                on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
+            return source
+
     # Build a filename-based type hint for PDFs and other documents so the LLM
     # can prioritize the right metadata schema from the start.
     is_pdf = _ext_of(filename) == ".pdf"
@@ -1309,16 +1594,29 @@ def ingest_file(
 
     try:
         if on_progress:
-            on_progress({
-                "stage": "extract",
-                "detail": "Parsing PDF via Firecrawl" if is_pdf else "Extracting text",
-            })
+            on_progress({"stage": "extract", "detail": "Extracting text"})
         text = extract_text(filename, raw)
     except IngestError as e:
-        source.excluded = True
-        source.extract_error = str(e)
-        source.skip_reason = str(e)
-        return source
+        if is_pdf and "__SCANNED_PDF__" in str(e):
+            # Fall back to OCR for scanned PDFs.
+            if on_progress:
+                on_progress({"stage": "extract", "detail": "Scanned PDF — running OCR"})
+            try:
+                text = _ocr_pdf(raw, anthropic_key, filename)
+                if user_hint:
+                    user_hint = "OCR transcription. " + user_hint
+                else:
+                    user_hint = "OCR transcription of a scanned PDF."
+            except IngestError as ocr_err:
+                source.excluded = True
+                source.extract_error = str(ocr_err)
+                source.skip_reason = str(ocr_err)
+                return source
+        else:
+            source.excluded = True
+            source.extract_error = str(e)
+            source.skip_reason = str(e)
+            return source
 
     source.char_count = len(text)
     source.truncated = len(text) > MAX_CHUNKS * (WINDOW_SIZE - WINDOW_OVERLAP)
@@ -1330,7 +1628,7 @@ def ingest_file(
 
     try:
         stories, _, skip_reason = normalize(
-            text, filename, anthropic_key,
+            text, filename, provider,
             user_hint=user_hint,
             on_progress=on_progress,
         )
@@ -1351,21 +1649,57 @@ def ingest_url(
     url: str,
     anthropic_key: str,
     *,
+    provider: "ChatProvider | None" = None,
     on_progress: Optional[Callable[[dict], None]] = None,
 ) -> IngestedSource:
-    """Scrape a URL via Firecrawl, then run normalization. Same failure
-    semantics as ingest_file."""
+    """Fetch a URL, then run both stages. Same failure semantics as ingest_file."""
+    if provider is None:
+        provider = get_chat_provider(api_key=anthropic_key or None)
     source = IngestedSource(source_label=url, kind="url")
 
-    try:
-        if on_progress:
-            on_progress({"stage": "extract", "detail": "Scraping URL via Firecrawl"})
-        text = scrape_url(url)
-    except IngestError as e:
-        source.excluded = True
-        source.extract_error = str(e)
-        source.skip_reason = str(e)
-        return source
+    text: Optional[str] = None
+
+    # Preferred path: scrape via Firecrawl (handles HTML, JS-rendered pages, and
+    # PDFs uniformly, and needs no SSRF checks). On any failure, fall through to
+    # the local httpx fetch below.
+    if _firecrawl_available():
+        try:
+            if on_progress:
+                on_progress({"stage": "extract", "detail": "Scraping URL via Firecrawl"})
+            text = _scrape_url_firecrawl(url)
+        except IngestError as e:
+            logger.warning("%s; falling back to local httpx fetch.", e)
+            text = None
+
+    # Fallback path: httpx fetch (SSRF-protected) → extract_text, with an
+    # RSS/Atom fast path that skips the LLM entirely.
+    if text is None:
+        try:
+            filename, raw = fetch_url(url)
+        except IngestError as e:
+            source.excluded = True
+            source.extract_error = str(e)
+            source.skip_reason = "Failed to fetch this URL."
+            return source
+
+        if _ext_of(filename) in (".rss", ".atom", ".xml"):
+            fast = _fast_feed_stories(raw, url)
+            if fast is not None:
+                source.stories = fast
+                source.char_count = sum(len(s.content) for s in fast)
+                if on_progress:
+                    on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
+                return source
+
+        try:
+            if on_progress:
+                on_progress({"stage": "extract", "detail": "Extracting text"})
+            text = extract_text(filename, raw)
+        except IngestError as e:
+            source.excluded = True
+            source.extract_error = str(e)
+            source.skip_reason = str(e)
+            return source
 
     source.char_count = len(text)
     source.truncated = len(text) > MAX_CHUNKS * (WINDOW_SIZE - WINDOW_OVERLAP)
@@ -1377,7 +1711,7 @@ def ingest_url(
 
     try:
         stories, _, skip_reason = normalize(
-            text, url, anthropic_key,
+            text, url, provider,
             link_hint=url,
             on_progress=on_progress,
         )

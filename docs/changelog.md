@@ -1,5 +1,25 @@
 # Beat Book Builder — Changelog
 
+## Session: June 5, 2026 — App shell + background library
+
+### From a linear wizard to a persistent app
+
+- **ChatGPT-style shell** — a persistent sidebar (wordmark, **New Beat Book**, **Search ⌘K**, and the list of past books with live status dots) beside a main panel that swaps between three views: **library**, the **create** wizard, and an inline **reader**. The old `done` screen and the four duplicated per-screen headers are gone.
+- **Saved, listable beat books** — new `store.py` keeps a JSON index at `output/library.json` (one record per book: id, title, unique stem, status, counts, timestamps, `opened_at`). Atomic writes; unique stems resolved at creation so two corpora on the same top topic can't overwrite each other.
+- **Background generation queue** — new `jobs.py` runs generation server-side in a single asyncio worker (one book at a time), decoupled from the browser. `run_generation` is the old `agent_ws` body, driven by an `emit(event)` callback that buffers + broadcasts. Survives tab refresh/close; interrupted-by-restart jobs are marked `failed` on startup.
+- **Reconnectable progress** — `WS /ws/books/{id}` sends a status snapshot, replays the buffered events, then streams live ones (no gap/dupe), and falls back to the durable record once a job has finished. Status dots: pulsing `generating` → green `ready`-unread (clears on open) → red `failed`.
+- **New endpoints** — `POST/GET/PATCH/DELETE /books` and `WS /ws/books/{id}`; the per-tab `WS /ws/{session_id}` agent socket and its `select_topics` handshake are removed (topic selection now rides in `POST /books`). `sessions` is a bounded `OrderedDict`.
+- **Viewer ported inline** — the standalone `static/viewer/` page is replaced by `static/reader.js` rendering in the main panel, retokenized onto the app's design system (PT Sans + a dedicated `--citation` hue). The reading column is sized so opening the source panel never reflows the body. `marked` is vendored at `static/vendor/marked.min.js` (no CDN dependency).
+
+### Housekeeping
+
+- Removed dead CSS from the old wizard (per-screen `app-header`, the interview form, the done screen); renamed the reused `interview-heading`/`interview-lede` classes to `step-heading`/`step-lede`.
+- Cleared unused imports/vars flagged by pyflakes across `pipeline.py`, `ingest.py`, `agent.py`, `research_agent.py`.
+- Added missing `feedparser` to `requirements.txt` (RSS ingest dependency) and `.venv/` to `.gitignore`.
+- README rewritten around the library app; model references corrected to match code (Haiku 4.5 for normalization/labeling, Sonnet 4.6 for the writing agent, Opus 4.7 for research).
+
+---
+
 ## Session: May 13, 2026 (uncommitted)
 
 ### Ingest overhaul

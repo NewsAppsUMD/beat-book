@@ -1,10 +1,12 @@
 fastapi
 uvicorn[standard]
 python-multipart
+httpx
 pydantic
 openai
 anthropic
 firecrawl
+pymupdf
 python-docx
 python-pptx
 openpyxl
@@ -17,3 +19,4 @@ umap-learn
 hdbscan
 scikit-learn
 tqdm
+feedparser
