@@ -39,7 +39,7 @@ from anthropic import Anthropic
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS_PER_TURN = 16000
-MAX_TURNS = 6
+MAX_TURNS = 4   # safety ceiling only; research is demand-driven and often exits far sooner
 BASH_TIMEOUT_SECONDS = 30
 WEB_SEARCH_MAX_USES = 6
 WEB_FETCH_MAX_USES = 6
@@ -290,23 +290,31 @@ before planning your research.
 
 # What to research
 
-Cast a slightly wider net than the explicit topic. A reporter picking up a \
-beat benefits from background that a prior agent working only from old \
-stories cannot provide:
+Research is **demand-driven**. First read the file, then identify the \
+*specific gaps* that genuinely need outside context — not everything, only \
+what the beat book is actually missing or can't verify from old coverage. \
+**If the beat book is already accurate, current, and self-contained, you do \
+not need to research anything — call `finalize_beat_book` immediately without \
+a single search.** Do not research for its own sake; every search must target \
+a concrete gap you identified.
 
-- Current state of the beat as of today: major recent developments, ongoing \
-  legal proceedings, new legislation, leadership changes.
-- Key people, organizations, and institutions — their history, mandates, \
-  funding sources, controversies. Confirm spellings, titles, and roles.
-- Statistical / demographic context relevant to the beat (population, \
-  budgets, crime rates, historical trends — whatever fits).
-- Adjacent beats and storylines that a reporter should know exist even if \
-  they aren't the focus (e.g. for a sports beat, note ownership disputes, \
-  stadium-financing debates, labor issues).
-- Authoritative primary sources the reporter should bookmark: agency \
-  dashboards, court dockets, public records portals, budget documents, \
-  research reports, watchdog orgs.
-- Recurring events, deadlines, and meeting cadences not already in the file.
+A gap is worth researching only when it clearly meets one of these — and is \
+actually absent or thin in the file:
+
+- A material fact the file states but can't source, or that may be out of date \
+  (a recent development, ruling, law, or leadership change the old coverage \
+  wouldn't capture).
+- A key person, organization, or institution whose role/title the file leaves \
+  unclear and a reporter would need to get right.
+- An authoritative primary source a reporter should bookmark (agency \
+  dashboard, court docket, records portal, budget document) that the file \
+  doesn't already point to.
+- A recurring event or deadline that clearly belongs in the Calendar but is \
+  missing.
+
+If none of these apply, finalize. Quality and speed both come from being \
+selective — a beat book that needed no web research and finalized in one turn \
+is a success, not a failure.
 
 Use `web_search` to find candidates and `web_fetch` to read the most \
 promising pages in depth. Web fetch can only retrieve URLs that have \
@@ -365,15 +373,16 @@ for the scraper requirement above.
 # Workflow
 
 1. View the Markdown file.
-2. Pick 1–2 high-impact research threads. You have only {max_turns} turns \
-   total — be ruthlessly selective.
-3. Search + fetch the best sources. Prefer primary sources and major \
-   newspapers. Batch your edits: gather facts from multiple searches, \
-   then edit the file once with all additions.
+2. Decide what — if anything — actually needs research (see "What to \
+   research"). If nothing does, call `finalize_beat_book` now and stop.
+3. Otherwise, research only those specific gaps. Prefer primary sources and \
+   major newspapers. Batch your edits: gather facts, then edit the file once \
+   with all additions. {max_turns} turns is a hard ceiling, not a target — \
+   use as few as the gaps require.
 4. Optionally write and run a scraper if a structured data source is an \
    obvious fit (see above). Skip if it would cost more than one turn.
-5. Call `finalize_beat_book` as soon as the file is meaningfully improved. \
-   Do not keep searching once you have solid additions.
+5. Call `finalize_beat_book` as soon as the gaps you identified are filled. \
+   Do not keep searching for more to add once they are.
 
 Keep your running text messages brief — your real work is in the tools. \
 Do not narrate every step; progress updates are enough.\

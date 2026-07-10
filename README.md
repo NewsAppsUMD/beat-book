@@ -270,9 +270,9 @@ Ingest is a two-stage pipeline that converts any supported source into the `{tit
 
 ### Stage 2 — LLM normalization
 
-`normalize(text, source_label, anthropic_key) -> list[Story]` makes a single Claude **Haiku 4.5** call with forced tool-use. The model classifies the document type, decides whether it contains news content (returning a `skip_reason` if not), splits it into distinct stories, and for each one extracts title/date/author/organization, a `content_type` with type-specific `metadata`, a `confidence`, and **character offsets** that the server uses to slice the body verbatim — the LLM never rewrites story content.
+`normalize(text, source_label, anthropic_key) -> list[Story]` makes a single Claude **Haiku 4.5** call with forced tool-use. The model classifies the document type, decides whether it contains news content (returning a `skip_reason` if not), splits it into distinct stories, and for each one extracts title/date/author/organization, a `content_type` with type-specific `metadata`, and **character offsets** that the server uses to slice the body verbatim — the LLM never rewrites story content. When a story has a source link but no explicit publication, the organization is derived from the link's domain (e.g. `chicago.suntimes.com` → "Chicago Sun-Times"). Each story's language is also detected locally (via [langdetect](https://github.com/Mimino666/langdetect)) and shown as a `language` field.
 
-The preview groups detected stories by source with confidence chips; you can edit metadata, filter by confidence, deselect stories, then run the pipeline.
+The preview groups detected stories by source; you can edit metadata (including the detected organization and language), deselect stories, then run the pipeline.
 
 ---
 

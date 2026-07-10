@@ -121,10 +121,10 @@ class Story:
     date: str = ""
     author: str = ""
     organization: str = ""
+    language: str = ""              # detected language name, e.g. "English"
     link: str = ""
     content_type: str = "article"   # one of CONTENT_TYPES
     metadata: dict = field(default_factory=dict)  # type-specific fields
-    confidence: str = "medium"      # "high" | "medium" | "low"
     reasoning: str = ""             # one-sentence justification for the preview UI
 
     def to_pipeline_dict(self) -> dict:
@@ -136,6 +136,8 @@ class Story:
             out["author"] = self.author
         if self.organization:
             out["organization"] = self.organization
+        if self.language:
+            out["language"] = self.language
         if self.link:
             out["link"] = self.link
         if self.content_type:
@@ -152,10 +154,10 @@ class Story:
             "date": self.date,
             "author": self.author,
             "organization": self.organization,
+            "language": self.language,
             "link": self.link,
             "content_type": self.content_type,
             "metadata": self.metadata,
-            "confidence": self.confidence,
             "reasoning": self.reasoning,
         }
 
@@ -202,6 +204,130 @@ _STORY_LINK_KEYS    = ("link", "url", "href", "guid")
 _STORY_LIST_KEYS    = ("entries", "items", "stories", "articles",
                         "results", "data", "posts", "feed")
 _MIN_CONTENT_CHARS  = 50
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PUBLICATION DETECTION (from link/domain)
+# ─────────────────────────────────────────────────────────────────────────────
+# Curated map for outlets whose domain doesn't title-case cleanly
+# (e.g. suntimes.com → "Chicago Sun-Times"). Keys are matched against the full
+# hostname and every shorter domain suffix, so "chicago.suntimes.com" and
+# "www.suntimes.com" both resolve via "suntimes.com". Unknown domains fall back
+# to a name derived from the registrable domain label.
+_KNOWN_PUBLICATIONS: dict[str, str] = {
+    "suntimes.com": "Chicago Sun-Times",
+    "wbez.org": "WBEZ",
+    "chicago.suntimes.com": "Chicago Sun-Times",
+    "mountainstatespotlight.org": "Mountain State Spotlight",
+    "notus.org": "NOTUS",
+    "streetcarsuburbs.news": "Streetcar Suburbs News",
+    "nytimes.com": "The New York Times",
+    "washingtonpost.com": "The Washington Post",
+    "wsj.com": "The Wall Street Journal",
+    "latimes.com": "Los Angeles Times",
+    "propublica.org": "ProPublica",
+    "apnews.com": "The Associated Press",
+    "reuters.com": "Reuters",
+    "npr.org": "NPR",
+    "bbc.com": "BBC",
+    "bbc.co.uk": "BBC",
+    "theguardian.com": "The Guardian",
+    "politico.com": "Politico",
+    "axios.com": "Axios",
+    "bloomberg.com": "Bloomberg",
+    "cnn.com": "CNN",
+    "nbcnews.com": "NBC News",
+    "cbsnews.com": "CBS News",
+    "usatoday.com": "USA Today",
+    "chicagotribune.com": "Chicago Tribune",
+    "block-club-chicago.com": "Block Club Chicago",
+    "blockclubchicago.org": "Block Club Chicago",
+}
+
+
+def _publication_from_link(link: str) -> str:
+    """Best-effort publication name from a URL.
+
+    Checks the curated map against the full hostname and each shorter domain
+    suffix; falls back to a title-cased version of the registrable domain label
+    (splitting on hyphens/underscores). Returns '' when no usable host present.
+    """
+    link = (link or "").strip()
+    if not link:
+        return ""
+    if "://" not in link:
+        link = "http://" + link
+    host = (urlparse(link).hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if not host or "." not in host:
+        return ""
+
+    labels = host.split(".")
+    # Curated: full host first, then each shorter suffix (drops subdomains).
+    for i in range(len(labels) - 1):
+        suffix = ".".join(labels[i:])
+        if suffix in _KNOWN_PUBLICATIONS:
+            return _KNOWN_PUBLICATIONS[suffix]
+
+    # Fallback: derive from the second-level domain label.
+    name_label = labels[-2]
+    parts = [p for p in re.split(r"[-_]+", name_label) if p]
+    if not parts or not any(c.isalpha() for c in name_label):
+        return ""
+    return " ".join(p.capitalize() for p in parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LANGUAGE DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+# ISO 639-1 code → display name for languages we label in the preview.
+# Detection is best-effort and local (langdetect); unknown codes fall back to
+# the uppercased code, and any failure returns "" (shown as blank/editable).
+_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English", "es": "Spanish", "fr": "French", "de": "German",
+    "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "ru": "Russian",
+    "zh-cn": "Chinese", "zh-tw": "Chinese", "ja": "Japanese", "ko": "Korean",
+    "ar": "Arabic", "hi": "Hindi", "bn": "Bengali", "pa": "Punjabi",
+    "vi": "Vietnamese", "th": "Thai", "tr": "Turkish", "pl": "Polish",
+    "uk": "Ukrainian", "ro": "Romanian", "el": "Greek", "he": "Hebrew",
+    "sv": "Swedish", "no": "Norwegian", "da": "Danish", "fi": "Finnish",
+    "cs": "Czech", "hu": "Hungarian", "id": "Indonesian", "fa": "Persian",
+    "ur": "Urdu", "ta": "Tamil", "tl": "Tagalog", "so": "Somali",
+}
+
+_LANGDETECT_MAX_CHARS = 2000   # sample size — detection needs no more than this
+_langdetect_seeded = False
+
+
+def _detect_language(text: str) -> str:
+    """Best-effort, deterministic human-readable language name for a body of text.
+
+    Uses langdetect (seeded for reproducibility) over a sample of the text.
+    Returns "" when the text is too short to sample, langdetect is unavailable,
+    or detection fails — the preview shows it blank and editable in those cases.
+    """
+    sample = (text or "").strip()
+    if len(sample) < 20:
+        return ""
+    sample = sample[:_LANGDETECT_MAX_CHARS]
+
+    try:
+        from langdetect import detect, DetectorFactory
+        from langdetect.lang_detect_exception import LangDetectException
+    except ImportError:
+        return ""
+
+    global _langdetect_seeded
+    if not _langdetect_seeded:
+        DetectorFactory.seed = 0        # deterministic across runs
+        _langdetect_seeded = True
+
+    try:
+        code = detect(sample).lower()
+    except LangDetectException:
+        return ""
+    return _LANGUAGE_NAMES.get(code, code.upper())
 
 
 def _extract_story_list(data) -> Optional[list]:
@@ -279,8 +405,9 @@ def _map_json_item(item: dict, link_hint: str) -> Optional["Story"]:
 
     return Story(
         title=title, content=content, date=date, author=author, link=link,
+        organization=_publication_from_link(link),
+        language=_detect_language(content),
         content_type="article",
-        confidence="high",
         reasoning="Mapped directly from structured JSON fields.",
     )
 
@@ -1050,11 +1177,6 @@ _NORMALIZE_TOOL = {
                                 "Must appear exactly — used for substring search."
                             ),
                         },
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                            "description": "high = metadata explicit in text. medium = reasonably inferred. low = a guess.",
-                        },
                         "reasoning": {
                             "type": "string",
                             "description": "One sentence: what this entry is and how you identified it.",
@@ -1063,7 +1185,7 @@ _NORMALIZE_TOOL = {
                     "required": [
                         "content_type", "title", "date", "author", "organization",
                         "link", "metadata", "body_starts_with", "body_ends_with",
-                        "confidence", "reasoning",
+                        "reasoning",
                     ],
                 },
             },
@@ -1399,16 +1521,18 @@ def _stories_from_payload(
         meta = raw.get("metadata")
         if not isinstance(meta, dict):
             meta = {}
+        link = (raw.get("link") or link_hint or "").strip()
+        organization = (raw.get("organization") or "").strip() or _publication_from_link(link)
         stories.append(Story(
             title=title,
             content=content,
             date=(raw.get("date") or "").strip(),
             author=(raw.get("author") or "").strip(),
-            organization=(raw.get("organization") or "").strip(),
-            link=(raw.get("link") or link_hint or "").strip(),
+            organization=organization,
+            language=_detect_language(content),
+            link=link,
             content_type=ct if ct in CONTENT_TYPES else "other",
             metadata=meta,
-            confidence=(raw.get("confidence") or "medium").strip(),
             reasoning=(raw.get("reasoning") or "").strip(),
         ))
 

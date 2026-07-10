@@ -476,6 +476,18 @@
     const titleText = opts.title || prettifyTitle(stem);
     $('reader-title').textContent = titleText;
     document.title = `Beat Book — ${titleText}`;
+
+    // Word download links to the server-side .docx render (needs the book id).
+    const dl = $('reader-download');
+    if (dl) {
+      if (opts.id) {
+        dl.href = `/books/${encodeURIComponent(opts.id)}/docx`;
+        dl.hidden = false;
+      } else {
+        dl.removeAttribute('href');
+        dl.hidden = true;
+      }
+    }
     $('reader-content').innerHTML = '<p class="reader-loading">Loading…</p>';
     const rm = $('reader-main'); if (rm) rm.scrollTop = 0;
     const bar = $('readingProgress'); if (bar) bar.style.transform = 'scaleX(0)';
