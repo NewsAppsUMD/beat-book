@@ -127,6 +127,7 @@ def create_book(
     num_topics: int,
     selected_topics: list[str],
     style: str = "narrative",
+    custom_instructions: str = "",
 ) -> dict:
     """Create a ``queued`` book record with a unique stem. Returns the record
     (with its generated ``id`` and resolved ``stem``)."""
@@ -146,6 +147,7 @@ def create_book(
             "num_stories": num_stories,
             "num_topics": num_topics,
             "selected_topics": selected_topics,
+            "custom_instructions": custom_instructions,
             "opened_at": None,
         }
         records.append(rec)

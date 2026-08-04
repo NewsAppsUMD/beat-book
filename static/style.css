@@ -458,6 +458,50 @@ a:hover { text-decoration: underline; }
   line-height: 1.35;
 }
 
+/* ── Custom instructions (topic screen) ──────────────────────────────── */
+.custom-instructions {
+  margin-top: 1.5rem;
+}
+
+.custom-instructions-heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.5rem;
+}
+
+.optional-label {
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-faint);
+}
+
+.custom-instructions-input {
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  padding: 0.75rem 1rem;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  resize: vertical;
+  transition: border-color 0.15s;
+}
+
+.custom-instructions-input::placeholder {
+  color: var(--text-faint);
+}
+
+.custom-instructions-input:focus {
+  border-color: var(--accent);
+  outline: none;
+}
+
 .topic-select-actions {
   display: flex;
   align-items: center;

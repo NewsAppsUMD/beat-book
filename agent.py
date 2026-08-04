@@ -238,9 +238,17 @@ reporter walking out the door.\
 VALID_STYLES = list(STYLE_PRESETS.keys())
 
 
-def _build_doc_spec(style: str = "narrative") -> str:
+def _build_doc_spec(style: str = "narrative", custom_instructions: str = "") -> str:
     style_text = STYLE_PRESETS.get(style, STYLE_PRESETS["narrative"])
-    return f"{_DOC_STRUCTURE}\n\n{style_text}\n\n{_NO_TOC}"
+    parts = [_DOC_STRUCTURE, style_text, _NO_TOC]
+    if custom_instructions:
+        parts.append(
+            "## Reporter's Instructions\n\n"
+            "The reporter has provided the following guidance for this beat book. "
+            "Follow these instructions while researching and writing:\n\n"
+            f"{custom_instructions}"
+        )
+    return "\n\n".join(parts)
 
 
 # ── System prompt templates ────────────────────────────────────────────────
@@ -483,6 +491,7 @@ async def run_agent(
     on_exploration_done: Callable[[str], Awaitable[None]] = None,
     selected_topics: list[str] | None = None,
     style: str = "narrative",
+    custom_instructions: str = "",
 ) -> None:
     """
     Run the agent loop.
@@ -496,7 +505,7 @@ async def run_agent(
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
     """
-    doc_spec = _build_doc_spec(style)
+    doc_spec = _build_doc_spec(style, custom_instructions)
     system_prompt = _EXPLORE_TEMPLATE.format(doc_spec=doc_spec)
     write_system_prompt = _WRITE_TEMPLATE.format(doc_spec=doc_spec)
 
