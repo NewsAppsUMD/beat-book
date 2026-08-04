@@ -5,7 +5,7 @@ VENV       := .venv
 VENV_PY    := $(VENV)/bin/python
 PIP        := $(VENV)/bin/pip
 UVICORN    := $(VENV)/bin/uvicorn
-HOST       := 127.0.0.1
+HOST       ?= 127.0.0.1
 PORT       := 8000
 
 help:
@@ -24,7 +24,7 @@ install: $(VENV)/bin/activate
 $(VENV)/bin/activate: requirements.txt
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
-	$(PIP) install -r requirements.txt
+	$(PIP) install --only-binary=:all: -r requirements.txt
 	@touch $(VENV)/bin/activate
 	@echo "✓ Environment ready. Run: make dev"
 

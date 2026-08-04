@@ -1,0 +1,25 @@
+{
+  "name": "Beat Book Builder",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "postCreateCommand": "make install",
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "Beat Book",
+      "onAutoForward": "openBrowser"
+    }
+  },
+  "containerEnv": {
+    "HOST": "0.0.0.0"
+  },
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+      },
+      "extensions": [
+        "ms-python.python"
+      ]
+    }
+  }
+}

@@ -10,6 +10,8 @@ Originally built around [Chicago Public Media](https://chicago.suntimes.com/) st
 
 ## Setup & Running
 
+> **Running this in a class?** See [docs/student-guide.md](docs/student-guide.md) for the GitHub Codespaces path — no local install required. Instructors, see [docs/instructor-checklist.md](docs/instructor-checklist.md).
+
 ### Prerequisites
 
 - **Python 3.11–3.13.** (3.14 is not yet recommended — `umap-learn`'s `numba`/`llvmlite` dependency has no prebuilt wheels for it and must compile from source, which often fails.)
@@ -198,7 +200,7 @@ When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the 
 2. **Review stories** — The server extracts text from each source and asks Claude Haiku 4.5 to identify the distinct news stories, splitting multi-story documents and inferring missing metadata. You review the detected stories on the preview screen and can edit titles/dates/authors/type or deselect anything.
 3. **Analyze** — Each confirmed story runs through an NLP pipeline: embed (OpenAI `text-embedding-3-small`), reduce dimensions (UMAP), cluster into topics at two granularities (HDBSCAN), and label each cluster with an LLM.
 4. **Choose topics** — Pick the topics to cover. The writing agent focuses only on what you select.
-5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft while a second research agent (Claude Opus 4.7) enriches it with public-web research; the two are merged and every claim is matched back to a source sentence. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
+5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft while a second research agent (Claude Sonnet 4.6) enriches it with public-web research; the two are merged and every claim is matched back to a source sentence. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
 6. **Read** — When it's ready, the book opens in an inline reader with academic-style inline citations; clicking a citation opens the matched source passage in a side panel.
 
 ---
@@ -218,7 +220,7 @@ Browser — single-page app (sidebar + library / create / reader)
     ├── POST /books ─────────▶ enqueue generation for a session_id + topics
     │        ├── store.py      library.json index (one record per book)
     │        └── jobs.py       single background worker, one book at a time:
-    │                          run_agent (Sonnet 4.6 draft)  ∥  research (Opus 4.7)
+    │                          run_agent (Sonnet 4.6 draft)  ∥  research (Sonnet 4.6)
     │                          → merge → citation_matcher → write output files
     │
     ├── WS  /ws/books/{id} ──▶ reconnectable progress stream (snapshot + replay + live)
@@ -342,7 +344,7 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 3. It calls `generate_beat_book` with a complete Markdown document — which is gated until the read targets are met, pushing the agent to actually ground itself in the corpus.
 
 - **Models:** `claude-sonnet-4-6` for writing; `claude-haiku-4-5` for the lightweight coverage-exploration pass.
-- After the draft, the **research agent** (`research_agent.py`, Claude Opus 4.7) runs in a sandbox with bash + text-editor tools to enrich the draft with public-web research; its additions are merged onto the draft.
+- After the draft, the **research agent** (`research_agent.py`, Claude Sonnet 4.6) runs in a sandbox with bash + text-editor tools to enrich the draft with public-web research; its additions are merged onto the draft.
 - Finally `citation_matcher.py` embeds source passages and beat-book sentences (OpenAI) and matches each claim back to its source, producing the `<stem>.json` + `<stem>_sources.json` the reader uses.
 
 ---
@@ -370,7 +372,7 @@ The reader renders a finished book inline in the main panel. It loads `/output/<
 | **Dimensionality reduction** | [UMAP](https://umap-learn.readthedocs.io/) | Project embeddings for clustering |
 | **Clustering** | [HDBSCAN](https://hdbscan.readthedocs.io/) | Density-based topic discovery at two granularities |
 | **Writing agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Tool-using agent that writes the beat book |
-| **Research agent** | [Anthropic API](https://docs.claude.com/) (`claude-opus-4-7`) | Sandboxed public-web research over the draft |
+| **Research agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Sandboxed public-web research over the draft |
 | **Numerical** | [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [scikit-learn](https://scikit-learn.org/) | Vector math, distances, preprocessing |
 | **Frontend** | Vanilla HTML/CSS/JS | No-framework single-page app |
 

@@ -885,12 +885,22 @@
   // Fetch embedding provider config (shows model selector when Ollama is active)
   fetch("/api/embed-config").then(r => r.json()).then(cfg => {
     embedConfig = cfg;
-    // Only worth showing when there's an actual choice to make — the
-    // OpenAI path always reports exactly one (fixed) model.
-    if (cfg.models && cfg.models.length > 1) {
-      const selector = $("embed-model-selector");
-      const select = $("embed-model-select");
-      select.innerHTML = "";
+    const selector = $("embed-model-selector");
+    const select = $("embed-model-select");
+    select.innerHTML = "";
+    if (cfg.provider === "openai") {
+      // OpenAI has no model choice in this app — show it as a fixed,
+      // non-selectable value rather than hiding the field entirely.
+      const opt = document.createElement("option");
+      opt.value = (cfg.models && cfg.models[0] && cfg.models[0].name) || cfg.default_model || "";
+      opt.textContent = "OpenAI";
+      opt.selected = true;
+      select.appendChild(opt);
+      select.disabled = true;
+      selector.hidden = false;
+    } else if (cfg.models && cfg.models.length > 1) {
+      // Ollama with multiple pulled models — only worth showing when
+      // there's an actual choice to make.
       for (const m of cfg.models) {
         const opt = document.createElement("option");
         opt.value = m.name;
@@ -898,6 +908,7 @@
         if (m.name === cfg.default_model) opt.selected = true;
         select.appendChild(opt);
       }
+      select.disabled = false;
       selector.hidden = false;
     }
   }).catch(() => {});
