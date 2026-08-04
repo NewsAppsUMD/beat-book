@@ -175,12 +175,16 @@ around the topics the reporter selected; each topic describes who is doing \
 what, what is at stake, and the recurring tension or arc in the coverage. \
 Cover **Key Sources & Players** — the people, organizations, and \
 institutions that appear repeatedly — explaining their role and how they \
-tend to surface. Include **Story Ideas & Angles** — a short numbered list, \
-introduced with a sentence or two framing the gap in coverage. Provide \
-**Background & Context**: the history, policy, and institutional knowledge \
-a new reporter would need. End with **Reporting Tips** (practical advice \
-specific to this beat, not generic journalism advice) and a **Calendar & \
-Recurring Events** section.\
+tend to surface. Include **Story Ideas & Angles** — frame this as what still \
+needs follow-up and how a reporter might pursue it: the open questions the \
+coverage hasn't answered, the threads worth pulling, and practical next moves \
+(who to interview, what records or datasets to compare, which patterns to \
+test). Suggest approaches and angles — you are writing for a working reporter \
+who knows the craft, so do NOT dictate rote tasks or spell out obvious \
+mechanics (no "pull every docket number"). Provide **Background & Context**: \
+the history, policy, and institutional knowledge a new reporter would need. \
+End with **Reporting Tips** (practical advice specific to this beat, not \
+generic journalism advice) and a **Calendar & Recurring Events** section.\
 """
 
 _NO_TOC = """\
@@ -237,10 +241,47 @@ reporter walking out the door.\
 
 VALID_STYLES = list(STYLE_PRESETS.keys())
 
+# ── Length control ───────────────────────────────────────────────────────────
+# Named length presets → approximate total word target. The chosen target is
+# injected into the doc spec as a hard-ish budget and also scales the final
+# write's max_tokens so a shorter book is both requested and cheaper/faster.
+DEFAULT_TARGET_WORDS = 2000
+LENGTH_PRESETS = {
+    "brief": 1000,
+    "standard": 2000,
+    "indepth": 3500,
+}
 
-def _build_doc_spec(style: str = "narrative") -> str:
+
+def _clamp_target_words(target_words: int | None) -> int:
+    if not target_words or target_words <= 0:
+        return DEFAULT_TARGET_WORDS
+    # Keep within sane bounds regardless of caller input.
+    return max(500, min(6000, int(target_words)))
+
+
+def _length_directive(target_words: int) -> str:
+    return (
+        f"**Length.** Aim for roughly {target_words:,} words across the whole "
+        f"document — treat this as a target to hit, not a floor to exceed. Be "
+        f"concise: cover the beat well within that budget rather than exhausting "
+        f"every detail, and if the corpus is thin it is fine to come in under. "
+        f"Prioritize what a reporter most needs and cut anything that reads as "
+        f"filler."
+    )
+
+
+def _final_max_tokens(target_words: int) -> int:
+    """Scale the final-write token ceiling to the word target (~1.5 tok/word)
+    plus headroom for markdown and mild overrun."""
+    return max(2048, min(12000, int(target_words * 2.2) + 800))
+
+
+def _build_doc_spec(style: str = "narrative",
+                    target_words: int = DEFAULT_TARGET_WORDS) -> str:
     style_text = STYLE_PRESETS.get(style, STYLE_PRESETS["narrative"])
-    return f"{_DOC_STRUCTURE}\n\n{style_text}\n\n{_NO_TOC}"
+    length_text = _length_directive(target_words)
+    return f"{_DOC_STRUCTURE}\n\n{length_text}\n\n{style_text}\n\n{_NO_TOC}"
 
 
 # ── System prompt templates ────────────────────────────────────────────────
@@ -290,11 +331,13 @@ acknowledgement, no tool calls. Start directly with the title (`# ...`).
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _target_for_topic(topic_size: int) -> int:
-    """Per-topic minimum read count: every story if the topic has fewer than
-    15, otherwise half (rounded up), capped at 25."""
-    if topic_size < 15:
+    """Per-topic minimum read count. Deliberately light — the agent only needs
+    enough grounding to write, not to read the whole corpus. Read every story
+    for small topics (<8), otherwise a third (rounded up), capped at 10. This
+    keeps the exploration phase to far fewer LLM turns."""
+    if topic_size < 8:
         return topic_size
-    return min(25, (topic_size + 1) // 2)
+    return min(10, (topic_size + 2) // 3)
 
 
 def _derive_filename(pipeline_result: PipelineResult) -> str:
@@ -483,6 +526,7 @@ async def run_agent(
     on_exploration_done: Callable[[str], Awaitable[None]] = None,
     selected_topics: list[str] | None = None,
     style: str = "narrative",
+    target_words: int = DEFAULT_TARGET_WORDS,
 ) -> None:
     """
     Run the agent loop.
@@ -496,7 +540,9 @@ async def run_agent(
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
     """
-    doc_spec = _build_doc_spec(style)
+    target_words = _clamp_target_words(target_words)
+    final_max_tokens = _final_max_tokens(target_words)
+    doc_spec = _build_doc_spec(style, target_words)
     system_prompt = _EXPLORE_TEMPLATE.format(doc_spec=doc_spec)
     write_system_prompt = _WRITE_TEMPLATE.format(doc_spec=doc_spec)
 
@@ -622,7 +668,7 @@ async def run_agent(
                     ]
                     request_kwargs = dict(
                         model=provider.agent_model,
-                        max_tokens=MAX_TOKENS_FINAL_GENERATE,
+                        max_tokens=final_max_tokens,
                         system=write_system_prompt,
                         tools=TOOLS,
                         tool_choice={"type": "none"},

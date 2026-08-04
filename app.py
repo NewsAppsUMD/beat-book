@@ -17,6 +17,7 @@ FastAPI web app.
 
 import asyncio
 import contextlib
+import io
 import json
 import os
 import queue
@@ -44,7 +45,7 @@ if _env_file.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 from pipeline import run_pipeline, PipelineResult
-from agent import _derive_filename
+from agent import _derive_filename, LENGTH_PRESETS, DEFAULT_TARGET_WORDS
 from ingest import ingest_file, ingest_url
 from embed_client import (
     DEFAULT_OLLAMA_EMBED_MODEL,
@@ -135,6 +136,7 @@ class StoryIn(BaseModel):
     date: str = ""
     author: str = ""
     organization: str = ""
+    language: str = ""
     link: str = ""
     content_type: str = "article"
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -412,6 +414,123 @@ def _prettify_stem(stem: str) -> str:
     return s.title() if s else "Beat Book"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# WORD (.docx) EXPORT
+# ─────────────────────────────────────────────────────────────────────────────
+# Convert the canonical beat-book Markdown to a .docx on demand. Handles the
+# elements the writing agent actually emits: headings, paragraphs, bullet/
+# numbered lists, blockquotes, and inline bold/italic/links. Markdown tables
+# become plain pipe-joined lines (beat books are overwhelmingly prose).
+
+# One regex over the inline span types, matched left-to-right.
+_INLINE_MD_RE = re.compile(
+    r"(\[([^\]]+)\]\((https?://[^)\s]+)\))"   # 1 link, 2 text, 3 url
+    r"|(\*\*(.+?)\*\*)"                        # 4/5 bold  **x**
+    r"|(__(.+?)__)"                            # 6/7 bold  __x__
+    r"|(\*(.+?)\*)"                            # 8/9 italic *x*
+    r"|(?<!\w)(_(.+?)_)(?!\w)"                 # 10/11 italic _x_ (word-boundary)
+)
+
+
+def _docx_add_hyperlink(paragraph, text: str, url: str) -> None:
+    """Append a real clickable hyperlink run to a python-docx paragraph."""
+    from docx.oxml.shared import OxmlElement, qn
+    part = paragraph.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    color = OxmlElement("w:color"); color.set(qn("w:val"), "0563C1"); rPr.append(color)
+    underline = OxmlElement("w:u"); underline.set(qn("w:val"), "single"); rPr.append(underline)
+    run.append(rPr)
+    t = OxmlElement("w:t"); t.text = text; run.append(t)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+
+
+def _docx_add_inline(paragraph, text: str) -> None:
+    """Add text to a paragraph, rendering inline **bold**, *italic*, and links."""
+    pos = 0
+    for m in _INLINE_MD_RE.finditer(text):
+        if m.start() > pos:
+            paragraph.add_run(text[pos:m.start()])
+        if m.group(1):                          # link
+            _docx_add_hyperlink(paragraph, m.group(2), m.group(3))
+        elif m.group(4) or m.group(6):          # bold
+            paragraph.add_run(m.group(5) or m.group(7)).bold = True
+        elif m.group(8) or m.group(10):         # italic
+            paragraph.add_run(m.group(9) or m.group(11)).italic = True
+        pos = m.end()
+    if pos < len(text):
+        paragraph.add_run(text[pos:])
+
+
+def _markdown_to_docx(markdown_text: str) -> bytes:
+    """Render beat-book Markdown to .docx bytes."""
+    from docx import Document
+
+    doc = Document()
+    in_code = False
+    for raw in markdown_text.split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            doc.add_paragraph(line, style="No Spacing")
+            continue
+        if not stripped:
+            continue
+        if re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):   # horizontal rule
+            continue
+
+        heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading:
+            level = min(len(heading.group(1)), 4)
+            p = doc.add_heading(level=level)
+            _docx_add_inline(p, heading.group(2))
+            continue
+
+        if stripped.startswith(">"):
+            p = doc.add_paragraph(style="Intense Quote")
+            _docx_add_inline(p, stripped.lstrip("> ").rstrip())
+            continue
+
+        bullet = re.match(r"^[-*+]\s+(.*)$", stripped)
+        if bullet:
+            p = doc.add_paragraph(style="List Bullet")
+            _docx_add_inline(p, bullet.group(1))
+            continue
+
+        numbered = re.match(r"^\d+[.)]\s+(.*)$", stripped)
+        if numbered:
+            p = doc.add_paragraph(style="List Number")
+            _docx_add_inline(p, numbered.group(1))
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{2,}:?", c or "-") for c in cells):
+                continue   # table separator row
+            p = doc.add_paragraph()
+            _docx_add_inline(p, "  |  ".join(cells))
+            continue
+
+        p = doc.add_paragraph()
+        _docx_add_inline(p, stripped)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 VALID_STYLES = ("narrative", "scannable", "briefing")
 
 
@@ -420,6 +539,7 @@ class CreateBookRequest(BaseModel):
     selected_topics: List[str] = Field(default_factory=list)
     title: Optional[str] = None
     style: str = "narrative"
+    length: str = "standard"        # brief | standard | indepth (see LENGTH_PRESETS)
 
 
 class PatchBookRequest(BaseModel):
@@ -444,6 +564,30 @@ async def get_book_endpoint(book_id: str):
     return JSONResponse(rec)
 
 
+@app.get("/books/{book_id}/docx")
+async def download_book_docx(book_id: str):
+    """Convert the canonical beat-book Markdown to a Word document on demand."""
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    stem = rec.get("stem", "")
+    md_path = OUTPUT_DIR / f"{stem}.md"
+    if not md_path.exists():
+        return JSONResponse(
+            {"error": "This beat book isn't ready to download yet."}, status_code=409)
+    try:
+        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Could not build the Word document: {type(e).__name__}: {e}"},
+            status_code=500)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.docx"'},
+    )
+
+
 @app.post("/books")
 async def create_book_endpoint(body: CreateBookRequest):
     """Enqueue a beat book for background generation. Returns immediately with a
@@ -456,6 +600,7 @@ async def create_book_endpoint(body: CreateBookRequest):
         )
     pr = sess.pipeline_result
     style = body.style if body.style in VALID_STYLES else "narrative"
+    target_words = LENGTH_PRESETS.get(body.length, DEFAULT_TARGET_WORDS)
 
     valid = set(pr.topics.keys())
     selected = [t for t in body.selected_topics if t in valid]
@@ -476,7 +621,7 @@ async def create_book_endpoint(body: CreateBookRequest):
         style=style,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, embed_model=sess.embed_model)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, target_words=target_words, embed_model=sess.embed_model)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])

@@ -115,20 +115,6 @@
             <div class="preview-toolbar">
               <div class="preview-toolbar-row">
                 <button id="preview-back-btn" class="btn">Back to upload</button>
-                <div class="preview-filters" id="preview-filters" role="group" aria-label="Filter by confidence">
-                  <button type="button" class="confidence-filter high active" data-level="high" aria-pressed="true">
-                    <span class="filter-label">High</span>
-                    <span class="filter-count" id="filter-count-high">0</span>
-                  </button>
-                  <button type="button" class="confidence-filter medium active" data-level="medium" aria-pressed="true">
-                    <span class="filter-label">Medium</span>
-                    <span class="filter-count" id="filter-count-medium">0</span>
-                  </button>
-                  <button type="button" class="confidence-filter low active" data-level="low" aria-pressed="true">
-                    <span class="filter-label">Low</span>
-                    <span class="filter-count" id="filter-count-low">0</span>
-                  </button>
-                </div>
                 <div class="preview-toolbar-right">
                   <div id="embed-model-selector" class="embed-model-selector" hidden>
                     <label for="embed-model-select" class="embed-model-label">Embeddings</label>
@@ -188,6 +174,27 @@
                       <input type="radio" name="style" value="briefing">
                       <span class="style-name">Briefing</span>
                       <span class="style-desc">Editor's desk memo — terse, action-oriented, what matters now</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div class="style-selector">
+                  <div class="style-heading">Length</div>
+                  <div class="style-options">
+                    <label class="style-option" data-length="brief">
+                      <input type="radio" name="length" value="brief">
+                      <span class="style-name">Brief</span>
+                      <span class="style-desc">~1,000 words · fastest to generate</span>
+                    </label>
+                    <label class="style-option selected" data-length="standard">
+                      <input type="radio" name="length" value="standard" checked>
+                      <span class="style-name">Standard</span>
+                      <span class="style-desc">~2,000 words · the default</span>
+                    </label>
+                    <label class="style-option" data-length="indepth">
+                      <input type="radio" name="length" value="indepth">
+                      <span class="style-name">In-depth</span>
+                      <span class="style-desc">~3,500 words · most thorough, slowest</span>
                     </label>
                   </div>
                 </div>
@@ -281,6 +288,16 @@
             </button>
             <div class="section-menu" id="sectionMenu"></div>
           </div>
+          <a class="reader-download" id="reader-download" hidden download
+             title="Download as Word document" aria-label="Download as Word document">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            <span>Word</span>
+          </a>
           <div class="reading-progress" id="readingProgress"></div>
         </div>
 

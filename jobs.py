@@ -63,6 +63,7 @@ class BookJob:
     pipeline_result: Any = None              # PipelineResult; nulled after run
     selected_topics: List[str] = field(default_factory=list)
     style: str = "narrative"
+    target_words: int = 2000
     embed_model: Optional[str] = None
     status: str = "queued"
     events: List[dict] = field(default_factory=list)
@@ -114,6 +115,7 @@ async def run_generation(
     anthropic_key: str,
     embed_client=None,
     style: str = "narrative",
+    target_words: int = 2000,
     chat_provider: Optional[ChatProvider] = None,
 ) -> None:
     """Run one beat book end to end. Never raises — terminal state is recorded
@@ -290,6 +292,7 @@ async def run_generation(
             on_exploration_done=on_exploration_done,
             selected_topics=selected_topics,
             style=style,
+            target_words=target_words,
         )
     except Exception as e:
         traceback.print_exc()
@@ -339,6 +342,7 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
                     book_id, job.pipeline_result, job.selected_topics,
                     emit, anthropic_key, embed_clt,
                     style=job.style,
+                    target_words=job.target_words,
                     chat_provider=chat_pvd,
                 )
             except Exception:

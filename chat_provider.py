@@ -215,13 +215,14 @@ class AnthropicChatProvider:
                 "cache_control": {"type": "ephemeral"},
             }]
         if tools:
-            # One breakpoint at the end of the tools array caches the whole
-            # array — stamping every tool would burn through the API's
-            # 4-cache_control-block-per-request limit once there are more
-            # than a couple of tools (e.g. the beat-book agent's 6).
-            new_tools = list(tools)
-            new_tools[-1] = {**new_tools[-1], "cache_control": {"type": "ephemeral"}}
-            kwargs["tools"] = new_tools
+            # Anthropic caches the tools-array prefix up to each cache_control
+            # breakpoint and allows at most 4 such blocks per request. Stamp only
+            # the LAST tool: a single breakpoint caches the entire array, leaving
+            # room for the system block and the last user message. (Stamping every
+            # tool overflows the limit — e.g. 6 tools + system + message = 8.)
+            cached_tools = [dict(t) for t in tools]
+            cached_tools[-1]["cache_control"] = {"type": "ephemeral"}
+            kwargs["tools"] = cached_tools
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
         # Extended thinking is incompatible with a forced tool_choice.
