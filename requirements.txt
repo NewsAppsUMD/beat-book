@@ -1,21 +1,65 @@
-fastapi
-uvicorn[standard]
-python-multipart
-httpx
-pydantic
-openai
-anthropic
-pymupdf
-python-docx
-python-pptx
-openpyxl
-xlrd
-beautifulsoup4
-striprtf
-ebooklib
-numpy
-umap-learn
-hdbscan
-scikit-learn
-tqdm
-feedparser
+# Pinned for reproducible installs across student Codespaces (Linux) and
+# local dev (macOS). Regenerate by installing this file's unpinned package
+# names into a clean venv and re-freezing; verify on Linux before committing
+# (the umap-learn / hdbscan / numba / llvmlite chain is the one most likely
+# to lack a prebuilt wheel for a given version/platform combo).
+
+# ── Direct dependencies ─────────────────────────────────────────────────────
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32
+httpx==0.28.1
+pydantic==2.13.4
+openai==2.53.0
+anthropic==0.120.2
+pymupdf==1.28.0
+python-docx==1.2.0
+python-pptx==1.0.2
+openpyxl==3.1.5
+xlrd==2.0.2
+beautifulsoup4==4.15.0
+striprtf==0.0.32
+ebooklib==0.20
+numpy==2.4.6
+umap-learn==0.5.12
+hdbscan==0.8.44
+scikit-learn==1.9.0
+tqdm==4.70.0
+feedparser==6.0.14
+
+# ── Transitive dependencies (pinned for a fully reproducible install) ──────
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.14.2
+certifi==2026.7.22
+click==8.4.2
+distro==1.9.0
+docstring_parser==0.18.0
+et_xmlfile==2.0.0
+feedparser-sgmllib==2.1.0
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+idna==3.18
+jiter==0.16.0
+joblib==1.5.3
+llvmlite==0.48.0
+lxml==6.1.1
+narwhals==2.24.0
+numba==0.66.0
+pillow==12.3.0
+pydantic_core==2.46.4
+pynndescent==0.6.0
+python-dotenv==1.2.2
+scipy==1.18.0
+six==1.17.0
+sniffio==1.3.1
+soupsieve==2.9.1
+starlette==1.3.1
+threadpoolctl==3.6.0
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+uvloop==0.22.1
+watchfiles==1.2.0
+websockets==17.0.1
+xlsxwriter==3.2.9
