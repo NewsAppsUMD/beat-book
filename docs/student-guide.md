@@ -18,9 +18,14 @@ This guide walks you through building your own beat book using GitHub Codespaces
 
 The app needs two API keys to work — your instructor will hand these out in class (usually shared between you and 1–2 classmates).
 
-1. In the file explorer on the left, find `.env.example` and open it.
-2. Create a new file named exactly `.env` in the same folder (top level of the repo).
-3. Copy these two lines into `.env` and replace with the keys you were given:
+1. In the terminal panel at the bottom of the Codespace, run:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. In the file explorer on the left, open the new `.env` file (top level of the repo).
+3. Replace the `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` lines near the top with the keys you were given:
 
    ```
    ANTHROPIC_API_KEY=sk-ant-...
