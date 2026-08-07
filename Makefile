@@ -24,7 +24,7 @@ install: $(VENV)/bin/activate
 $(VENV)/bin/activate: requirements.txt
 	$(PYTHON) -m venv $(VENV)
 	$(PIP) install --upgrade pip
-	$(PIP) install --only-binary=:all: -r requirements.txt
+	$(PIP) install --only-binary=:all: --no-binary=langdetect -r requirements.txt
 	@touch $(VENV)/bin/activate
 	@echo "✓ Environment ready. Run: make dev"
 
