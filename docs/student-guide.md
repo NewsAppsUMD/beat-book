@@ -12,7 +12,7 @@ This guide walks you through building your own beat book using GitHub Codespaces
 ## 2. Open a Codespace
 
 1. On your new repo's page, click the green **Code** button → the **Codespaces** tab → **Create codespace on main**.
-2. GitHub will spin up a cloud dev environment and open it in your browser (a VS Code-like editor). The **first time**, it also automatically runs `make install`, installs Ollama, and downloads the local embedding model — this takes a few minutes (longer than a plain Python setup, since it's also pulling a model). You'll see this happening in a terminal panel; wait for it to finish before continuing. Ollama's local server is also started automatically every time your Codespace starts or wakes up — you shouldn't need to touch it.
+2. GitHub will spin up a cloud dev environment and open it in your browser (a VS Code-like editor). The **first time**, it also automatically runs `make install`, installs Ollama, and downloads the local embedding model — budget **about 10 minutes** for this (longer than a plain Python setup, since it's also pulling a model). You'll see this happening in a terminal panel; wait for it to finish before continuing. Ollama's local server is also started automatically every time your Codespace starts or wakes up — you shouldn't need to touch it.
 
 ## 3. Add your API keys
 

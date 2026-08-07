@@ -10,7 +10,7 @@ Originally built around [Chicago Public Media](https://chicago.suntimes.com/) st
 
 ## Setup & Running
 
-> **Running this in a class?** See [docs/student-guide.md](docs/student-guide.md) for the GitHub Codespaces path — no local install required. Instructors, see [docs/instructor-checklist.md](docs/instructor-checklist.md).
+> **Running this in a class?** See [docs/student-guide.md](docs/student-guide.md) for the GitHub Codespaces path — no local install required (first-time Codespace creation takes about 10 minutes, since it also installs Ollama and downloads a local embedding model). Instructors, see [docs/instructor-checklist.md](docs/instructor-checklist.md).
 
 ### Prerequisites
 
