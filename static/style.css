@@ -375,6 +375,9 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 0.4rem;
 }
+.embed-model-selector[hidden] {
+  display: none;
+}
 .embed-model-label {
   font-size: 1rem;
   font-weight: 700;

@@ -899,8 +899,7 @@
       select.disabled = true;
       selector.hidden = false;
     } else if (cfg.models && cfg.models.length > 1) {
-      // Ollama with multiple pulled models — only worth showing when
-      // there's an actual choice to make.
+      // Ollama with multiple pulled models — a real choice to make.
       for (const m of cfg.models) {
         const opt = document.createElement("option");
         opt.value = m.name;
@@ -909,6 +908,16 @@
         select.appendChild(opt);
       }
       select.disabled = false;
+      selector.hidden = false;
+    } else if (cfg.models && cfg.models.length === 1) {
+      // Ollama with exactly one pulled model — nothing to choose, but show
+      // it as a fixed value rather than leaving the selector empty.
+      const opt = document.createElement("option");
+      opt.value = cfg.models[0].name;
+      opt.textContent = cfg.models[0].name;
+      opt.selected = true;
+      select.appendChild(opt);
+      select.disabled = true;
       selector.hidden = false;
     }
   }).catch(() => {});
