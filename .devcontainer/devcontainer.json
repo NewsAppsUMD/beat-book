@@ -3,6 +3,9 @@
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
   "postCreateCommand": "make install && (sh .devcontainer/setup-ollama.sh || echo 'Ollama setup failed - see docs/student-guide.md Troubleshooting to install it manually. The rest of the app will still work once you do.')",
   "postStartCommand": "pgrep -x ollama > /dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 &)",
+  "postAttachCommand": {
+    "terminal": "echo 'Codespace ready. See docs/student-guide.md — next: cp .env.example .env, fill in your keys, then make run.'"
+  },
   "forwardPorts": [8000],
   "portsAttributes": {
     "8000": {
