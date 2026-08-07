@@ -12,7 +12,7 @@ The current pipeline still starts with embeddings and cosine similarity but adds
 
 1. **Passages, not sentences, on the source side.** Each source story is chopped into 100-word sliding windows with 16-word overlap. The window keeps its character offset back into the original source text, so a passage hit resolves to a quoted span the viewer can highlight.
 2. **Top-K retrieval, not argmax.** For each beat-book sentence we keep up to five supporting passages, not just the best one — a sentence that synthesizes two stories can cite both.
-3. **A per-corpus calibrated threshold.** We sample random `(beat_book_sentence, source_passage)` pairs to estimate the noise floor of the similarity distribution, then cut off at `noise_mean + 3·sigma` (with an absolute floor of 0.40). Below the threshold, a candidate is dropped — no citation rather than a confidently-wrong one.
+3. **A per-corpus calibrated threshold.** We sample random `(beat_book_sentence, source_passage)` pairs to estimate the noise floor of the similarity distribution, then cut off at `noise_median + 3·sigma` (sigma expressed via MAD, a robust stand-in for std), clamped between an absolute floor of 0.40 and ceiling of 0.75. Below the threshold, a candidate is dropped — no citation rather than a confidently-wrong one.
 4. **Context-sum on the beat-book side.** Pronoun-heavy or short sentences ("He denied it.") have no embedding signal alone. Each beat-book sentence's query vector is `0.6·prev + 1.0·self + 0.4·next`, summing the embeddings of paragraph-adjacent neighbors before matching.
 5. **Leave-one-out sub-window highlighting.** Once a passage is picked, we split it into six overlapping sub-windows and re-embed `passage_minus_subwindow` for each. The sub-windows whose removal most degrades similarity are the ones carrying the claim; we surface the top two as highlight offsets the viewer paints in stronger color.
 
@@ -157,19 +157,27 @@ We replace it with a calibration step that runs once per corpus, against the sam
 CALIB_RANDOM_SAMPLES = 4000
 CALIB_SIGMA = 3.0
 CALIB_ABSOLUTE_FLOOR = 0.40
+CALIB_ABSOLUTE_CEILING = 0.75
+CALIB_MAD_CONSISTENCY = 1.4826  # scales MAD to be std-equivalent under normality
 
 rng = np.random.default_rng(seed=42)
 beat_idx = rng.integers(0, n_beat, size=n_samples)
 src_idx = rng.integers(0, n_src, size=n_samples)
 sims = np.einsum("ij,ij->i", beat_emb_norm[beat_idx], source_emb_norm[src_idx])
-noise_mean = float(np.mean(sims))
-noise_std = float(np.std(sims))
-threshold = max(CALIB_ABSOLUTE_FLOOR, noise_mean + CALIB_SIGMA * noise_std)
+noise_median = float(np.median(sims))
+mad = float(np.median(np.abs(sims - noise_median)))
+noise_scale = mad * CALIB_MAD_CONSISTENCY
+raw_threshold = noise_median + CALIB_SIGMA * noise_scale
+threshold = min(CALIB_ABSOLUTE_CEILING, max(CALIB_ABSOLUTE_FLOOR, raw_threshold))
 ```
 
-Random pairs of beat-book sentences and source passages are, by construction, *not* citations of each other. Their similarities form the noise floor of the corpus — the baseline of "this is what irrelevant looks like, here." Three standard deviations above that floor catches roughly 99.7% of true noise; matches at or above the threshold are the ones standing meaningfully above incidental similarity. The 0.40 absolute floor protects against the degenerate case where the corpus has very high baseline similarity (e.g., a stack of near-duplicate press releases) and the noise-floor formula would produce something laughably low.
+Random pairs of beat-book sentences and source passages are, by construction, *not* citations of each other. Their similarities form the noise floor of the corpus — the baseline of "this is what irrelevant looks like, here." Three of those "sigmas" above that floor is meant to catch roughly 99.7% of true noise; matches at or above the threshold are the ones standing meaningfully above incidental similarity.
 
-The calibration block goes into the output JSON. The viewer reads it and displays the threshold in the header, so a reporter who wants to know "how confident were the citations in this book" can see it at a glance.
+The original version of this formula used `mean`/`std` instead of `median`/MAD, and had no ceiling — just the 0.40 floor. That broke down on narrow, single-topic corpora: a beat book that's one ongoing story (say, ten weeks of coverage of a single stadium deal) shares vocabulary so heavily across the whole corpus that even *unrelated* random pairs score unusually high, and a non-trivial fraction of "random" pairs in a small, narrow corpus are secretly true matches by chance. Both effects inflate `mean`/`std` — `std` especially, since it's a squared-deviation statistic dominated by exactly those inflated outliers — and the resulting threshold could land *above* the entire range where genuine matches actually score, silently rejecting every citation in the book.
+
+`median`/MAD (median absolute deviation) are robust estimators — both have a 50% breakdown point, so a modest fraction of accidentally-true-match pairs in the random sample can't drag them the way they drag `mean`/`std`. `CALIB_MAD_CONSISTENCY = 1.4826` rescales MAD to be directly comparable to `std` under a normal distribution, so on a well-behaved multi-topic corpus the new formula reproduces the old one almost exactly. `CALIB_ABSOLUTE_CEILING = 0.75` is a second, independent backstop: it's anchored to where genuine matches are empirically observed to cluster (topping out around 0.85–0.90, median around 0.75 in a normal corpus), not derived from the corpus's own sample, precisely because a ceiling derived from the same sample would just re-inherit whatever inflation problem it's meant to guard against.
+
+The calibration block goes into the output JSON — including `noise_median`, `noise_mad`, `raw_threshold` (the pre-ceiling value), and `ceiling`, alongside the legacy `noise_mean`/`noise_std` kept for continuity. If `raw_threshold` exceeds `threshold`, the ceiling clamped that book's calibration — a useful diagnostic on its own. The viewer reads the calibration block and displays the threshold in the header, so a reporter who wants to know "how confident were the citations in this book" can see it at a glance.
 
 ## Step 8: top-K retrieval
 
@@ -211,8 +219,9 @@ The matcher returns a single dict:
 
 ```json
 {
-  "calibration": { "threshold": 0.51, "noise_mean": 0.18,
-                   "noise_std": 0.11, "sigma": 3.0, "samples": 4000 },
+  "calibration": { "threshold": 0.51, "noise_mean": 0.18, "noise_std": 0.11,
+                   "noise_median": 0.17, "noise_mad": 0.09, "raw_threshold": 0.51,
+                   "ceiling": 0.75, "sigma": 3.0, "samples": 4000 },
   "entries": [
     { "content": "...", "passthrough": false,
       "supports": [
@@ -237,7 +246,7 @@ A small score chip after each citation link shows the similarity value — color
 
 It's worth being honest about the failure modes:
 
-- **The calibration floor is statistical, not labeled.** We're computing a noise threshold from random pairs, not from labeled "matches" vs. "non-matches." The threshold catches obvious noise but doesn't guarantee that every above-threshold hit is a real attribution — a beat-book sentence and a source passage can share enough surface signal to clear three sigma without actually being about the same thing.
+- **The calibration floor is statistical, not labeled.** We're computing a noise threshold from random pairs, not from labeled "matches" vs. "non-matches." The threshold catches obvious noise but doesn't guarantee that every above-threshold hit is a real attribution — a beat-book sentence and a source passage can share enough surface signal to clear three sigma without actually being about the same thing. The median/MAD estimator plus the absolute ceiling (see Step 7) fixed the opposite failure — a narrow, single-topic corpus inflating the threshold past every genuine match — but calibration is still unsupervised; it has no ground truth for what a "real" match is, only a statistical guess at what noise looks like.
 - **Top-K shows the top candidate inline only.** The data carries up to five supports per sentence, but the current viewer only renders the top one. A reporter who wants to see alternates has to open the JSON. (This is an obvious next viewer iteration.)
 - **Leave-one-out is local.** It tells you which sub-span inside the matched passage most contributes to the match — but if the *real* supporting sub-span is split across two passage windows, the sub-window we highlight in either window is at best half the story.
 - **Synthesized sentences from the open web are still hit-or-miss.** The research agent adds material from web searches that the source corpus doesn't contain. Those sentences should fall below threshold and get no citation. They usually do, but a sentence that happens to share vocabulary with a source story can still cross the threshold and get a misleading link.
