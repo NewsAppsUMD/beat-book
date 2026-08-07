@@ -146,8 +146,11 @@ async def run_generation(
     async def on_heartbeat():
         await emit({"type": "heartbeat"})
 
-    async def on_tool_status(tool_name: str, tool_desc: str, detail: str):
-        await emit({"type": "tool_status", "tool_name": tool_name, "tool": tool_desc, "detail": detail})
+    async def on_tool_status(tool_name: str, tool_desc: str, detail: str, story_count: int = 0):
+        await emit({
+            "type": "tool_status", "tool_name": tool_name, "tool": tool_desc,
+            "detail": detail, "story_count": story_count,
+        })
 
     async def on_agent_progress(pct: float, label: str):
         await emit({"type": "agent_progress", "pct": pct, "label": label})

@@ -300,7 +300,7 @@
           break;
         case "tool_status":
           if (drive) {
-            bumpStats(msg.tool_name);
+            bumpStats(msg.tool_name, msg.story_count);
             if (msg.tool_name === "generate_beat_book") { setStage("write"); setGenerating("Writing beat book", formatToolDetail(msg)); }
             else { setGenerating("Reviewing coverage", formatToolDetail(msg)); }
           }
@@ -842,8 +842,8 @@
     if (stats.topicsListed) parts.push(plural(stats.topicsListed, "topic", "topics") + " explored");
     generatingStats.innerHTML = parts.map(p => `<span class="chip">${p}</span>`).join("");
   }
-  function bumpStats(toolName) {
-    if (toolName === "read_story" || toolName === "read_stories_in_topic") stats.storiesRead++;
+  function bumpStats(toolName, storyCount) {
+    if (toolName === "read_story" || toolName === "read_stories_in_topic") stats.storiesRead += storyCount || 0;
     else if (toolName === "search_stories") stats.searches++;
     else if (toolName === "list_stories_in_topic") stats.topicsListed++;
     renderStatsChips();

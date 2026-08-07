@@ -464,8 +464,10 @@ def execute_local_tool(name: str, input_data: dict, result: PipelineResult) -> s
 
 # Type for the callback that sends agent text messages to the frontend
 MessageCallback   = Callable[[str], Awaitable[None]]
-# Type for the callback that reports tool execution status
-ToolStatusCallback = Callable[[str, str, str], Awaitable[None]]
+# Type for the callback that reports tool execution status. The final `int`
+# is the number of distinct stories this call covers (0 when not applicable),
+# so callers can track real corpus coverage instead of raw call counts.
+ToolStatusCallback = Callable[[str, str, str, int], Awaitable[None]]
 
 
 # Human-friendly descriptions for each tool
@@ -536,7 +538,9 @@ async def run_agent(
         provider: ChatProvider instance (Anthropic or Ollama).
         on_message: async callback(text) — sends agent text to the frontend.
         on_beat_book: async callback(filename, markdown) — saves/delivers the beat book.
-        on_tool_status: async callback(tool_name, detail) — reports tool execution status.
+        on_tool_status: async callback(tool_name, desc, detail, story_count) — reports
+            tool execution status; story_count is the number of distinct stories the
+            call covers (0 when not applicable).
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
     """
@@ -637,6 +641,7 @@ async def run_agent(
                     "generate_beat_book",
                     "Writing the beat book",
                     "Drafting the full Markdown — this takes 1–3 minutes…",
+                    0,
                 )
             if on_agent_progress:
                 await on_agent_progress(100, "Writing the beat book")
@@ -808,15 +813,21 @@ async def run_agent(
             if on_tool_status:
                 desc = TOOL_DESCRIPTIONS.get(tool_name, tool_name)
                 detail = ""
-                if tool_name in ("list_stories_in_topic", "read_stories_in_topic"):
+                story_count = 0
+                if tool_name == "read_stories_in_topic":
+                    topic = tool_input.get("topic", "")
+                    detail = topic
+                    story_count = len(pipeline_result.topics.get(topic, []))
+                elif tool_name == "list_stories_in_topic":
                     detail = tool_input.get("topic", "")
                 elif tool_name == "read_story":
                     idx = tool_input.get("index", "")
                     story = pipeline_result.get_story(idx) if isinstance(idx, int) else None
                     detail = story.get("title", f"#{idx}")[:60] if story else f"#{idx}"
+                    story_count = 1
                 elif tool_name == "search_stories":
                     detail = tool_input.get("query", "")
-                await on_tool_status(tool_name, desc, detail)
+                await on_tool_status(tool_name, desc, detail, story_count)
 
             if tool_name == "generate_beat_book":
                 progress, threshold_met = _progress_report(
