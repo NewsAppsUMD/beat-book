@@ -1,8 +1,8 @@
 {
   "name": "Beat Book Builder",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
-  "postCreateCommand": "make install && curl -fsSL https://ollama.com/install.sh | sh && (ollama serve > /tmp/ollama.log 2>&1 &) && sleep 3 && ollama pull qwen3-embedding:0.6b",
-  "postStartCommand": "pgrep -x ollama > /dev/null || (ollama serve > /tmp/ollama.log 2>&1 &)",
+  "postCreateCommand": "make install && (sh .devcontainer/setup-ollama.sh || echo 'Ollama setup failed - see docs/student-guide.md Troubleshooting to install it manually. The rest of the app will still work once you do.')",
+  "postStartCommand": "pgrep -x ollama > /dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 &)",
   "forwardPorts": [8000],
   "portsAttributes": {
     "8000": {
