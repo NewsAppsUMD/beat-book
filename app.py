@@ -470,15 +470,119 @@ def _docx_add_inline(paragraph, text: str) -> None:
         paragraph.add_run(text[pos:])
 
 
-def _markdown_to_docx(markdown_text: str) -> bytes:
-    """Render beat-book Markdown to .docx bytes."""
+def _citation_source_key(passage: Dict[str, Any]) -> str:
+    return f"{passage.get('article_id')}::{passage.get('passage_offset', 'x')}::{passage.get('passage_length', 'x')}"
+
+
+def _citation_numbering(entries: List[Dict[str, Any]]) -> tuple[Dict[int, int], "OrderedDict[str, Dict[str, Any]]"]:
+    """Mirror static/reader.js's citation pipeline (Pass 1-3): pick each
+    sentence's best (first) support, collapse consecutive runs that cite the
+    same passage down to one visible marker, and assign sequential numbers.
+    Returns (number_by_entry_index, sources_by_key) with sources in first-seen
+    order, matching what the web Reader's footnote panel shows."""
+    primary_by_idx: List[Optional[Dict[str, Any]]] = []
+    for entry in entries:
+        content = entry.get("content", "")
+        if content.lstrip().startswith("|"):
+            primary_by_idx.append(None)
+            continue
+        primary = None
+        if not entry.get("passthrough") and entry.get("supports"):
+            primary = entry["supports"][0]
+        primary_by_idx.append(primary)
+
+    show_cite_at: set = set()
+    run_key: Optional[str] = None
+    run_last_idx = -1
+
+    def flush():
+        nonlocal run_key, run_last_idx
+        if run_last_idx >= 0:
+            show_cite_at.add(run_last_idx)
+        run_key = None
+        run_last_idx = -1
+
+    for i, primary in enumerate(primary_by_idx):
+        if primary:
+            key = _citation_source_key(primary)
+            if run_key is not None and key != run_key:
+                flush()
+            run_key = key
+            run_last_idx = i
+        elif entries[i].get("content", "").strip():
+            flush()
+    flush()
+
+    number_by_idx: Dict[int, int] = {}
+    sources_by_key: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+    next_number = 1
+    for i in sorted(show_cite_at):
+        primary = primary_by_idx[i]
+        key = _citation_source_key(primary)
+        number_by_idx[i] = next_number
+        next_number += 1
+        bucket = sources_by_key.setdefault(key, {"primary": primary, "numbers": []})
+        bucket["numbers"].append(number_by_idx[i])
+
+    return number_by_idx, sources_by_key
+
+
+def _docx_add_citation_marker(paragraph, number: int) -> None:
+    run = paragraph.add_run(str(number))
+    run.font.superscript = True
+
+
+def _docx_add_sources_section(doc, sources_by_key: Dict[str, Dict[str, Any]]) -> None:
+    if not sources_by_key:
+        return
+    doc.add_heading("Sources", level=1)
+    for info in sources_by_key.values():
+        primary = info["primary"]
+        label = ", ".join(str(n) for n in info["numbers"])
+        title = primary.get("article_title") or "Untitled"
+        meta_bits = [b for b in (primary.get("article_author"), primary.get("article_date")) if b]
+        meta = f" ({', '.join(meta_bits)})" if meta_bits else ""
+        p = doc.add_paragraph(style="List Number")
+        p.add_run(f"[{label}] ").bold = True
+        p.add_run(f"{title}{meta}")
+        if primary.get("passage_text"):
+            doc.add_paragraph(primary["passage_text"], style="Intense Quote")
+
+
+def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]] = None) -> bytes:
+    """Render beat-book Markdown to .docx bytes. When `entries` (the
+    citation-matcher's per-sentence entry list, from `{stem}.json`) is given,
+    cited sentences get a superscript marker and a "Sources" section is
+    appended — mirroring the web Reader's footnotes. Without it, renders the
+    same as plain Markdown-to-docx always has."""
     from docx import Document
+
+    if entries is None:
+        entries = [{"content": line, "passthrough": True, "supports": []}
+                   for line in markdown_text.split("\n")]
+
+    number_by_idx, sources_by_key = _citation_numbering(entries)
 
     doc = Document()
     in_code = False
-    for raw in markdown_text.split("\n"):
-        line = raw.rstrip()
+    current_p = None   # open paragraph accumulating consecutive prose sentences
+
+    for i, entry in enumerate(entries):
+        line = entry.get("content", "").rstrip()
         stripped = line.strip()
+        is_passthrough = entry.get("passthrough", True)
+
+        if not is_passthrough:
+            if current_p is None:
+                current_p = doc.add_paragraph()
+            else:
+                current_p.add_run(" ")
+            _docx_add_inline(current_p, stripped)
+            if i in number_by_idx:
+                _docx_add_citation_marker(current_p, number_by_idx[i])
+            continue
+
+        current_p = None   # any passthrough line ends the open prose paragraph
 
         if stripped.startswith("```"):
             in_code = not in_code
@@ -525,6 +629,8 @@ def _markdown_to_docx(markdown_text: str) -> bytes:
 
         p = doc.add_paragraph()
         _docx_add_inline(p, stripped)
+
+    _docx_add_sources_section(doc, sources_by_key)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -575,8 +681,15 @@ async def download_book_docx(book_id: str):
     if not md_path.exists():
         return JSONResponse(
             {"error": "This beat book isn't ready to download yet."}, status_code=409)
+    entries = None
+    citations_path = OUTPUT_DIR / f"{stem}.json"
+    if citations_path.exists():
+        try:
+            entries = json.loads(citations_path.read_text(encoding="utf-8")).get("entries")
+        except Exception:
+            entries = None
     try:
-        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"))
+        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"), entries)
     except Exception as e:
         return JSONResponse(
             {"error": f"Could not build the Word document: {type(e).__name__}: {e}"},
