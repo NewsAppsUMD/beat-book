@@ -26,7 +26,7 @@ $(VENV)/bin/activate: requirements.txt
 	$(PIP) install --upgrade pip
 	$(PIP) install --only-binary=:all: --no-binary=langdetect -r requirements.txt
 	@touch $(VENV)/bin/activate
-	@echo "✓ Environment ready. Run: make dev"
+	@echo "✓ Environment ready. Run: make run"
 
 # ── Server ────────────────────────────────────────────────────────────────────
 
