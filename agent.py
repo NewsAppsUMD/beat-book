@@ -174,8 +174,16 @@ beat covers and why it matters. Move into **Key Topics & Themes**, organized \
 around the topics the reporter selected; each topic describes who is doing \
 what, what is at stake, and the recurring tension or arc in the coverage. \
 Cover **Key Sources & Players** — the people, organizations, and \
-institutions that appear repeatedly — explaining their role and how they \
-tend to surface. Include **Story Ideas & Angles** — frame this as what still \
+institutions the coverage is ABOUT: officials, spokespeople, affected \
+parties, experts quoted on the substance, institutions taking action — \
+explaining their role and how they tend to surface. Do NOT include the \
+journalists or columnists who wrote the source stories themselves (their \
+bylines) — a byline appearing repeatedly across the corpus means one \
+reporter covers this beat often, not that they're a source or player in the \
+story. A journalist belongs here only if the coverage is actually about \
+them as a newsmaker (e.g. a reporter who is also a named party in a lawsuit \
+the beat covers) — covering the beat doesn't qualify. Include **Story Ideas \
+& Angles** — frame this as what still \
 needs follow-up and how a reporter might pursue it: the open questions the \
 coverage hasn't answered, the threads worth pulling, and practical next moves \
 (who to interview, what records or datasets to compare, which patterns to \
