@@ -468,6 +468,23 @@
     setTimeout(initSectionNavigation, 50);
   }
 
+  // Fallback for when citation data ({stem}.json) isn't available (citation
+  // matching skipped/failed, or an older book generated before it existed) —
+  // still render the plain Markdown rather than showing "couldn't load."
+  function renderPlainMarkdown(markdown) {
+    if (typeof marked === 'undefined') {
+      $('reader-content').innerHTML = '<p class="reader-error">The markdown renderer failed to load. Check your connection and reload.</p>';
+      return;
+    }
+    const contentEl = $('reader-content');
+    contentEl.innerHTML = marked.parse(markdown);
+    contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, table, pre').forEach((el, i) => {
+      el.classList.add('fade-in');
+      el.style.animationDelay = `${i * 0.03}s`;
+    });
+    setTimeout(initSectionNavigation, 50);
+  }
+
   // ── Public open() ───────────────────────────────────────────────────────
   async function open(stem, opts) {
     opts = opts || {};
@@ -495,13 +512,24 @@
 
     const beatbookFile = `/output/${encodeURIComponent(stem)}.json`;
     const storiesFile = `/output/${encodeURIComponent(stem)}_sources.json`;
+    const markdownFile = `/output/${encodeURIComponent(stem)}.md`;
     try {
       try {
         const sr = await fetch(storiesFile);
         if (sr.ok) storiesData = await sr.json();
       } catch (e) { /* sources are optional */ }
       const response = await fetch(beatbookFile);
-      if (!response.ok) throw new Error(`couldn't load ${stem}.json`);
+      if (!response.ok) {
+        // Citation matching was skipped or failed for this book (missing
+        // provider config, a transient embedding error, or an older book
+        // generated before citation matching existed) — the plain Markdown
+        // still exists and is still worth showing, just without citations.
+        const mdResponse = await fetch(markdownFile);
+        if (!mdResponse.ok) throw new Error(`couldn't load ${stem}.json or ${stem}.md`);
+        renderPlainMarkdown(await mdResponse.text());
+        bindScroll();
+        return;
+      }
       renderBeatbook(await response.json());
     } catch (error) {
       $('reader-content').innerHTML =

@@ -313,7 +313,8 @@ def _embed_many(
         return np.asarray(result, dtype=np.float32)
 
     results: List[Optional[List[List[float]]]] = [None] * len(batches)
-    workers = min(EMBED_PARALLEL_WORKERS, len(batches))
+    max_parallel = min(EMBED_PARALLEL_WORKERS, getattr(client, "max_parallel", EMBED_PARALLEL_WORKERS))
+    workers = min(max_parallel, len(batches))
     total = len(texts)
     done_count = 0
 

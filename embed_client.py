@@ -27,6 +27,12 @@ class EmbedClient(Protocol):
     # CPU-bound model (Ollama with no GPU) needs a small one so no single
     # call blocks long enough to stall the progress stream it's reported on.
     batch_size: int
+    # Provider-appropriate ceiling on concurrent embed() calls in flight.
+    # A hosted API is built for this; a single local Ollama process usually
+    # serializes inference on one model anyway, so firing several requests
+    # at once just means most of them sit queued holding a connection open —
+    # more chances to hit a client-side timeout for no throughput benefit.
+    max_parallel: int
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         ...
@@ -43,6 +49,7 @@ class OpenAIEmbedClient:
     # Hosted API, fast per-call — large batches minimize request count/RPM
     # pressure rather than risking a stall.
     batch_size = 256
+    max_parallel = 6
 
     def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
         self._client = OpenAI(api_key=api_key)
@@ -61,6 +68,11 @@ class OllamaEmbedClient:
     # Local, usually CPU-bound (no GPU in a Codespace) — small batches keep
     # each call short so progress/heartbeats keep flowing.
     batch_size = 20
+    # A single local Ollama process typically serializes inference on one
+    # model regardless of how many requests arrive concurrently — cap to 2
+    # so the rest aren't just sitting on a held-open connection queued
+    # behind it, risking a client-side timeout for no real parallelism.
+    max_parallel = 2
 
     def __init__(self, host: str = "http://localhost:11434",
                  model: str = DEFAULT_OLLAMA_EMBED_MODEL,

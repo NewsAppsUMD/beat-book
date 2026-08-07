@@ -228,6 +228,8 @@ async def run_generation(
         # 5. Citation matching (OpenAI embeddings). If unavailable, the book is
         #    still usable as raw markdown — mark ready and deliver it.
         if embed_client is None:
+            print("[jobs] embed_client is None — skipping citation matching "
+                  "(see the traceback near job start, if any, for why construction failed)", flush=True)
             await emit({"type": "error",
                         "text": "Embedding provider not configured; skipping citation matching."})
             _finish_ready()
@@ -272,6 +274,7 @@ async def run_generation(
         try:
             entries, sources = future.result()
         except Exception as e:
+            traceback.print_exc()
             await emit({"type": "error",
                         "text": f"Citation matching failed: {e}. The raw Markdown is still available."})
             _finish_ready()
