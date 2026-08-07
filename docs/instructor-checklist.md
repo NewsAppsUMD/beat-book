@@ -21,11 +21,11 @@ Each student's Codespace is its own process with its own internal throttling —
 ## Pre-class dry run
 
 - [ ] As a test "student," click **Use this template** on the class repo, create a test repo, and open a Codespace on it.
-- [ ] Confirm `postCreateCommand` (`make install`) finishes without errors and `make run` starts cleanly.
-- [ ] Install Ollama in the test Codespace, pull `qwen3-embedding:0.6b`, and start `ollama serve` per the guide's step 4 — confirm `ollama list` shows the model and the app can reach `http://localhost:11434`.
+- [ ] Confirm `postCreateCommand` finishes without errors — it now runs `make install`, installs Ollama, starts it temporarily, and pulls `qwen3-embedding:0.6b`, so first-time setup takes noticeably longer than a plain Python install. Confirm `ollama list` shows the model afterward and `make run` starts cleanly.
+- [ ] Restart/stop-and-resume the test Codespace once, then run `pgrep -x ollama` (or just try generating a book) to confirm `postStartCommand` actually brings the Ollama server back up on its own — this is the piece most worth verifying, since it's new and the whole point is that students shouldn't need to touch it.
 - [ ] Do a full end-to-end run with the bundled `example_stories.txt`: ingest → preview → pipeline → topic selection → generation → reader. This is the one thing that can't be verified outside a real Codespace — it confirms GitHub's port-forwarding proxy handles the app's server-sent-events progress streams and WebSocket correctly, and that the Codespace's CPU handles local embedding generation in reasonable time.
 - [ ] Confirm downloading a generated file from `output/` works (right-click → Download in the file explorer).
-- [ ] Read through [docs/student-guide.md](student-guide.md) yourself in this test Codespace, following it verbatim, to catch anything confusing before students see it — including restarting the Codespace once to confirm the "Ollama server isn't running after a restart" troubleshooting step is actually necessary and accurate.
+- [ ] Read through [docs/student-guide.md](student-guide.md) yourself in this test Codespace, following it verbatim, to catch anything confusing before students see it.
 
 ## Cost expectations
 
@@ -43,4 +43,4 @@ A class run mostly on `example_stories.txt`-sized corpora (or similarly small st
 - No per-student file-count cap on uploads — ask students not to dump huge batches of files in at once (see the guide's "ground rules" section).
 - Codespaces auto-delete after ~30 days of inactivity, and generated files aren't committed to git — students must download their output manually before that happens or before the course ends.
 - A book still "generating" when a Codespace idles out is marked failed on restart; students just need to regenerate it.
-- `ollama serve` doesn't restart automatically after a Codespace restart or idle-wake, since Codespaces don't run it as a background service. Expect "why is embedding/clustering broken" questions early on; the fix is just re-running `ollama serve` (see the guide's troubleshooting section).
+- `ollama serve` is started automatically via `postStartCommand` on every Codespace start/resume, so students shouldn't need to touch it — but this is new plumbing (`.devcontainer/devcontainer.json`), so verify it during your dry run. If it ever fails silently for a student, the fix is just `ollama serve > /tmp/ollama.log 2>&1 &` (see the guide's troubleshooting section).

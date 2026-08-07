@@ -12,7 +12,7 @@ This guide walks you through building your own beat book using GitHub Codespaces
 ## 2. Open a Codespace
 
 1. On your new repo's page, click the green **Code** button → the **Codespaces** tab → **Create codespace on main**.
-2. GitHub will spin up a cloud dev environment and open it in your browser (a VS Code-like editor). The **first time**, it also runs `make install` automatically in the background — this takes a few minutes because it's downloading the Python packages the app needs. You'll see this happening in a terminal panel; wait for it to finish before continuing.
+2. GitHub will spin up a cloud dev environment and open it in your browser (a VS Code-like editor). The **first time**, it also automatically runs `make install`, installs Ollama, and downloads the local embedding model — this takes a few minutes (longer than a plain Python setup, since it's also pulling a model). You'll see this happening in a terminal panel; wait for it to finish before continuing. Ollama's local server is also started automatically every time your Codespace starts or wakes up — you shouldn't need to touch it.
 
 ## 3. Add your API keys
 
@@ -25,7 +25,7 @@ This class uses two providers: **Anthropic** (chat is *not* routed through it in
    ```
 
 2. In the file explorer on the left, open the new `.env` file (top level of the repo).
-3. Set your Anthropic key, and uncomment/fill in the Ollama chat block:
+3. Fill in your Anthropic key and Ollama Cloud key (these lines are already active in `.env.example`, just replace the placeholder values):
 
    ```
    ANTHROPIC_API_KEY=sk-ant-...
@@ -36,48 +36,30 @@ This class uses two providers: **Anthropic** (chat is *not* routed through it in
    OLLAMA_API_KEY=your-ollama-key-here
    ```
 
-   You can leave `OPENAI_API_KEY` blank — it isn't used in this setup.
+   (There's no `OPENAI_API_KEY` line to fill in — it's not used in this setup.)
 
    **No quotes, no extra spaces.** `ANTHROPIC_API_KEY="sk-ant-..."` (with quotes) will not work.
 4. Save the file. (`.env` is already set up to be ignored by git, so your keys won't accidentally get committed or shared.)
 
 ## 4. Set up local embeddings (Ollama)
 
-Embeddings (topic clustering and citation matching) run on a small model *inside your Codespace* rather than through an API — no key needed, but there's a one-time model download and a background server to start.
+Embeddings (topic clustering and citation matching) run on a small model *inside your Codespace* rather than through an API — no key needed. Your Codespace already installed Ollama and downloaded the model automatically when it was created (step 2), and keeps the local server running for you, so there's nothing to install here — just turn it on in `.env`:
 
-1. Install Ollama (not part of the Codespace by default):
-
-   ```bash
-   curl -fsSL https://ollama.com/install.sh | sh
-   ```
-
-2. Pull the embedding model:
-
-   ```bash
-   ollama pull qwen3-embedding:0.6b
-   ```
-
-3. Start the Ollama server in the background (Codespaces don't run it as a service automatically, so this doesn't survive a restart — see Troubleshooting):
-
-   ```bash
-   ollama serve > /tmp/ollama.log 2>&1 &
-   ```
-
-4. Confirm it's working:
-
-   ```bash
-   ollama list
-   ```
-
-   You should see `qwen3-embedding:0.6b` listed.
-
-5. In your `.env` file, uncomment/fill in the embedding block:
+1. Check your `.env` file has the embedding block active (it's already set by default in `.env.example`, nothing to fill in — no key needed):
 
    ```
    EMBED_PROVIDER=ollama
    OLLAMA_HOST=http://localhost:11434
    OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
    ```
+
+2. (Optional) Confirm the model is there:
+
+   ```bash
+   ollama list
+   ```
+
+   You should see `qwen3-embedding:0.6b` listed. If it's missing or the command isn't found, something went wrong during Codespace creation — see Troubleshooting.
 
 ## 5. Run the app
 
@@ -117,6 +99,7 @@ To download a finished book: in the file explorer, find `output/<your-book-name>
 
 - **A book got stuck on "generating" or shows as failed after I stepped away.** Codespaces suspend after about 30 minutes idle, and any book still generating when that happens is marked failed on restart. Keep the tab open (or check back within that window) while a book is generating, and just start it again if it fails.
 - **Error: "ANTHROPIC_API_KEY not configured."** Double-check your `.env` file — no quotes, correct variable names, no typos — then stop the server (Ctrl+C in the terminal) and run `make run` again.
-- **Errors mentioning `localhost:11434`, "connection refused," or topic clustering/citation matching failing.** The Ollama server isn't running — it doesn't restart automatically when you reopen a Codespace or when it wakes from idle. Re-run `ollama serve > /tmp/ollama.log 2>&1 &` in the terminal (no need to re-pull the model), then try again.
+- **Errors mentioning `localhost:11434`, "connection refused," or topic clustering/citation matching failing.** The Codespace normally starts the Ollama server for you automatically, but if that didn't happen (or you're not sure), run `ollama serve > /tmp/ollama.log 2>&1 &` in the terminal (no need to re-pull the model), then try again.
+- **`ollama: command not found`, or `ollama list` doesn't show `qwen3-embedding:0.6b`.** The one-time Ollama install/model-download during Codespace creation didn't finish — rerun it manually: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull qwen3-embedding:0.6b`.
 - **The Ports/browser tab is blank.** Go to the **Ports** tab, right-click port 8000, and choose **Open in Browser** (or **Preview in Editor**).
-- **Something's just broken.** The most reliable fix is to close and reopen the Codespace (or rebuild it from the Codespaces menu). Your `.env` file and anything in `output/` survive a restart as long as the Codespace itself hasn't been deleted — but remember Ollama itself will need `ollama serve` started again after any restart.
+- **Something's just broken.** The most reliable fix is to close and reopen the Codespace (or rebuild it from the Codespaces menu). Your `.env` file and anything in `output/` survive a restart as long as the Codespace itself hasn't been deleted, and Ollama's server restarts itself automatically. If you rebuild the Codespace from scratch, the one-time Ollama install/model-download will simply run again.
