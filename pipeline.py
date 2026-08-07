@@ -37,6 +37,11 @@ from embed_client import EmbedClient
 
 CACHE_DIR   = Path(".cache")
 SAMPLE_SIZE_FOR_LABEL = 8
+# Ceiling for hosted providers (fast per-call, so fewer/bigger requests is
+# better). Actually applied size is min(this, client.batch_size) — a local/
+# CPU-bound provider like Ollama caps itself much lower (see embed_client.py)
+# so no single call blocks long enough to stall the progress it's reported
+# on (app.py's /process SSE heartbeat guards the same failure mode too).
 EMBED_BATCH_SIZE = 100
 # Labels are 2–5 words; 256 leaves plenty of room with extended thinking off.
 LABEL_MAX_TOKENS = 256
@@ -104,12 +109,18 @@ def _story_to_text(story: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _embed_batch(client: EmbedClient, texts: List[str]) -> np.ndarray:
+def _embed_batch(client: EmbedClient, texts: List[str],
+                  on_progress: Optional[ProgressCallback] = None) -> np.ndarray:
     all_vectors = []
-    for i in tqdm(range(0, len(texts), EMBED_BATCH_SIZE), desc="Embedding"):
-        chunk = texts[i : i + EMBED_BATCH_SIZE]
+    total = len(texts)
+    batch_size = min(EMBED_BATCH_SIZE, getattr(client, "batch_size", EMBED_BATCH_SIZE))
+    for i in tqdm(range(0, total, batch_size), desc="Embedding"):
+        chunk = texts[i : i + batch_size]
         vecs = client.embed(chunk)
         all_vectors.extend(vecs)
+        if on_progress:
+            done = min(i + batch_size, total)
+            on_progress("embedding", done / total, f"Embedded {done}/{total} stories…")
     return np.array(all_vectors, dtype=np.float32)
 
 
@@ -118,7 +129,8 @@ def _cache_key(texts: List[str], model_name: str) -> str:
     return hashlib.md5((combined + model_name).encode()).hexdigest()
 
 
-def _load_or_embed(client: EmbedClient, texts: List[str]) -> np.ndarray:
+def _load_or_embed(client: EmbedClient, texts: List[str],
+                    on_progress: Optional[ProgressCallback] = None) -> np.ndarray:
     CACHE_DIR.mkdir(exist_ok=True)
     cache_file = CACHE_DIR / "embeddings.pkl"
     key = _cache_key(texts, client.model_name)
@@ -129,7 +141,7 @@ def _load_or_embed(client: EmbedClient, texts: List[str]) -> np.ndarray:
             print("✓ Loaded embeddings from cache.")
             return cached["vectors"]
     print(f"Generating embeddings for {len(texts)} stories…")
-    vectors = _embed_batch(client, texts)
+    vectors = _embed_batch(client, texts, on_progress)
     with open(cache_file, "wb") as f:
         pickle.dump({"key": key, "vectors": vectors}, f)
     return vectors
@@ -363,7 +375,7 @@ def run_pipeline(stories: List[dict], embed_client: EmbedClient, chat_provider: 
 
     _p("embedding", 0.0, f"Generating embeddings for {len(stories)} stories\u2026")
     texts   = [_story_to_text(s) for s in stories]
-    vectors = _load_or_embed(embed_clt, texts)
+    vectors = _load_or_embed(embed_clt, texts, on_progress)
     _p("embedding", 1.0, "Embeddings complete")
 
     # Small corpora skip UMAP+HDBSCAN: density-based clustering is meaningless

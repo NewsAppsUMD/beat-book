@@ -50,6 +50,12 @@ from embed_client import EmbedClient
 # Progress callback signature: (stage_label, fraction_0_to_1, detail)
 ProgressCallback = Callable[[str, float, str], None]
 
+# Ceiling for hosted providers (fast per-call, so fewer/bigger requests is
+# better). Actually applied size is min(this, client.batch_size) — a local/
+# CPU-bound provider like Ollama caps itself much lower (see embed_client.py)
+# so no single call blocks long enough to leave the citation-progress
+# WebSocket silent for a proxy to treat as dead (jobs.py's citation matcher
+# heartbeat guards the same failure mode too).
 EMBED_BATCH_SIZE = 256
 EMBED_PARALLEL_WORKERS = 6
 
@@ -292,10 +298,12 @@ def _embed_many(
     if not texts:
         return np.zeros((0, client.dimensions), dtype=np.float32)
 
+    batch_size = min(EMBED_BATCH_SIZE, getattr(client, "batch_size", EMBED_BATCH_SIZE))
+
     # Slice into ordered batches.
     batches: List[List[str]] = []
-    for start in range(0, len(texts), EMBED_BATCH_SIZE):
-        batches.append(texts[start : start + EMBED_BATCH_SIZE])
+    for start in range(0, len(texts), batch_size):
+        batches.append(texts[start : start + batch_size])
 
     # Single batch: no point spinning up a thread pool.
     if len(batches) == 1:

@@ -21,6 +21,12 @@ DEFAULT_OLLAMA_EMBED_MODEL = "qwen3-embedding:0.6b"
 class EmbedClient(Protocol):
     model_name: str
     dimensions: int
+    # Provider-appropriate ceiling on texts per embed() call. Callers should
+    # take min(their own desired batch size, this) when chunking — a hosted
+    # API can take a large batch in one fast round-trip, but a local/
+    # CPU-bound model (Ollama with no GPU) needs a small one so no single
+    # call blocks long enough to stall the progress stream it's reported on.
+    batch_size: int
 
     def embed(self, texts: List[str]) -> List[List[float]]:
         ...
@@ -34,6 +40,10 @@ OPENAI_KNOWN_DIMS = {
 
 
 class OpenAIEmbedClient:
+    # Hosted API, fast per-call — large batches minimize request count/RPM
+    # pressure rather than risking a stall.
+    batch_size = 256
+
     def __init__(self, api_key: str, model: str = "text-embedding-3-small"):
         self._client = OpenAI(api_key=api_key)
         self.model_name = model
@@ -48,6 +58,10 @@ class OpenAIEmbedClient:
 
 
 class OllamaEmbedClient:
+    # Local, usually CPU-bound (no GPU in a Codespace) — small batches keep
+    # each call short so progress/heartbeats keep flowing.
+    batch_size = 20
+
     def __init__(self, host: str = "http://localhost:11434",
                  model: str = DEFAULT_OLLAMA_EMBED_MODEL,
                  api_key: str | None = None):

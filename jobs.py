@@ -251,11 +251,19 @@ async def run_generation(
                     "fraction": 0.0, "detail": "Embedding source passages…"})
 
         future = loop.run_in_executor(None, run_matcher)
+        last_sent = loop.time()
         while not future.done():
             try:
                 msg = cpq.get_nowait()
                 await emit({"type": "citation_progress", **msg})
+                last_sent = loop.time()
             except _queue.Empty:
+                # A slow embedding batch (e.g. local CPU-bound Ollama) can
+                # leave the queue empty for a long stretch; without bytes
+                # flowing, a proxy can treat the WebSocket as dead.
+                if loop.time() - last_sent > 10:
+                    await on_heartbeat()
+                    last_sent = loop.time()
                 await asyncio.sleep(0.15)
         while not cpq.empty():
             msg = cpq.get_nowait()

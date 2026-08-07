@@ -366,12 +366,24 @@ async def process(body: ProcessRequest):
             None, run_pipeline, stories, embed_clt, chat_pvd, on_progress
         )
 
+        last_sent = loop.time()
         while not future.done():
             try:
                 msg = progress_queue.get_nowait()
                 yield f"data: {json.dumps({'type': 'progress', **msg})}\n\n"
+                last_sent = loop.time()
             except queue.Empty:
-                pass
+                # A slow embedding/labeling call (e.g. a local CPU-bound
+                # Ollama model) can leave the queue empty for a long stretch.
+                # Without some bytes flowing, GitHub Codespaces' port-forward
+                # proxy (and many reverse proxies) will reset an idle-looking
+                # connection, which the browser surfaces as an opaque stream
+                # error rather than a clean HTTP status. An SSE comment line
+                # is invisible to the frontend's event parser but keeps the
+                # connection demonstrably alive.
+                if loop.time() - last_sent > 10:
+                    yield ": heartbeat\n\n"
+                    last_sent = loop.time()
             await asyncio.sleep(0.15)
 
         while not progress_queue.empty():
