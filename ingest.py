@@ -191,10 +191,11 @@ class IngestedSource:
 # is already explicit — no LLM call needed. We detect the structure, map
 # fields directly, and skip normalization entirely.
 
-_STORY_CONTENT_KEYS = ("summary", "content", "body", "text", "description",
-                        "content_html", "content:encoded")
+_STORY_CONTENT_KEYS = ("content", "content:encoded", "content_html", "body",
+                        "text", "summary", "description")
 _STORY_DATE_KEYS    = ("published", "date", "pubDate", "pub_date",
-                        "created_at", "updated_at", "timestamp")
+                        "created_at", "updated_at", "timestamp",
+                        "published_parsed", "updated_parsed")
 _STORY_AUTHOR_KEYS  = ("author", "byline", "creator", "dc:creator")
 _STORY_LINK_KEYS    = ("link", "url", "href", "guid")
 _STORY_LIST_KEYS    = ("entries", "items", "stories", "articles",
@@ -257,6 +258,15 @@ def _map_json_item(item: dict, link_hint: str) -> Optional["Story"]:
             if m:
                 date = m.group(1)
                 break
+    if not date:
+        for k in ("published_parsed", "updated_parsed"):
+            v = item.get(k)
+            if isinstance(v, (list, tuple)) and len(v) >= 3:
+                try:
+                    date = f"{int(v[0]):04d}-{int(v[1]):02d}-{int(v[2]):02d}"
+                    break
+                except (TypeError, ValueError):
+                    continue
 
     author = ""
     for k in _STORY_AUTHOR_KEYS:
@@ -679,11 +689,11 @@ def _extract_json(raw: bytes) -> str:
         # Not valid JSON — return raw text; the LLM can still try.
         return text
 
-    # In _extract_json, after rendering each item:
     if isinstance(data, list):
         rendered = [r for r in (_render_value(item) for item in data) if r]
         rendered = [r[:1500] for r in rendered]  # cap per-item length
-    return "\n\n---\n\n".join(rendered)
+        return "\n\n---\n\n".join(rendered)
+    return _render_value(data)
 
 
 def extract_text(filename: str, raw: bytes) -> str:
@@ -1586,6 +1596,24 @@ def ingest_url(
             if on_progress:
                 on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
             return source
+
+    # Fast path: structured JSON with explicit story fields skips the LLM.
+    # Sniff the body rather than trusting the extension/content-type — hosts
+    # like raw.githubusercontent.com serve .json as text/plain, so fetch_url
+    # may hand back a filename like "foo.json.txt".
+    stripped = raw.lstrip()
+    if stripped[:1] in (b"{", b"["):
+        fast = _fast_json_stories(raw, url, link_hint=url)
+        if fast is not None:
+            source.stories = fast
+            source.char_count = sum(len(s.content) for s in fast)
+            if on_progress:
+                on_progress({"stage": "done", "detail": "Structured JSON mapped without LLM"})
+            return source
+        # Looked like JSON but not a recognizable story list — make sure
+        # extract_text renders it via the JSON path, not raw text decode.
+        if _ext_of(filename) != ".json":
+            filename = Path(filename).stem + ".json"
 
     try:
         if on_progress:

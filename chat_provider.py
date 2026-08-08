@@ -215,9 +215,9 @@ class AnthropicChatProvider:
                 "cache_control": {"type": "ephemeral"},
             }]
         if tools:
-            kwargs["tools"] = [
-                {**t, "cache_control": {"type": "ephemeral"}} for t in tools
-            ]
+            new_tools = list(tools)
+            new_tools[-1] = {**new_tools[-1], "cache_control": {"type": "ephemeral"}}
+            kwargs["tools"] = new_tools
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
         # Extended thinking is incompatible with a forced tool_choice.
