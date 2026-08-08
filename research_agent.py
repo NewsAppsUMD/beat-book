@@ -344,7 +344,9 @@ Guidelines:
 - **Match the document's existing writing style.** If the file is written \
   in connected prose, add your material as prose — do not convert it to \
   bullet points. If it uses a scannable bullet format, follow that. Read \
-  the file first and mirror whatever style you find.
+  the file first and mirror whatever style you find. When adding material, \
+  keep the register factual and plain — do not add dramatic framing, \
+  sweeping significance statements, or metaphor.
 - Add new sub-sections or short paragraphs where the existing document \
   thins out (e.g. a "Key Sources & Players" section missing notable \
   figures, or a "Calendar" section missing regular meetings). Use bullets \

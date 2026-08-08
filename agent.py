@@ -170,7 +170,11 @@ _DOC_STRUCTURE = """\
 Structure the beat book as follows.
 
 Open with a **Beat Overview** of two or three paragraphs explaining what the \
-beat covers and why it matters. Move into **Key Topics & Themes**, organized \
+beat covers, the main institutions and processes involved, and the current \
+state of play. Ground it in specifics — the actual bills, agencies, disputes, \
+and time period in the corpus — rather than a thesis about the beat's \
+significance. State why the beat matters in plain, factual terms; do not \
+dramatize it. Move into **Key Topics & Themes**, organized \
 around the topics the reporter selected; each topic describes who is doing \
 what, what is at stake, and the recurring tension or arc in the coverage. \
 Cover **Key Sources & Players** — the people, organizations, and \
@@ -214,10 +218,16 @@ of story ideas, a calendar. Do NOT create per-topic sub-headers like \
 structure. Write complete sentences with concrete subjects and verbs ("The \
 school board voted 6-1 last March to raise property taxes" — not "School \
 board: 6-1 vote, March, property tax increase"). Reference actual stories, \
-names, and details from the corpus, not generic advice. The result should \
-read like a piece of journalism about the beat, useful enough that a \
-brand-new reporter could pick it up and start producing informed coverage \
-the same day.\
+names, and details from the corpus, not generic advice. Keep the register \
+plain and workmanlike. Avoid grand framing and dramatic metaphor — no "sits \
+at the intersection of," no "gravitational pull," no "hangs over every \
+vote," no pronouncements about what "understanding this beat means." Open \
+paragraphs with concrete facts, not sweeping thesis statements about \
+significance or scale. The prose can have voice, but it should inform \
+rather than build drama. The result should read like a veteran reporter's \
+guide to the fundamentals of the beat — clear, grounded, and useful enough \
+that a brand-new reporter could pick it up and start producing informed \
+coverage the same day.\
 """,
 
     "scannable": """\
