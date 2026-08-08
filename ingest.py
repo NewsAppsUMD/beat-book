@@ -5,8 +5,10 @@ Multi-format ingestion pipeline: raw bytes / URLs → normalized story dicts.
 
 Two stages:
 1. extract_text(filename, raw_bytes) → plain text/markdown
-   Format dispatcher. markitdown handles docx/pdf/html/pptx/xlsx/rtf.
-   stdlib handles txt/md/json. Unknown extensions get a utf-8 best-effort.
+   Format dispatcher. PDFs go through Firecrawl when FIRECRAWL_API_KEY is set
+   (falling back to PyMuPDF text + Haiku-vision OCR); docx/pptx/xlsx/html/rtf/
+   epub use format-specific libraries; stdlib handles txt/md/csv/json. Unknown
+   extensions get a utf-8 best-effort.
 
 2. normalize(text, source_label, provider) → list[Story]
    LLM tool-use call with a strict schema (via ChatProvider). Documents that fit
@@ -27,6 +29,7 @@ import html
 import ipaddress
 import json
 import logging
+import os
 import re
 import socket
 import time
@@ -91,7 +94,6 @@ NORMALIZE_CONCURRENCY = 4
 # into each chunk so a story body is never split across two chunks.
 RECORD_SEPARATOR = "\n\n---\n\n"
 
-# Extensions markitdown converts to readable markdown.
 # Extensions we read directly as utf-8 text.
 _TEXT_EXTS = {".txt", ".md", ".markdown", ".log", ".csv"}
 
@@ -119,10 +121,10 @@ class Story:
     date: str = ""
     author: str = ""
     organization: str = ""
+    language: str = ""              # detected language name, e.g. "English"
     link: str = ""
     content_type: str = "article"   # one of CONTENT_TYPES
     metadata: dict = field(default_factory=dict)  # type-specific fields
-    confidence: str = "medium"      # "high" | "medium" | "low"
     reasoning: str = ""             # one-sentence justification for the preview UI
 
     def to_pipeline_dict(self) -> dict:
@@ -134,6 +136,8 @@ class Story:
             out["author"] = self.author
         if self.organization:
             out["organization"] = self.organization
+        if self.language:
+            out["language"] = self.language
         if self.link:
             out["link"] = self.link
         if self.content_type:
@@ -150,10 +154,10 @@ class Story:
             "date": self.date,
             "author": self.author,
             "organization": self.organization,
+            "language": self.language,
             "link": self.link,
             "content_type": self.content_type,
             "metadata": self.metadata,
-            "confidence": self.confidence,
             "reasoning": self.reasoning,
         }
 
@@ -201,6 +205,130 @@ _STORY_LINK_KEYS    = ("link", "url", "href", "guid")
 _STORY_LIST_KEYS    = ("entries", "items", "stories", "articles",
                         "results", "data", "posts", "feed")
 _MIN_CONTENT_CHARS  = 50
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PUBLICATION DETECTION (from link/domain)
+# ─────────────────────────────────────────────────────────────────────────────
+# Curated map for outlets whose domain doesn't title-case cleanly
+# (e.g. suntimes.com → "Chicago Sun-Times"). Keys are matched against the full
+# hostname and every shorter domain suffix, so "chicago.suntimes.com" and
+# "www.suntimes.com" both resolve via "suntimes.com". Unknown domains fall back
+# to a name derived from the registrable domain label.
+_KNOWN_PUBLICATIONS: dict[str, str] = {
+    "suntimes.com": "Chicago Sun-Times",
+    "wbez.org": "WBEZ",
+    "chicago.suntimes.com": "Chicago Sun-Times",
+    "mountainstatespotlight.org": "Mountain State Spotlight",
+    "notus.org": "NOTUS",
+    "streetcarsuburbs.news": "Streetcar Suburbs News",
+    "nytimes.com": "The New York Times",
+    "washingtonpost.com": "The Washington Post",
+    "wsj.com": "The Wall Street Journal",
+    "latimes.com": "Los Angeles Times",
+    "propublica.org": "ProPublica",
+    "apnews.com": "The Associated Press",
+    "reuters.com": "Reuters",
+    "npr.org": "NPR",
+    "bbc.com": "BBC",
+    "bbc.co.uk": "BBC",
+    "theguardian.com": "The Guardian",
+    "politico.com": "Politico",
+    "axios.com": "Axios",
+    "bloomberg.com": "Bloomberg",
+    "cnn.com": "CNN",
+    "nbcnews.com": "NBC News",
+    "cbsnews.com": "CBS News",
+    "usatoday.com": "USA Today",
+    "chicagotribune.com": "Chicago Tribune",
+    "block-club-chicago.com": "Block Club Chicago",
+    "blockclubchicago.org": "Block Club Chicago",
+}
+
+
+def _publication_from_link(link: str) -> str:
+    """Best-effort publication name from a URL.
+
+    Checks the curated map against the full hostname and each shorter domain
+    suffix; falls back to a title-cased version of the registrable domain label
+    (splitting on hyphens/underscores). Returns '' when no usable host present.
+    """
+    link = (link or "").strip()
+    if not link:
+        return ""
+    if "://" not in link:
+        link = "http://" + link
+    host = (urlparse(link).hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if not host or "." not in host:
+        return ""
+
+    labels = host.split(".")
+    # Curated: full host first, then each shorter suffix (drops subdomains).
+    for i in range(len(labels) - 1):
+        suffix = ".".join(labels[i:])
+        if suffix in _KNOWN_PUBLICATIONS:
+            return _KNOWN_PUBLICATIONS[suffix]
+
+    # Fallback: derive from the second-level domain label.
+    name_label = labels[-2]
+    parts = [p for p in re.split(r"[-_]+", name_label) if p]
+    if not parts or not any(c.isalpha() for c in name_label):
+        return ""
+    return " ".join(p.capitalize() for p in parts)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LANGUAGE DETECTION
+# ─────────────────────────────────────────────────────────────────────────────
+# ISO 639-1 code → display name for languages we label in the preview.
+# Detection is best-effort and local (langdetect); unknown codes fall back to
+# the uppercased code, and any failure returns "" (shown as blank/editable).
+_LANGUAGE_NAMES: dict[str, str] = {
+    "en": "English", "es": "Spanish", "fr": "French", "de": "German",
+    "it": "Italian", "pt": "Portuguese", "nl": "Dutch", "ru": "Russian",
+    "zh-cn": "Chinese", "zh-tw": "Chinese", "ja": "Japanese", "ko": "Korean",
+    "ar": "Arabic", "hi": "Hindi", "bn": "Bengali", "pa": "Punjabi",
+    "vi": "Vietnamese", "th": "Thai", "tr": "Turkish", "pl": "Polish",
+    "uk": "Ukrainian", "ro": "Romanian", "el": "Greek", "he": "Hebrew",
+    "sv": "Swedish", "no": "Norwegian", "da": "Danish", "fi": "Finnish",
+    "cs": "Czech", "hu": "Hungarian", "id": "Indonesian", "fa": "Persian",
+    "ur": "Urdu", "ta": "Tamil", "tl": "Tagalog", "so": "Somali",
+}
+
+_LANGDETECT_MAX_CHARS = 2000   # sample size — detection needs no more than this
+_langdetect_seeded = False
+
+
+def _detect_language(text: str) -> str:
+    """Best-effort, deterministic human-readable language name for a body of text.
+
+    Uses langdetect (seeded for reproducibility) over a sample of the text.
+    Returns "" when the text is too short to sample, langdetect is unavailable,
+    or detection fails — the preview shows it blank and editable in those cases.
+    """
+    sample = (text or "").strip()
+    if len(sample) < 20:
+        return ""
+    sample = sample[:_LANGDETECT_MAX_CHARS]
+
+    try:
+        from langdetect import detect, DetectorFactory
+        from langdetect.lang_detect_exception import LangDetectException
+    except ImportError:
+        return ""
+
+    global _langdetect_seeded
+    if not _langdetect_seeded:
+        DetectorFactory.seed = 0        # deterministic across runs
+        _langdetect_seeded = True
+
+    try:
+        code = detect(sample).lower()
+    except LangDetectException:
+        return ""
+    return _LANGUAGE_NAMES.get(code, code.upper())
 
 
 def _extract_story_list(data) -> Optional[list]:
@@ -287,8 +415,9 @@ def _map_json_item(item: dict, link_hint: str) -> Optional["Story"]:
 
     return Story(
         title=title, content=content, date=date, author=author, link=link,
+        organization=_publication_from_link(link),
+        language=_detect_language(content),
         content_type="article",
-        confidence="high",
         reasoning="Mapped directly from structured JSON fields.",
     )
 
@@ -398,7 +527,93 @@ def _clean_inline_html(s: str) -> str:
     return text.strip()
 
 
-def _extract_pdf(raw: bytes) -> str:
+# ─────────────────────────────────────────────────────────────────────────────
+# FIRECRAWL (optional): preferred PDF parser + URL scraper
+# ─────────────────────────────────────────────────────────────────────────────
+# When FIRECRAWL_API_KEY is set, PDFs and URLs are routed through Firecrawl,
+# which parses native + scanned PDFs and renders JS-heavy pages uniformly to
+# markdown. Without the key — or on any Firecrawl failure — we fall back to the
+# local PyMuPDF/OCR path for PDFs and the httpx+SSRF fetch for URLs, so the app
+# works with no Firecrawl account.
+
+
+def _firecrawl_available() -> bool:
+    """True when a Firecrawl API key is configured."""
+    return bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
+
+
+def _firecrawl_client():
+    """Construct a Firecrawl client from FIRECRAWL_API_KEY, or raise IngestError."""
+    key = os.environ.get("FIRECRAWL_API_KEY", "").strip()
+    if not key:
+        raise IngestError("FIRECRAWL_API_KEY is not set.")
+    try:
+        from firecrawl import Firecrawl
+    except ImportError as e:
+        raise IngestError(
+            "The 'firecrawl' package is not installed; run `pip install firecrawl`."
+        ) from e
+    return Firecrawl(api_key=key)
+
+
+def _extract_pdf_firecrawl(raw: bytes, filename: str = "document.pdf") -> str:
+    """Parse a PDF via Firecrawl. Handles native and scanned PDFs uniformly."""
+    from firecrawl.v2.types import ParseOptions
+    client = _firecrawl_client()
+    try:
+        result = client.parse(
+            raw,
+            filename=filename,
+            content_type="application/pdf",
+            options=ParseOptions(formats=["markdown"]),
+        )
+    except Exception as e:
+        raise IngestError(
+            f"{filename}: Firecrawl PDF parse failed — {type(e).__name__}: {e}"
+        ) from e
+    md = (getattr(result, "markdown", "") or "").strip()
+    if not md:
+        raise IngestError(f"{filename}: Firecrawl returned no PDF markdown.")
+    return md
+
+
+def _scrape_url_firecrawl(url: str) -> str:
+    """Scrape a URL via Firecrawl and return markdown.
+
+    Firecrawl handles HTML, PDFs, and JS-rendered pages uniformly, and makes the
+    outbound request from its own infrastructure — so the SSRF checks the httpx
+    fallback needs don't apply here (internal addresses are unreachable from it).
+    """
+    client = _firecrawl_client()
+    try:
+        result = client.scrape(url, formats=["markdown"], only_main_content=True)
+    except Exception as e:
+        raise IngestError(
+            f"{url}: Firecrawl scrape failed — {type(e).__name__}: {e}"
+        ) from e
+    md = (getattr(result, "markdown", "") or "").strip()
+    if not md:
+        raise IngestError(f"{url}: Firecrawl returned no markdown.")
+    return md
+
+
+def _extract_pdf(raw: bytes, filename: str = "document.pdf") -> str:
+    """Extract a PDF to text/markdown.
+
+    Prefers Firecrawl when FIRECRAWL_API_KEY is set (native + scanned PDFs
+    handled uniformly). Falls back to local PyMuPDF extraction — which raises
+    the ``__SCANNED_PDF__`` sentinel so ``ingest_file`` can run Haiku-vision OCR
+    — when Firecrawl is unconfigured or fails.
+    """
+    if _firecrawl_available():
+        try:
+            return _extract_pdf_firecrawl(raw, filename)
+        except IngestError as e:
+            logger.warning("%s; falling back to local PDF extraction.", e)
+    return _extract_pdf_local(raw)
+
+
+def _extract_pdf_local(raw: bytes) -> str:
     import fitz  # PyMuPDF
     doc = fitz.open(stream=raw, filetype="pdf")
     n_pages = len(doc)
@@ -708,7 +923,7 @@ def extract_text(filename: str, raw: bytes) -> str:
 
     _EXTRACTORS = {
         ".json":  lambda: _extract_json(raw),
-        ".pdf":   lambda: _extract_pdf(raw),
+        ".pdf":   lambda: _extract_pdf(raw, filename),
         ".docx":  lambda: _extract_docx(raw),
         ".doc":   lambda: _extract_docx(raw),
         ".pptx":  lambda: _extract_pptx(raw),
@@ -972,11 +1187,6 @@ _NORMALIZE_TOOL = {
                                 "Must appear exactly — used for substring search."
                             ),
                         },
-                        "confidence": {
-                            "type": "string",
-                            "enum": ["high", "medium", "low"],
-                            "description": "high = metadata explicit in text. medium = reasonably inferred. low = a guess.",
-                        },
                         "reasoning": {
                             "type": "string",
                             "description": "One sentence: what this entry is and how you identified it.",
@@ -985,7 +1195,7 @@ _NORMALIZE_TOOL = {
                     "required": [
                         "content_type", "title", "date", "author", "organization",
                         "link", "metadata", "body_starts_with", "body_ends_with",
-                        "confidence", "reasoning",
+                        "reasoning",
                     ],
                 },
             },
@@ -1321,16 +1531,18 @@ def _stories_from_payload(
         meta = raw.get("metadata")
         if not isinstance(meta, dict):
             meta = {}
+        link = (raw.get("link") or link_hint or "").strip()
+        organization = (raw.get("organization") or "").strip() or _publication_from_link(link)
         stories.append(Story(
             title=title,
             content=content,
             date=(raw.get("date") or "").strip(),
             author=(raw.get("author") or "").strip(),
-            organization=(raw.get("organization") or "").strip(),
-            link=(raw.get("link") or link_hint or "").strip(),
+            organization=organization,
+            language=_detect_language(content),
+            link=link,
             content_type=ct if ct in CONTENT_TYPES else "other",
             metadata=meta,
-            confidence=(raw.get("confidence") or "medium").strip(),
             reasoning=(raw.get("reasoning") or "").strip(),
         ))
 
@@ -1579,51 +1791,67 @@ def ingest_url(
         provider = get_chat_provider(api_key=anthropic_key or None)
     source = IngestedSource(source_label=url, kind="url")
 
-    try:
-        filename, raw = fetch_url(url)
-    except IngestError as e:
-        source.excluded = True
-        source.extract_error = str(e)
-        source.skip_reason = "Failed to fetch this URL."
-        return source
+    text: Optional[str] = None
 
-    # Fast path: RSS/Atom feed
-    if _ext_of(filename) in (".rss", ".atom", ".xml"):
-        fast = _fast_feed_stories(raw, url)
-        if fast is not None:
-            source.stories = fast
-            source.char_count = sum(len(s.content) for s in fast)
+    # Preferred path: scrape via Firecrawl (handles HTML, JS-rendered pages, and
+    # PDFs uniformly, and needs no SSRF checks). On any failure, fall through to
+    # the local httpx fetch below.
+    if _firecrawl_available():
+        try:
             if on_progress:
-                on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
+                on_progress({"stage": "extract", "detail": "Scraping URL via Firecrawl"})
+            text = _scrape_url_firecrawl(url)
+        except IngestError as e:
+            logger.warning("%s; falling back to local httpx fetch.", e)
+            text = None
+
+    # Fallback path: httpx fetch (SSRF-protected) → extract_text, with an
+    # RSS/Atom fast path that skips the LLM entirely.
+    if text is None:
+        try:
+            filename, raw = fetch_url(url)
+        except IngestError as e:
+            source.excluded = True
+            source.extract_error = str(e)
+            source.skip_reason = "Failed to fetch this URL."
             return source
 
-    # Fast path: structured JSON with explicit story fields skips the LLM.
-    # Sniff the body rather than trusting the extension/content-type — hosts
-    # like raw.githubusercontent.com serve .json as text/plain, so fetch_url
-    # may hand back a filename like "foo.json.txt".
-    stripped = raw.lstrip()
-    if stripped[:1] in (b"{", b"["):
-        fast = _fast_json_stories(raw, url, link_hint=url)
-        if fast is not None:
-            source.stories = fast
-            source.char_count = sum(len(s.content) for s in fast)
-            if on_progress:
-                on_progress({"stage": "done", "detail": "Structured JSON mapped without LLM"})
-            return source
-        # Looked like JSON but not a recognizable story list — make sure
-        # extract_text renders it via the JSON path, not raw text decode.
-        if _ext_of(filename) != ".json":
-            filename = Path(filename).stem + ".json"
+        if _ext_of(filename) in (".rss", ".atom", ".xml"):
+            fast = _fast_feed_stories(raw, url)
+            if fast is not None:
+                source.stories = fast
+                source.char_count = sum(len(s.content) for s in fast)
+                if on_progress:
+                    on_progress({"stage": "done", "detail": "RSS/Atom feed parsed directly"})
+                return source
 
-    try:
-        if on_progress:
-            on_progress({"stage": "extract", "detail": "Extracting text"})
-        text = extract_text(filename, raw)
-    except IngestError as e:
-        source.excluded = True
-        source.extract_error = str(e)
-        source.skip_reason = str(e)
-        return source
+        # Fast path: structured JSON with explicit story fields skips the LLM.
+        # Sniff the body rather than trusting the extension/content-type — hosts
+        # like raw.githubusercontent.com serve .json as text/plain, so fetch_url
+        # may hand back a filename like "foo.json.txt".
+        stripped = raw.lstrip()
+        if stripped[:1] in (b"{", b"["):
+            fast = _fast_json_stories(raw, url, link_hint=url)
+            if fast is not None:
+                source.stories = fast
+                source.char_count = sum(len(s.content) for s in fast)
+                if on_progress:
+                    on_progress({"stage": "done", "detail": "Structured JSON mapped without LLM"})
+                return source
+            # Looked like JSON but not a recognizable story list — make sure
+            # extract_text renders it via the JSON path, not raw text decode.
+            if _ext_of(filename) != ".json":
+                filename = Path(filename).stem + ".json"
+
+        try:
+            if on_progress:
+                on_progress({"stage": "extract", "detail": "Extracting text"})
+            text = extract_text(filename, raw)
+        except IngestError as e:
+            source.excluded = True
+            source.extract_error = str(e)
+            source.skip_reason = str(e)
+            return source
 
     source.char_count = len(text)
     source.truncated = len(text) > MAX_CHUNKS * (WINDOW_SIZE - WINDOW_OVERLAP)

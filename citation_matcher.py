@@ -50,6 +50,12 @@ from embed_client import EmbedClient
 # Progress callback signature: (stage_label, fraction_0_to_1, detail)
 ProgressCallback = Callable[[str, float, str], None]
 
+# Ceiling for hosted providers (fast per-call, so fewer/bigger requests is
+# better). Actually applied size is min(this, client.batch_size) — a local/
+# CPU-bound provider like Ollama caps itself much lower (see embed_client.py)
+# so no single call blocks long enough to leave the citation-progress
+# WebSocket silent for a proxy to treat as dead (jobs.py's citation matcher
+# heartbeat guards the same failure mode too).
 EMBED_BATCH_SIZE = 256
 EMBED_PARALLEL_WORKERS = 6
 
@@ -62,12 +68,19 @@ PASSAGE_OVERLAP_WORDS = 16
 TOP_K = 5
 
 # Calibration parameters. We compute a per-corpus threshold by sampling random
-# (beat_book_sentence, source_passage) pairs and taking `noise_mean + N·sigma`,
-# clamped to an absolute floor so we don't accept obvious garbage when the
-# corpus happens to have a high noise level.
+# (beat_book_sentence, source_passage) pairs and taking `noise_median + N·sigma`
+# (sigma expressed via MAD, a robust stand-in for std), clamped to an absolute
+# floor/ceiling so we don't accept obvious garbage when the corpus happens to
+# have a high noise level, and don't reject everything when a narrow,
+# single-topic corpus inflates the "random pair" noise estimate (some randomly
+# sampled pairs in a narrow corpus are secretly true matches by chance, which
+# fattens the tail — median/MAD resist that contamination far better than
+# mean/std, whose squared-deviation term is dominated by exactly those tails).
 CALIB_RANDOM_SAMPLES = 4000
 CALIB_SIGMA = 3.0
 CALIB_ABSOLUTE_FLOOR = 0.40
+CALIB_ABSOLUTE_CEILING = 0.75
+CALIB_MAD_CONSISTENCY = 1.4826  # scales MAD to be std-equivalent under normality
 
 # Context-sum weights for the beat-book side (handles pronoun / short
 # sentences). 0.6·prev + 1.0·self + 0.4·next, then re-normalized at the matmul.
@@ -285,10 +298,12 @@ def _embed_many(
     if not texts:
         return np.zeros((0, client.dimensions), dtype=np.float32)
 
+    batch_size = min(EMBED_BATCH_SIZE, getattr(client, "batch_size", EMBED_BATCH_SIZE))
+
     # Slice into ordered batches.
     batches: List[List[str]] = []
-    for start in range(0, len(texts), EMBED_BATCH_SIZE):
-        batches.append(texts[start : start + EMBED_BATCH_SIZE])
+    for start in range(0, len(texts), batch_size):
+        batches.append(texts[start : start + batch_size])
 
     # Single batch: no point spinning up a thread pool.
     if len(batches) == 1:
@@ -298,7 +313,8 @@ def _embed_many(
         return np.asarray(result, dtype=np.float32)
 
     results: List[Optional[List[List[float]]]] = [None] * len(batches)
-    workers = min(EMBED_PARALLEL_WORKERS, len(batches))
+    max_parallel = min(EMBED_PARALLEL_WORKERS, getattr(client, "max_parallel", EMBED_PARALLEL_WORKERS))
+    workers = min(max_parallel, len(batches))
     total = len(texts)
     done_count = 0
 
@@ -418,12 +434,17 @@ def _calibrate_threshold(
     on_progress: Optional[ProgressCallback] = None,
 ) -> Dict[str, float]:
     """Estimate the noise floor of the similarity distribution and pick a
-    cutoff above it. Returns {threshold, noise_mean, noise_std, samples}."""
+    cutoff above it. Returns {threshold, noise_mean, noise_std, noise_median,
+    noise_mad, raw_threshold, ceiling, samples, sigma}."""
     if beat_emb_norm.size == 0 or source_emb_norm.size == 0:
         return {
             "threshold": CALIB_ABSOLUTE_FLOOR,
             "noise_mean": 0.0,
             "noise_std": 0.0,
+            "noise_median": 0.0,
+            "noise_mad": 0.0,
+            "raw_threshold": CALIB_ABSOLUTE_FLOOR,
+            "ceiling": CALIB_ABSOLUTE_CEILING,
             "samples": 0,
             "sigma": CALIB_SIGMA,
         }
@@ -439,18 +460,31 @@ def _calibrate_threshold(
 
     noise_mean = float(np.mean(sims))
     noise_std = float(np.std(sims))
-    threshold = max(CALIB_ABSOLUTE_FLOOR, noise_mean + CALIB_SIGMA * noise_std)
+
+    # Median/MAD are robust (50% breakdown point) to the fraction of "random"
+    # pairs that are secretly true matches by chance — the effect that
+    # inflates mean/std past the genuine-match range in narrow, single-topic
+    # corpora.
+    noise_median = float(np.median(sims))
+    mad = float(np.median(np.abs(sims - noise_median)))
+    noise_scale = mad * CALIB_MAD_CONSISTENCY
+    raw_threshold = noise_median + CALIB_SIGMA * noise_scale
+    threshold = min(CALIB_ABSOLUTE_CEILING, max(CALIB_ABSOLUTE_FLOOR, raw_threshold))
 
     if on_progress:
         on_progress(
             "calibrating", 1.0,
-            f"threshold={threshold:.3f} (noise_mean={noise_mean:.3f} ± {noise_std:.3f})",
+            f"threshold={threshold:.3f} (noise_median={noise_median:.3f}, mad={mad:.3f}, raw={raw_threshold:.3f})",
         )
 
     return {
         "threshold": threshold,
         "noise_mean": noise_mean,
         "noise_std": noise_std,
+        "noise_median": noise_median,
+        "noise_mad": mad,
+        "raw_threshold": raw_threshold,
+        "ceiling": CALIB_ABSOLUTE_CEILING,
         "samples": int(n_samples),
         "sigma": CALIB_SIGMA,
     }

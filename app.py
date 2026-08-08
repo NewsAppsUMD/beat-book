@@ -17,6 +17,7 @@ FastAPI web app.
 
 import asyncio
 import contextlib
+import io
 import json
 import os
 import queue
@@ -44,7 +45,7 @@ if _env_file.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 from pipeline import run_pipeline, PipelineResult
-from agent import _derive_filename
+from agent import _derive_filename, LENGTH_PRESETS, DEFAULT_TARGET_WORDS
 from ingest import ingest_file, ingest_url
 from embed_client import (
     DEFAULT_OLLAMA_EMBED_MODEL,
@@ -135,6 +136,7 @@ class StoryIn(BaseModel):
     date: str = ""
     author: str = ""
     organization: str = ""
+    language: str = ""
     link: str = ""
     content_type: str = "article"
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -364,12 +366,24 @@ async def process(body: ProcessRequest):
             None, run_pipeline, stories, embed_clt, chat_pvd, on_progress
         )
 
+        last_sent = loop.time()
         while not future.done():
             try:
                 msg = progress_queue.get_nowait()
                 yield f"data: {json.dumps({'type': 'progress', **msg})}\n\n"
+                last_sent = loop.time()
             except queue.Empty:
-                pass
+                # A slow embedding/labeling call (e.g. a local CPU-bound
+                # Ollama model) can leave the queue empty for a long stretch.
+                # Without some bytes flowing, GitHub Codespaces' port-forward
+                # proxy (and many reverse proxies) will reset an idle-looking
+                # connection, which the browser surfaces as an opaque stream
+                # error rather than a clean HTTP status. An SSE comment line
+                # is invisible to the frontend's event parser but keeps the
+                # connection demonstrably alive.
+                if loop.time() - last_sent > 10:
+                    yield ": heartbeat\n\n"
+                    last_sent = loop.time()
             await asyncio.sleep(0.15)
 
         while not progress_queue.empty():
@@ -412,6 +426,229 @@ def _prettify_stem(stem: str) -> str:
     return s.title() if s else "Beat Book"
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# WORD (.docx) EXPORT
+# ─────────────────────────────────────────────────────────────────────────────
+# Convert the canonical beat-book Markdown to a .docx on demand. Handles the
+# elements the writing agent actually emits: headings, paragraphs, bullet/
+# numbered lists, blockquotes, and inline bold/italic/links. Markdown tables
+# become plain pipe-joined lines (beat books are overwhelmingly prose).
+
+# One regex over the inline span types, matched left-to-right.
+_INLINE_MD_RE = re.compile(
+    r"(\[([^\]]+)\]\((https?://[^)\s]+)\))"   # 1 link, 2 text, 3 url
+    r"|(\*\*(.+?)\*\*)"                        # 4/5 bold  **x**
+    r"|(__(.+?)__)"                            # 6/7 bold  __x__
+    r"|(\*(.+?)\*)"                            # 8/9 italic *x*
+    r"|(?<!\w)(_(.+?)_)(?!\w)"                 # 10/11 italic _x_ (word-boundary)
+)
+
+
+def _docx_add_hyperlink(paragraph, text: str, url: str) -> None:
+    """Append a real clickable hyperlink run to a python-docx paragraph."""
+    from docx.oxml.shared import OxmlElement, qn
+    part = paragraph.part
+    r_id = part.relate_to(
+        url,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+        is_external=True,
+    )
+    hyperlink = OxmlElement("w:hyperlink")
+    hyperlink.set(qn("r:id"), r_id)
+    run = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    color = OxmlElement("w:color"); color.set(qn("w:val"), "0563C1"); rPr.append(color)
+    underline = OxmlElement("w:u"); underline.set(qn("w:val"), "single"); rPr.append(underline)
+    run.append(rPr)
+    t = OxmlElement("w:t"); t.text = text; run.append(t)
+    hyperlink.append(run)
+    paragraph._p.append(hyperlink)
+
+
+def _docx_add_inline(paragraph, text: str) -> None:
+    """Add text to a paragraph, rendering inline **bold**, *italic*, and links."""
+    pos = 0
+    for m in _INLINE_MD_RE.finditer(text):
+        if m.start() > pos:
+            paragraph.add_run(text[pos:m.start()])
+        if m.group(1):                          # link
+            _docx_add_hyperlink(paragraph, m.group(2), m.group(3))
+        elif m.group(4) or m.group(6):          # bold
+            paragraph.add_run(m.group(5) or m.group(7)).bold = True
+        elif m.group(8) or m.group(10):         # italic
+            paragraph.add_run(m.group(9) or m.group(11)).italic = True
+        pos = m.end()
+    if pos < len(text):
+        paragraph.add_run(text[pos:])
+
+
+def _citation_source_key(passage: Dict[str, Any]) -> str:
+    return f"{passage.get('article_id')}::{passage.get('passage_offset', 'x')}::{passage.get('passage_length', 'x')}"
+
+
+def _citation_numbering(entries: List[Dict[str, Any]]) -> tuple[Dict[int, int], "OrderedDict[str, Dict[str, Any]]"]:
+    """Mirror static/reader.js's citation pipeline (Pass 1-3): pick each
+    sentence's best (first) support, collapse consecutive runs that cite the
+    same passage down to one visible marker, and assign sequential numbers.
+    Returns (number_by_entry_index, sources_by_key) with sources in first-seen
+    order, matching what the web Reader's footnote panel shows."""
+    primary_by_idx: List[Optional[Dict[str, Any]]] = []
+    for entry in entries:
+        content = entry.get("content", "")
+        if content.lstrip().startswith("|"):
+            primary_by_idx.append(None)
+            continue
+        primary = None
+        if not entry.get("passthrough") and entry.get("supports"):
+            primary = entry["supports"][0]
+        primary_by_idx.append(primary)
+
+    show_cite_at: set = set()
+    run_key: Optional[str] = None
+    run_last_idx = -1
+
+    def flush():
+        nonlocal run_key, run_last_idx
+        if run_last_idx >= 0:
+            show_cite_at.add(run_last_idx)
+        run_key = None
+        run_last_idx = -1
+
+    for i, primary in enumerate(primary_by_idx):
+        if primary:
+            key = _citation_source_key(primary)
+            if run_key is not None and key != run_key:
+                flush()
+            run_key = key
+            run_last_idx = i
+        elif entries[i].get("content", "").strip():
+            flush()
+    flush()
+
+    number_by_idx: Dict[int, int] = {}
+    sources_by_key: "OrderedDict[str, Dict[str, Any]]" = OrderedDict()
+    next_number = 1
+    for i in sorted(show_cite_at):
+        primary = primary_by_idx[i]
+        key = _citation_source_key(primary)
+        number_by_idx[i] = next_number
+        next_number += 1
+        bucket = sources_by_key.setdefault(key, {"primary": primary, "numbers": []})
+        bucket["numbers"].append(number_by_idx[i])
+
+    return number_by_idx, sources_by_key
+
+
+def _docx_add_citation_marker(paragraph, number: int) -> None:
+    run = paragraph.add_run(str(number))
+    run.font.superscript = True
+
+
+def _docx_add_sources_section(doc, sources_by_key: Dict[str, Dict[str, Any]]) -> None:
+    if not sources_by_key:
+        return
+    doc.add_heading("Sources", level=1)
+    for info in sources_by_key.values():
+        primary = info["primary"]
+        label = ", ".join(str(n) for n in info["numbers"])
+        title = primary.get("article_title") or "Untitled"
+        meta_bits = [b for b in (primary.get("article_author"), primary.get("article_date")) if b]
+        meta = f" ({', '.join(meta_bits)})" if meta_bits else ""
+        p = doc.add_paragraph(style="List Number")
+        p.add_run(f"[{label}] ").bold = True
+        p.add_run(f"{title}{meta}")
+        if primary.get("passage_text"):
+            doc.add_paragraph(primary["passage_text"], style="Intense Quote")
+
+
+def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]] = None) -> bytes:
+    """Render beat-book Markdown to .docx bytes. When `entries` (the
+    citation-matcher's per-sentence entry list, from `{stem}.json`) is given,
+    cited sentences get a superscript marker and a "Sources" section is
+    appended — mirroring the web Reader's footnotes. Without it, renders the
+    same as plain Markdown-to-docx always has."""
+    from docx import Document
+
+    if entries is None:
+        entries = [{"content": line, "passthrough": True, "supports": []}
+                   for line in markdown_text.split("\n")]
+
+    number_by_idx, sources_by_key = _citation_numbering(entries)
+
+    doc = Document()
+    in_code = False
+    current_p = None   # open paragraph accumulating consecutive prose sentences
+
+    for i, entry in enumerate(entries):
+        line = entry.get("content", "").rstrip()
+        stripped = line.strip()
+        is_passthrough = entry.get("passthrough", True)
+
+        if not is_passthrough:
+            if current_p is None:
+                current_p = doc.add_paragraph()
+            else:
+                current_p.add_run(" ")
+            _docx_add_inline(current_p, stripped)
+            if i in number_by_idx:
+                _docx_add_citation_marker(current_p, number_by_idx[i])
+            continue
+
+        current_p = None   # any passthrough line ends the open prose paragraph
+
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            doc.add_paragraph(line, style="No Spacing")
+            continue
+        if not stripped:
+            continue
+        if re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):   # horizontal rule
+            continue
+
+        heading = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if heading:
+            level = min(len(heading.group(1)), 4)
+            p = doc.add_heading(level=level)
+            _docx_add_inline(p, heading.group(2))
+            continue
+
+        if stripped.startswith(">"):
+            p = doc.add_paragraph(style="Intense Quote")
+            _docx_add_inline(p, stripped.lstrip("> ").rstrip())
+            continue
+
+        bullet = re.match(r"^[-*+]\s+(.*)$", stripped)
+        if bullet:
+            p = doc.add_paragraph(style="List Bullet")
+            _docx_add_inline(p, bullet.group(1))
+            continue
+
+        numbered = re.match(r"^\d+[.)]\s+(.*)$", stripped)
+        if numbered:
+            p = doc.add_paragraph(style="List Number")
+            _docx_add_inline(p, numbered.group(1))
+            continue
+
+        if stripped.startswith("|") and stripped.endswith("|"):
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if all(re.fullmatch(r":?-{2,}:?", c or "-") for c in cells):
+                continue   # table separator row
+            p = doc.add_paragraph()
+            _docx_add_inline(p, "  |  ".join(cells))
+            continue
+
+        p = doc.add_paragraph()
+        _docx_add_inline(p, stripped)
+
+    _docx_add_sources_section(doc, sources_by_key)
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
 VALID_STYLES = ("narrative", "scannable", "briefing")
 
 
@@ -420,6 +657,7 @@ class CreateBookRequest(BaseModel):
     selected_topics: List[str] = Field(default_factory=list)
     title: Optional[str] = None
     style: str = "narrative"
+    length: str = "standard"        # brief | standard | indepth (see LENGTH_PRESETS)
 
 
 class PatchBookRequest(BaseModel):
@@ -444,6 +682,37 @@ async def get_book_endpoint(book_id: str):
     return JSONResponse(rec)
 
 
+@app.get("/books/{book_id}/docx")
+async def download_book_docx(book_id: str):
+    """Convert the canonical beat-book Markdown to a Word document on demand."""
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    stem = rec.get("stem", "")
+    md_path = OUTPUT_DIR / f"{stem}.md"
+    if not md_path.exists():
+        return JSONResponse(
+            {"error": "This beat book isn't ready to download yet."}, status_code=409)
+    entries = None
+    citations_path = OUTPUT_DIR / f"{stem}.json"
+    if citations_path.exists():
+        try:
+            entries = json.loads(citations_path.read_text(encoding="utf-8")).get("entries")
+        except Exception:
+            entries = None
+    try:
+        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"), entries)
+    except Exception as e:
+        return JSONResponse(
+            {"error": f"Could not build the Word document: {type(e).__name__}: {e}"},
+            status_code=500)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{stem}.docx"'},
+    )
+
+
 @app.post("/books")
 async def create_book_endpoint(body: CreateBookRequest):
     """Enqueue a beat book for background generation. Returns immediately with a
@@ -456,6 +725,7 @@ async def create_book_endpoint(body: CreateBookRequest):
         )
     pr = sess.pipeline_result
     style = body.style if body.style in VALID_STYLES else "narrative"
+    target_words = LENGTH_PRESETS.get(body.length, DEFAULT_TARGET_WORDS)
 
     valid = set(pr.topics.keys())
     selected = [t for t in body.selected_topics if t in valid]
@@ -476,7 +746,7 @@ async def create_book_endpoint(body: CreateBookRequest):
         style=style,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, embed_model=sess.embed_model)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, target_words=target_words, embed_model=sess.embed_model)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])

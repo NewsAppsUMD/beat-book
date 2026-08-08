@@ -63,6 +63,7 @@ class BookJob:
     pipeline_result: Any = None              # PipelineResult; nulled after run
     selected_topics: List[str] = field(default_factory=list)
     style: str = "narrative"
+    target_words: int = 2000
     embed_model: Optional[str] = None
     status: str = "queued"
     events: List[dict] = field(default_factory=list)
@@ -114,6 +115,7 @@ async def run_generation(
     anthropic_key: str,
     embed_client=None,
     style: str = "narrative",
+    target_words: int = 2000,
     chat_provider: Optional[ChatProvider] = None,
 ) -> None:
     """Run one beat book end to end. Never raises — terminal state is recorded
@@ -144,8 +146,11 @@ async def run_generation(
     async def on_heartbeat():
         await emit({"type": "heartbeat"})
 
-    async def on_tool_status(tool_name: str, tool_desc: str, detail: str):
-        await emit({"type": "tool_status", "tool_name": tool_name, "tool": tool_desc, "detail": detail})
+    async def on_tool_status(tool_name: str, tool_desc: str, detail: str, story_count: int = 0):
+        await emit({
+            "type": "tool_status", "tool_name": tool_name, "tool": tool_desc,
+            "detail": detail, "story_count": story_count,
+        })
 
     async def on_agent_progress(pct: float, label: str):
         await emit({"type": "agent_progress", "pct": pct, "label": label})
@@ -223,6 +228,8 @@ async def run_generation(
         # 5. Citation matching (OpenAI embeddings). If unavailable, the book is
         #    still usable as raw markdown — mark ready and deliver it.
         if embed_client is None:
+            print("[jobs] embed_client is None — skipping citation matching "
+                  "(see the traceback near job start, if any, for why construction failed)", flush=True)
             await emit({"type": "error",
                         "text": "Embedding provider not configured; skipping citation matching."})
             _finish_ready()
@@ -246,11 +253,19 @@ async def run_generation(
                     "fraction": 0.0, "detail": "Embedding source passages…"})
 
         future = loop.run_in_executor(None, run_matcher)
+        last_sent = loop.time()
         while not future.done():
             try:
                 msg = cpq.get_nowait()
                 await emit({"type": "citation_progress", **msg})
+                last_sent = loop.time()
             except _queue.Empty:
+                # A slow embedding batch (e.g. local CPU-bound Ollama) can
+                # leave the queue empty for a long stretch; without bytes
+                # flowing, a proxy can treat the WebSocket as dead.
+                if loop.time() - last_sent > 10:
+                    await on_heartbeat()
+                    last_sent = loop.time()
                 await asyncio.sleep(0.15)
         while not cpq.empty():
             msg = cpq.get_nowait()
@@ -259,6 +274,7 @@ async def run_generation(
         try:
             entries, sources = future.result()
         except Exception as e:
+            traceback.print_exc()
             await emit({"type": "error",
                         "text": f"Citation matching failed: {e}. The raw Markdown is still available."})
             _finish_ready()
@@ -290,6 +306,7 @@ async def run_generation(
             on_exploration_done=on_exploration_done,
             selected_topics=selected_topics,
             style=style,
+            target_words=target_words,
         )
     except Exception as e:
         traceback.print_exc()
@@ -339,6 +356,7 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
                     book_id, job.pipeline_result, job.selected_topics,
                     emit, anthropic_key, embed_clt,
                     style=job.style,
+                    target_words=job.target_words,
                     chat_provider=chat_pvd,
                 )
             except Exception:

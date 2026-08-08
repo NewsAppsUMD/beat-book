@@ -375,6 +375,9 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 0.4rem;
 }
+.embed-model-selector[hidden] {
+  display: none;
+}
 .embed-model-label {
   font-size: 1rem;
   font-weight: 700;
@@ -393,6 +396,10 @@ a:hover { text-decoration: underline; }
 .embed-model-select:focus {
   border-color: var(--accent);
   outline: none;
+}
+.embed-model-select:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 /* ── Style selector (topic screen) ────────────────────────────────────── */
@@ -1031,23 +1038,6 @@ a:focus-visible {
   flex-wrap: wrap;
 }
 
-.confidence-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.15rem 0.55rem;
-  border-radius: 999px;
-  background: var(--bg-muted);
-  border: 1px solid var(--border);
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-size: 0.68rem;
-}
-
-.confidence-chip.high { color: var(--success); border-color: var(--success); background: var(--success-soft); }
-.confidence-chip.low { color: var(--danger); border-color: var(--danger); background: var(--bg-muted); }
-
 .preview-reasoning { color: var(--text-faint); flex: 1; min-width: 12rem; }
 
 /* Excluded sources */
@@ -1081,13 +1071,7 @@ a:focus-visible {
   white-space: nowrap;
 }
 
-/* Rows or source cards hidden by the confidence filter. */
-.preview-story.filtered-out,
-.preview-source.filtered-out {
-  display: none;
-}
-
-/* ── Sticky preview toolbar (filters + actions + progress) ─────────────── */
+/* ── Sticky preview toolbar (actions + progress) ─────────────── */
 .preview-toolbar {
   position: sticky;
   top: 0;                       /* sticks to the top of the create-view scroll */
@@ -1121,72 +1105,6 @@ a:focus-visible {
   display: flex;
   align-items: center;
   gap: 0.85rem;
-}
-
-.preview-filters {
-  display: flex;
-  gap: 0.45rem;
-  align-items: center;
-}
-
-.confidence-filter {
-  font-family: var(--sans);
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  padding: 0.32rem 0.7rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text-muted);
-  font-size: 0.78rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 120ms, border-color 120ms, color 120ms, opacity 120ms;
-}
-
-.confidence-filter:hover {
-  background: var(--bg-muted);
-}
-
-.confidence-filter:not(.active) {
-  opacity: 0.55;
-  background: var(--bg-muted);
-}
-
-.confidence-filter.active.high {
-  color: var(--success);
-  border-color: var(--success);
-  background: var(--bg-muted);
-}
-
-.confidence-filter.active.medium {
-  color: var(--text);
-  border-color: var(--border-strong);
-  background: var(--surface);
-}
-
-.confidence-filter.active.low {
-  color: var(--danger);
-  border-color: var(--danger);
-  background: var(--bg-muted);
-}
-
-.confidence-filter .filter-count {
-  font-variant-numeric: tabular-nums;
-  font-size: 0.72rem;
-  padding: 0.05rem 0.42rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  min-width: 1.4rem;
-  text-align: center;
-}
-
-.confidence-filter.active .filter-count {
-  background: var(--surface);
-  color: var(--text);
 }
 
 .preview-toolbar-progress {
@@ -1668,6 +1586,27 @@ a:focus-visible {
 }
 .reader-back svg { width: 18px; height: 18px; }
 .reader-back:hover { background: var(--bg-muted); color: var(--text); }
+
+.reader-download {
+  margin-left: auto;             /* push to the right edge of the subheader */
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  padding: 0.3rem 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-family: var(--sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+}
+.reader-download svg { width: 15px; height: 15px; }
+.reader-download:hover { background: var(--bg-muted); color: var(--text); border-color: var(--text-faint); }
+.reader-download[hidden] { display: none; }
 
 .reader-title {
   font-family: var(--serif);

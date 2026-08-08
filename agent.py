@@ -170,17 +170,33 @@ _DOC_STRUCTURE = """\
 Structure the beat book as follows.
 
 Open with a **Beat Overview** of two or three paragraphs explaining what the \
-beat covers and why it matters. Move into **Key Topics & Themes**, organized \
+beat covers, the main institutions and processes involved, and the current \
+state of play. Ground it in specifics — the actual bills, agencies, disputes, \
+and time period in the corpus — rather than a thesis about the beat's \
+significance. State why the beat matters in plain, factual terms; do not \
+dramatize it. Move into **Key Topics & Themes**, organized \
 around the topics the reporter selected; each topic describes who is doing \
 what, what is at stake, and the recurring tension or arc in the coverage. \
 Cover **Key Sources & Players** — the people, organizations, and \
-institutions that appear repeatedly — explaining their role and how they \
-tend to surface. Include **Story Ideas & Angles** — a short numbered list, \
-introduced with a sentence or two framing the gap in coverage. Provide \
-**Background & Context**: the history, policy, and institutional knowledge \
-a new reporter would need. End with **Reporting Tips** (practical advice \
-specific to this beat, not generic journalism advice) and a **Calendar & \
-Recurring Events** section.\
+institutions the coverage is ABOUT: officials, spokespeople, affected \
+parties, experts quoted on the substance, institutions taking action — \
+explaining their role and how they tend to surface. Do NOT include the \
+journalists or columnists who wrote the source stories themselves (their \
+bylines) — a byline appearing repeatedly across the corpus means one \
+reporter covers this beat often, not that they're a source or player in the \
+story. A journalist belongs here only if the coverage is actually about \
+them as a newsmaker (e.g. a reporter who is also a named party in a lawsuit \
+the beat covers) — covering the beat doesn't qualify. Include **Story Ideas \
+& Angles** — frame this as what still \
+needs follow-up and how a reporter might pursue it: the open questions the \
+coverage hasn't answered, the threads worth pulling, and practical next moves \
+(who to interview, what records or datasets to compare, which patterns to \
+test). Suggest approaches and angles — you are writing for a working reporter \
+who knows the craft, so do NOT dictate rote tasks or spell out obvious \
+mechanics (no "pull every docket number"). Provide **Background & Context**: \
+the history, policy, and institutional knowledge a new reporter would need. \
+End with **Reporting Tips** (practical advice specific to this beat, not \
+generic journalism advice) and a **Calendar & Recurring Events** section.\
 """
 
 _NO_TOC = """\
@@ -202,10 +218,16 @@ of story ideas, a calendar. Do NOT create per-topic sub-headers like \
 structure. Write complete sentences with concrete subjects and verbs ("The \
 school board voted 6-1 last March to raise property taxes" — not "School \
 board: 6-1 vote, March, property tax increase"). Reference actual stories, \
-names, and details from the corpus, not generic advice. The result should \
-read like a piece of journalism about the beat, useful enough that a \
-brand-new reporter could pick it up and start producing informed coverage \
-the same day.\
+names, and details from the corpus, not generic advice. Keep the register \
+plain and workmanlike. Avoid grand framing and dramatic metaphor — no "sits \
+at the intersection of," no "gravitational pull," no "hangs over every \
+vote," no pronouncements about what "understanding this beat means." Open \
+paragraphs with concrete facts, not sweeping thesis statements about \
+significance or scale. The prose can have voice, but it should inform \
+rather than build drama. The result should read like a veteran reporter's \
+guide to the fundamentals of the beat — clear, grounded, and useful enough \
+that a brand-new reporter could pick it up and start producing informed \
+coverage the same day.\
 """,
 
     "scannable": """\
@@ -237,10 +259,47 @@ reporter walking out the door.\
 
 VALID_STYLES = list(STYLE_PRESETS.keys())
 
+# ── Length control ───────────────────────────────────────────────────────────
+# Named length presets → approximate total word target. The chosen target is
+# injected into the doc spec as a hard-ish budget and also scales the final
+# write's max_tokens so a shorter book is both requested and cheaper/faster.
+DEFAULT_TARGET_WORDS = 2000
+LENGTH_PRESETS = {
+    "brief": 1000,
+    "standard": 2000,
+    "indepth": 3500,
+}
 
-def _build_doc_spec(style: str = "narrative") -> str:
+
+def _clamp_target_words(target_words: int | None) -> int:
+    if not target_words or target_words <= 0:
+        return DEFAULT_TARGET_WORDS
+    # Keep within sane bounds regardless of caller input.
+    return max(500, min(6000, int(target_words)))
+
+
+def _length_directive(target_words: int) -> str:
+    return (
+        f"**Length.** Aim for roughly {target_words:,} words across the whole "
+        f"document — treat this as a target to hit, not a floor to exceed. Be "
+        f"concise: cover the beat well within that budget rather than exhausting "
+        f"every detail, and if the corpus is thin it is fine to come in under. "
+        f"Prioritize what a reporter most needs and cut anything that reads as "
+        f"filler."
+    )
+
+
+def _final_max_tokens(target_words: int) -> int:
+    """Scale the final-write token ceiling to the word target (~1.5 tok/word)
+    plus headroom for markdown and mild overrun."""
+    return max(2048, min(12000, int(target_words * 2.2) + 800))
+
+
+def _build_doc_spec(style: str = "narrative",
+                    target_words: int = DEFAULT_TARGET_WORDS) -> str:
     style_text = STYLE_PRESETS.get(style, STYLE_PRESETS["narrative"])
-    return f"{_DOC_STRUCTURE}\n\n{style_text}\n\n{_NO_TOC}"
+    length_text = _length_directive(target_words)
+    return f"{_DOC_STRUCTURE}\n\n{length_text}\n\n{style_text}\n\n{_NO_TOC}"
 
 
 # ── System prompt templates ────────────────────────────────────────────────
@@ -290,11 +349,13 @@ acknowledgement, no tool calls. Start directly with the title (`# ...`).
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _target_for_topic(topic_size: int) -> int:
-    """Per-topic minimum read count: every story if the topic has fewer than
-    15, otherwise half (rounded up), capped at 25."""
-    if topic_size < 15:
+    """Per-topic minimum read count. Deliberately light — the agent only needs
+    enough grounding to write, not to read the whole corpus. Read every story
+    for small topics (<8), otherwise a third (rounded up), capped at 10. This
+    keeps the exploration phase to far fewer LLM turns."""
+    if topic_size < 8:
         return topic_size
-    return min(25, (topic_size + 1) // 2)
+    return min(10, (topic_size + 2) // 3)
 
 
 def _derive_filename(pipeline_result: PipelineResult) -> str:
@@ -421,8 +482,10 @@ def execute_local_tool(name: str, input_data: dict, result: PipelineResult) -> s
 
 # Type for the callback that sends agent text messages to the frontend
 MessageCallback   = Callable[[str], Awaitable[None]]
-# Type for the callback that reports tool execution status
-ToolStatusCallback = Callable[[str, str, str], Awaitable[None]]
+# Type for the callback that reports tool execution status. The final `int`
+# is the number of distinct stories this call covers (0 when not applicable),
+# so callers can track real corpus coverage instead of raw call counts.
+ToolStatusCallback = Callable[[str, str, str, int], Awaitable[None]]
 
 
 # Human-friendly descriptions for each tool
@@ -483,6 +546,7 @@ async def run_agent(
     on_exploration_done: Callable[[str], Awaitable[None]] = None,
     selected_topics: list[str] | None = None,
     style: str = "narrative",
+    target_words: int = DEFAULT_TARGET_WORDS,
 ) -> None:
     """
     Run the agent loop.
@@ -492,11 +556,15 @@ async def run_agent(
         provider: ChatProvider instance (Anthropic or Ollama).
         on_message: async callback(text) — sends agent text to the frontend.
         on_beat_book: async callback(filename, markdown) — saves/delivers the beat book.
-        on_tool_status: async callback(tool_name, detail) — reports tool execution status.
+        on_tool_status: async callback(tool_name, desc, detail, story_count) — reports
+            tool execution status; story_count is the number of distinct stories the
+            call covers (0 when not applicable).
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
     """
-    doc_spec = _build_doc_spec(style)
+    target_words = _clamp_target_words(target_words)
+    final_max_tokens = _final_max_tokens(target_words)
+    doc_spec = _build_doc_spec(style, target_words)
     system_prompt = _EXPLORE_TEMPLATE.format(doc_spec=doc_spec)
     write_system_prompt = _WRITE_TEMPLATE.format(doc_spec=doc_spec)
 
@@ -591,6 +659,7 @@ async def run_agent(
                     "generate_beat_book",
                     "Writing the beat book",
                     "Drafting the full Markdown — this takes 1–3 minutes…",
+                    0,
                 )
             if on_agent_progress:
                 await on_agent_progress(100, "Writing the beat book")
@@ -622,7 +691,7 @@ async def run_agent(
                     ]
                     request_kwargs = dict(
                         model=provider.agent_model,
-                        max_tokens=MAX_TOKENS_FINAL_GENERATE,
+                        max_tokens=final_max_tokens,
                         system=write_system_prompt,
                         tools=TOOLS,
                         tool_choice={"type": "none"},
@@ -762,15 +831,21 @@ async def run_agent(
             if on_tool_status:
                 desc = TOOL_DESCRIPTIONS.get(tool_name, tool_name)
                 detail = ""
-                if tool_name in ("list_stories_in_topic", "read_stories_in_topic"):
+                story_count = 0
+                if tool_name == "read_stories_in_topic":
+                    topic = tool_input.get("topic", "")
+                    detail = topic
+                    story_count = len(pipeline_result.topics.get(topic, []))
+                elif tool_name == "list_stories_in_topic":
                     detail = tool_input.get("topic", "")
                 elif tool_name == "read_story":
                     idx = tool_input.get("index", "")
                     story = pipeline_result.get_story(idx) if isinstance(idx, int) else None
                     detail = story.get("title", f"#{idx}")[:60] if story else f"#{idx}"
+                    story_count = 1
                 elif tool_name == "search_stories":
                     detail = tool_input.get("query", "")
-                await on_tool_status(tool_name, desc, detail)
+                await on_tool_status(tool_name, desc, detail, story_count)
 
             if tool_name == "generate_beat_book":
                 progress, threshold_met = _progress_report(

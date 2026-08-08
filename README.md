@@ -10,11 +10,14 @@ Originally built around [Chicago Public Media](https://chicago.suntimes.com/) st
 
 ## Setup & Running
 
+> **Running this in a class?** See [docs/student-guide.md](docs/student-guide.md) for the GitHub Codespaces path — no local install required, with a choice of Anthropic+OpenAI (fully hosted) or Anthropic+Ollama (Ollama Cloud chat, local embeddings) setups. First-time Codespace creation takes about 10 minutes either way, since it also installs Ollama and downloads a local embedding model. Instructors, see [docs/instructor-checklist.md](docs/instructor-checklist.md).
+
 ### Prerequisites
 
 - **Python 3.11–3.13.** (3.14 is not yet recommended — `umap-learn`'s `numba`/`llvmlite` dependency has no prebuilt wheels for it and must compile from source, which often fails.)
 - An [OpenAI API key](https://platform.openai.com/api-keys) — used for embeddings (`text-embedding-3-small`) unless you switch to Ollama embeddings. (Anthropic has no embedding API.)
 - An [Anthropic API key](https://console.anthropic.com/) — used for the web-research agent (`claude-opus-4-7`) and OCR. Also used for story normalization, cluster labeling, and the beat-book writing agent when running the default Anthropic chat provider.
+- *(Optional)* A [Firecrawl API key](https://firecrawl.dev) — when set, PDFs and pasted URLs are parsed/scraped via Firecrawl (native + scanned PDFs and JS-rendered pages handled uniformly). Without it, the app falls back to local PyMuPDF + Haiku-vision OCR for PDFs and an SSRF-protected `httpx` fetch for URLs, so a Firecrawl account is not required.
 
 Both API providers can be partially or fully replaced by [Ollama](#using-ollama) for local/private inference.
 
@@ -38,6 +41,10 @@ Create a `.env` file in the project root (see `.env.example`):
 ```
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
+
+# Optional — enables Firecrawl for PDF parsing and URL scraping.
+# Without it, PDFs use local PyMuPDF + Haiku-vision OCR and URLs use httpx.
+# FIRECRAWL_API_KEY=fc-...
 
 # Optional — extended thinking on Claude Sonnet 4.6 (slower, higher quality).
 # Default: off. Ignored by the ingest normalization step, which forces
@@ -193,7 +200,7 @@ When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the 
 2. **Review stories** — The server extracts text from each source and asks Claude Haiku 4.5 to identify the distinct news stories, splitting multi-story documents and inferring missing metadata. You review the detected stories on the preview screen and can edit titles/dates/authors/type or deselect anything.
 3. **Analyze** — Each confirmed story runs through an NLP pipeline: embed (OpenAI `text-embedding-3-small`), reduce dimensions (UMAP), cluster into topics at two granularities (HDBSCAN), and label each cluster with an LLM.
 4. **Choose topics** — Pick the topics to cover. The writing agent focuses only on what you select.
-5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft while a second research agent (Claude Opus 4.7) enriches it with public-web research; the two are merged and every claim is matched back to a source sentence. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
+5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft while a second research agent (Claude Sonnet 4.6) enriches it with public-web research; the two are merged and every claim is matched back to a source sentence. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
 6. **Read** — When it's ready, the book opens in an inline reader with academic-style inline citations; clicking a citation opens the matched source passage in a side panel.
 
 ---
@@ -204,7 +211,7 @@ When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the 
 Browser — single-page app (sidebar + library / create / reader)
     │
     ├── POST /ingest/start ──▶ files + URLs in; stories out (preview JSON)
-    │        └── ingest.py     extract_text(...) → markitdown / stdlib / OCR
+    │        └── ingest.py     extract_text(...) → Firecrawl (PDF/URL) or PyMuPDF+OCR / libs
     │                          normalize(...)    → Claude Haiku 4.5
     │
     ├── POST /process ───────▶ streams SSE pipeline progress; returns a session_id
@@ -213,7 +220,7 @@ Browser — single-page app (sidebar + library / create / reader)
     ├── POST /books ─────────▶ enqueue generation for a session_id + topics
     │        ├── store.py      library.json index (one record per book)
     │        └── jobs.py       single background worker, one book at a time:
-    │                          run_agent (Sonnet 4.6 draft)  ∥  research (Opus 4.7)
+    │                          run_agent (Sonnet 4.6 draft)  ∥  research (Sonnet 4.6)
     │                          → merge → citation_matcher → write output files
     │
     ├── WS  /ws/books/{id} ──▶ reconnectable progress stream (snapshot + replay + live)
@@ -251,22 +258,23 @@ Ingest is a two-stage pipeline that converts any supported source into the `{tit
 
 | Source | How it's handled |
 |--------|------------------|
-| `.docx`, `.doc`, `.pdf`, `.html`, `.pptx`, `.xlsx`, `.csv`, `.rtf`, `.epub` | Converted to markdown via [markitdown](https://github.com/microsoft/markitdown); scanned PDFs fall back to Haiku vision OCR. |
-| `.md`, `.markdown`, `.txt`, `.log` | Read directly as UTF-8 text. |
+| `.pdf` | Parsed via [Firecrawl](https://firecrawl.dev) `parse` when `FIRECRAWL_API_KEY` is set (native and scanned PDFs handled uniformly); otherwise PyMuPDF text extraction, with Haiku-vision OCR as a fallback for scanned pages. |
+| `.docx`, `.doc`, `.pptx`, `.xlsx`, `.html`, `.rtf`, `.epub` | Parsed locally with format-specific libraries (python-docx, python-pptx, openpyxl, BeautifulSoup, striprtf, ebooklib). |
+| `.md`, `.markdown`, `.txt`, `.log`, `.csv` | Read directly as UTF-8 text. |
 | `.json`, RSS/Atom feeds | Parsed and rendered as readable markdown (known wrappers unwrapped). |
-| URLs (`http`/`https`) | Fetched server-side with `httpx`. SSRF-protected — private, loopback, link-local, and unresolvable addresses are refused. |
+| URLs (`http`/`https`) | Scraped via [Firecrawl](https://firecrawl.dev) `scrape` when `FIRECRAWL_API_KEY` is set (main-content extraction, JS rendering); otherwise fetched server-side with `httpx`, SSRF-protected — private, loopback, link-local, and unresolvable addresses are refused. |
 
 **Per-file size cap:** 25 MB. No limit on number of files or URLs per request.
 
 ### Stage 1 — Extract text
 
-`extract_text(filename, raw_bytes) -> str` dispatches on file extension. Office documents and PDFs become markdown via markitdown; scanned PDFs are rendered to PNG (PyMuPDF, 150 DPI) and transcribed by Haiku vision in batches.
+`extract_text(filename, raw_bytes) -> str` dispatches on file extension. PDFs go through Firecrawl's `parse` endpoint (markdown output; handles native and scanned PDFs without a separate OCR path) when `FIRECRAWL_API_KEY` is set — otherwise PyMuPDF extracts native text and scanned pages are rendered to PNG (150 DPI) and transcribed by Haiku vision in batches. Office documents are parsed by format-specific libraries. Text formats are decoded directly; unknown extensions fall back to UTF-8 decoding.
 
 ### Stage 2 — LLM normalization
 
-`normalize(text, source_label, anthropic_key) -> list[Story]` makes a single Claude **Haiku 4.5** call with forced tool-use. The model classifies the document type, decides whether it contains news content (returning a `skip_reason` if not), splits it into distinct stories, and for each one extracts title/date/author/organization, a `content_type` with type-specific `metadata`, a `confidence`, and **character offsets** that the server uses to slice the body verbatim — the LLM never rewrites story content.
+`normalize(text, source_label, anthropic_key) -> list[Story]` makes a single Claude **Haiku 4.5** call with forced tool-use. The model classifies the document type, decides whether it contains news content (returning a `skip_reason` if not), splits it into distinct stories, and for each one extracts title/date/author/organization, a `content_type` with type-specific `metadata`, and **character offsets** that the server uses to slice the body verbatim — the LLM never rewrites story content. When a story has a source link but no explicit publication, the organization is derived from the link's domain (e.g. `chicago.suntimes.com` → "Chicago Sun-Times"). Each story's language is also detected locally (via [langdetect](https://github.com/Mimino666/langdetect)) and shown as a `language` field.
 
-The preview groups detected stories by source with confidence chips; you can edit metadata, filter by confidence, deselect stories, then run the pipeline.
+The preview groups detected stories by source; you can edit metadata (including the detected organization and language), deselect stories, then run the pipeline.
 
 ---
 
@@ -336,7 +344,7 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 3. It calls `generate_beat_book` with a complete Markdown document — which is gated until the read targets are met, pushing the agent to actually ground itself in the corpus.
 
 - **Models:** `claude-sonnet-4-6` for writing; `claude-haiku-4-5` for the lightweight coverage-exploration pass.
-- After the draft, the **research agent** (`research_agent.py`, Claude Opus 4.7) runs in a sandbox with bash + text-editor tools to enrich the draft with public-web research; its additions are merged onto the draft.
+- After the draft, the **research agent** (`research_agent.py`, Claude Sonnet 4.6) runs in a sandbox with bash + text-editor tools to enrich the draft with public-web research; its additions are merged onto the draft.
 - Finally `citation_matcher.py` embeds source passages and beat-book sentences (OpenAI) and matches each claim back to its source, producing the `<stem>.json` + `<stem>_sources.json` the reader uses.
 
 ---
@@ -356,14 +364,15 @@ The reader renders a finished book inline in the main panel. It loads `/output/<
 | Component | Technology | Purpose |
 |-----------|-----------|---------|
 | **Web server** | [FastAPI](https://fastapi.tiangolo.com/) + [Uvicorn](https://www.uvicorn.org/) | Async HTTP + WebSocket server |
-| **File extraction** | [markitdown](https://github.com/microsoft/markitdown), [PyMuPDF](https://pymupdf.readthedocs.io/) | docx/pdf/html/pptx/xlsx/rtf → markdown; PDF render for OCR |
-| **Feeds & URLs** | [feedparser](https://feedparser.readthedocs.io/), [httpx](https://www.python-httpx.org/) | RSS/Atom parsing; SSRF-protected URL fetch |
+| **PDF parsing & URL scraping (preferred)** | [Firecrawl](https://firecrawl.dev) | Parse PDFs (native + scanned) and scrape URLs to markdown when `FIRECRAWL_API_KEY` is set |
+| **File extraction (fallback + office)** | [PyMuPDF](https://pymupdf.readthedocs.io/), python-docx, python-pptx, openpyxl, BeautifulSoup, striprtf, ebooklib | Local PDF text + OCR page render; docx/pptx/xlsx/html/rtf/epub → text |
+| **Feeds & URL fetch (fallback)** | [feedparser](https://feedparser.readthedocs.io/), [httpx](https://www.python-httpx.org/) | RSS/Atom parsing; SSRF-protected URL fetch |
 | **Normalization & labeling** | [Anthropic API](https://docs.claude.com/) (`claude-haiku-4-5`) | Split documents into stories; label topic clusters |
 | **Embeddings** | [OpenAI API](https://platform.openai.com/docs/guides/embeddings) (`text-embedding-3-small`) | 1536-d vectors for clustering and citation matching |
 | **Dimensionality reduction** | [UMAP](https://umap-learn.readthedocs.io/) | Project embeddings for clustering |
 | **Clustering** | [HDBSCAN](https://hdbscan.readthedocs.io/) | Density-based topic discovery at two granularities |
 | **Writing agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Tool-using agent that writes the beat book |
-| **Research agent** | [Anthropic API](https://docs.claude.com/) (`claude-opus-4-7`) | Sandboxed public-web research over the draft |
+| **Research agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Sandboxed public-web research over the draft |
 | **Numerical** | [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [scikit-learn](https://scikit-learn.org/) | Vector math, distances, preprocessing |
 | **Frontend** | Vanilla HTML/CSS/JS | No-framework single-page app |
 

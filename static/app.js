@@ -31,8 +31,6 @@
   const previewProgressStep   = $("preview-progress-step");
   const previewProgressBar    = $("preview-progress-bar");
   const previewProgressDetail = $("preview-progress-detail");
-  const filterChips     = document.querySelectorAll(".confidence-filter");
-  const filterCountEls  = { high: $("filter-count-high"), medium: $("filter-count-medium"), low: $("filter-count-low") };
 
   const generatingLabel   = $("generating-label");
   const generatingDetail  = $("generating-detail");
@@ -69,7 +67,6 @@
   let working = false;                // client-bound phases only (ingest/process)
   let pollTimer = null;
   let elapsedTimer = null, elapsedStart = null;
-  const confidenceFilter = { high: true, medium: true, low: true };
   const MAX_FILE_BYTES = 25 * 1024 * 1024;
   let embedConfig = null;  // fetched from /api/embed-config
 
@@ -211,7 +208,7 @@
     if (!b || b.status !== "ready" || !b.stem) return;
     currentBookId = id;
     showView("reader");
-    window.Reader.open(b.stem, { title: b.title });
+    window.Reader.open(b.stem, { title: b.title, id });
     if (isUnread(b)) {
       b.opened_at = Date.now() / 1000;       // optimistic
       renderSidebar(); renderLibrary();
@@ -303,7 +300,7 @@
           break;
         case "tool_status":
           if (drive) {
-            bumpStats(msg.tool_name);
+            bumpStats(msg.tool_name, msg.story_count);
             if (msg.tool_name === "generate_beat_book") { setStage("write"); setGenerating("Writing beat book", formatToolDetail(msg)); }
             else { setGenerating("Reviewing coverage", formatToolDetail(msg)); }
           }
@@ -422,8 +419,6 @@
     previewSources.innerHTML = ""; previewExcluded.innerHTML = ""; previewExcluded.hidden = true;
     if (generatingActions) generatingActions.hidden = true;
     resetStats(); stopElapsed();
-    confidenceFilter.high = confidenceFilter.medium = confidenceFilter.low = true;
-    filterChips.forEach(c => { c.classList.add("active"); c.setAttribute("aria-pressed", "true"); });
   }
 
   function newBook() {
@@ -576,8 +571,8 @@
       skip_reason: src.skip_reason, extract_error: src.extract_error, char_count: src.char_count,
       stories: (src.stories || []).map(s => ({
         title: s.title || "", date: s.date || "", author: s.author || "", organization: s.organization || "",
-        link: s.link || "", content: s.content || "", content_type: s.content_type || "article",
-        metadata: s.metadata || {}, confidence: s.confidence || "medium", reasoning: s.reasoning || "", included: true,
+        language: s.language || "", link: s.link || "", content: s.content || "", content_type: s.content_type || "article",
+        metadata: s.metadata || {}, reasoning: s.reasoning || "", included: true,
       })),
     }));
 
@@ -613,13 +608,12 @@
       previewSources.appendChild(card);
     });
 
-    refreshIncludedCount(); updateConfidenceCounts(); applyConfidenceFilter();
+    refreshIncludedCount();
   }
 
   function buildStoryRow(srcIdx, storyIdx, story) {
     const row = document.createElement("div");
     row.className = "preview-story";
-    row.dataset.confidence = (story.confidence || "medium").toLowerCase();
     if (!story.included) row.classList.add("excluded");
 
     const topRow = document.createElement("div");
@@ -646,6 +640,9 @@
     r2.appendChild(buildField("Date", "date", story.date, "", srcIdx, storyIdx, "YYYY-MM-DD"));
     r2.appendChild(buildField("Author", "author", story.author, "", srcIdx, storyIdx, "Byline / individual"));
     fields.appendChild(r2);
+    const r3 = document.createElement("div"); r3.className = "preview-story-fields-row";
+    r3.appendChild(buildField("Language", "language", story.language, "", srcIdx, storyIdx, "Language (detected)"));
+    fields.appendChild(r3);
     topRow.appendChild(fields);
     row.appendChild(topRow);
 
@@ -657,10 +654,6 @@
 
     const foot = document.createElement("div");
     foot.className = "preview-story-foot";
-    const chip = document.createElement("span");
-    chip.className = `confidence-chip ${story.confidence}`;
-    chip.textContent = `${story.confidence} confidence`;
-    foot.appendChild(chip);
     if (story.reasoning) { const r = document.createElement("span"); r.className = "preview-reasoning"; r.textContent = story.reasoning; foot.appendChild(r); }
     const meta = story.metadata || {};
     const metaKeys = Object.keys(meta).filter(k => meta[k] !== null && meta[k] !== "");
@@ -699,22 +692,6 @@
     previewIncluded.textContent = total === 0 ? "Nothing selected" : `${total} ${total === 1 ? "item" : "items"} selected`;
     previewRunBtn.disabled = total === 0;
   }
-  function updateConfidenceCounts() {
-    const counts = { high: 0, medium: 0, low: 0 };
-    for (const src of previewState) { if (src.excluded) continue; for (const s of src.stories) { const lvl = (s.confidence || "medium").toLowerCase(); if (lvl in counts) counts[lvl]++; } }
-    for (const lvl of Object.keys(counts)) if (filterCountEls[lvl]) filterCountEls[lvl].textContent = counts[lvl];
-  }
-  function applyConfidenceFilter() {
-    document.querySelectorAll(".preview-story").forEach(row => row.classList.toggle("filtered-out", !confidenceFilter[row.dataset.confidence || "medium"]));
-    document.querySelectorAll(".preview-source").forEach(card => card.classList.toggle("filtered-out", !card.querySelector(".preview-story:not(.filtered-out)")));
-  }
-  filterChips.forEach(chip => chip.addEventListener("click", () => {
-    const level = chip.dataset.level;
-    confidenceFilter[level] = !confidenceFilter[level];
-    chip.classList.toggle("active", confidenceFilter[level]);
-    chip.setAttribute("aria-pressed", String(confidenceFilter[level]));
-    applyConfidenceFilter();
-  }));
   previewBackBtn.addEventListener("click", () => { switchScreen("upload"); uploadBtn.disabled = selectedFiles.length === 0 && !urlInput.value.trim(); });
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -815,7 +792,10 @@
 
   document.querySelectorAll(".style-option").forEach(label => {
     label.addEventListener("click", () => {
-      document.querySelectorAll(".style-option").forEach(l => l.classList.remove("selected"));
+      // Scope selection to the sibling group so the style and length
+      // selectors highlight independently.
+      const group = label.closest(".style-options") || document;
+      group.querySelectorAll(".style-option").forEach(l => l.classList.remove("selected"));
       label.classList.add("selected");
     });
   });
@@ -834,7 +814,9 @@
     try {
       const styleRadio = document.querySelector('input[name="style"]:checked');
       const style = styleRadio ? styleRadio.value : "narrative";
-      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style }) });
+      const lengthRadio = document.querySelector('input[name="length"]:checked');
+      const length = lengthRadio ? lengthRadio.value : "standard";
+      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style, length }) });
       const data = await resp.json();
       if (!resp.ok) { setGenerating("Couldn't start", data.error || "Failed to enqueue generation."); setShimmerIndeterminate(); return; }
       setWorking(false);                          // generation is server-side now
@@ -860,8 +842,8 @@
     if (stats.topicsListed) parts.push(plural(stats.topicsListed, "topic", "topics") + " explored");
     generatingStats.innerHTML = parts.map(p => `<span class="chip">${p}</span>`).join("");
   }
-  function bumpStats(toolName) {
-    if (toolName === "read_story" || toolName === "read_stories_in_topic") stats.storiesRead++;
+  function bumpStats(toolName, storyCount) {
+    if (toolName === "read_story" || toolName === "read_stories_in_topic") stats.storiesRead += storyCount || 0;
     else if (toolName === "search_stories") stats.searches++;
     else if (toolName === "list_stories_in_topic") stats.topicsListed++;
     renderStatsChips();
@@ -903,12 +885,21 @@
   // Fetch embedding provider config (shows model selector when Ollama is active)
   fetch("/api/embed-config").then(r => r.json()).then(cfg => {
     embedConfig = cfg;
-    // Only worth showing when there's an actual choice to make — the
-    // OpenAI path always reports exactly one (fixed) model.
-    if (cfg.models && cfg.models.length > 1) {
-      const selector = $("embed-model-selector");
-      const select = $("embed-model-select");
-      select.innerHTML = "";
+    const selector = $("embed-model-selector");
+    const select = $("embed-model-select");
+    select.innerHTML = "";
+    if (cfg.provider === "openai") {
+      // OpenAI has no model choice in this app — show it as a fixed,
+      // non-selectable value rather than hiding the field entirely.
+      const opt = document.createElement("option");
+      opt.value = (cfg.models && cfg.models[0] && cfg.models[0].name) || cfg.default_model || "";
+      opt.textContent = "OpenAI";
+      opt.selected = true;
+      select.appendChild(opt);
+      select.disabled = true;
+      selector.hidden = false;
+    } else if (cfg.models && cfg.models.length > 1) {
+      // Ollama with multiple pulled models — a real choice to make.
       for (const m of cfg.models) {
         const opt = document.createElement("option");
         opt.value = m.name;
@@ -916,6 +907,17 @@
         if (m.name === cfg.default_model) opt.selected = true;
         select.appendChild(opt);
       }
+      select.disabled = false;
+      selector.hidden = false;
+    } else if (cfg.models && cfg.models.length === 1) {
+      // Ollama with exactly one pulled model — nothing to choose, but show
+      // it as a fixed value rather than leaving the selector empty.
+      const opt = document.createElement("option");
+      opt.value = cfg.models[0].name;
+      opt.textContent = cfg.models[0].name;
+      opt.selected = true;
+      select.appendChild(opt);
+      select.disabled = true;
       selector.hidden = false;
     }
   }).catch(() => {});
