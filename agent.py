@@ -208,6 +208,23 @@ into the Beat Overview.\
 
 # ── Style presets ──────────────────────────────────────────────────────────
 
+# Core Simplified Technical English (STE) rules, applied to the styles meant
+# for fast scanning under pressure rather than narrative reading.
+_STE_RULES = """\
+Follow the core rules of Simplified Technical English (STE) in this style: \
+write short sentences, 20 words or fewer, never more than 25, with one idea \
+per sentence. Use active voice and name the actor — "The council voted to \
+cut funding," not "Funding was cut." Choose plain, common words over jargon \
+or elaborate vocabulary; once you pick a term for something, use that exact \
+term every time rather than varying it for style. Avoid long strings of \
+nouns stacked before a noun — write "how the school board voted on the \
+budget," not "school board budget vote outcome." Use simple verb tenses — \
+past for what happened, present for facts and current conditions — and \
+avoid compound or conditional constructions. Keep articles ("a," "the") in \
+place; do not drop them to save words. Avoid idioms, metaphors, and figures \
+of speech.\
+"""
+
 STYLE_PRESETS = {
     "narrative": """\
 **Writing style.** Write in connected prose, the way a senior reporter would \
@@ -239,8 +256,9 @@ watch") are encouraged — they help a reporter scan. Bold key names, \
 organizations, and institutions on first mention. Use complete sentences \
 with concrete subjects and verbs, and reference actual stories, names, and \
 details from the corpus. A reporter should be able to flip to any section \
-and find what they need in seconds.\
-""",
+and find what they need in seconds.
+
+""" + _STE_RULES,
 
     "briefing": """\
 **Writing style.** Write like an editor's desk memo — terse, direct, and \
@@ -253,8 +271,9 @@ The **Background & Context** section should cover only what a reporter \
 needs this week — skip deep history unless it directly informs current \
 coverage. Reference actual stories, names, and details from the corpus. \
 The result should read like a senior editor handing a beat folder to a \
-reporter walking out the door.\
-""",
+reporter walking out the door.
+
+""" + _STE_RULES,
 }
 
 VALID_STYLES = list(STYLE_PRESETS.keys())
