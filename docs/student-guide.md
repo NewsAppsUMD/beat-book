@@ -78,7 +78,7 @@ A popup should appear saying a port was forwarded — click **Open in Browser**.
 ## 5. Build a beat book
 
 1. Click **New Beat Book**.
-2. Add source material — either drag in files (Word, PDF, HTML, etc.) or paste article URLs. For your first run, try one of the NOTUS collections here: https://github.com/NewsAppsUMD/beat_book_work/tree/main/notus - copy the "raw" version of a JSON file and paste it into the URL box.
+2. Add source material — either drag in files (Word, PDF, HTML, etc.) or paste article URLs. For your first run, try one of the NOTUS collections here: https://github.com/NewsAppsUMD/beat_book_work/tree/main/notus - copy the "raw" URL of a JSON file (like [this one](https://raw.githubusercontent.com/NewsAppsUMD/beat_book_work/refs/heads/main/notus/notus_congress.json)) and paste it into the URL box.
 3. Wait for the preview to load, then review the detected stories — you can edit titles/dates/authors or deselect anything that isn't a real story.
 4. Click to run the pipeline (this groups stories into topics).
 5. Pick the topics you want covered and a writing style, then generate. This runs in the background — you can navigate elsewhere in the app while it works, but **keep the browser tab open** (see the note on idle timeouts below).
