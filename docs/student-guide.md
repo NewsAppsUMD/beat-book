@@ -4,7 +4,7 @@ This guide walks you through building your own beat book using GitHub Codespaces
 
 ## 1. Get your copy of the repo
 
-1. Go to the class repository your instructor gave you a link to.
+1. Go to [this repository](https://github.com/NewsAppsUMD/beat-book)
 2. Click the green **Use this template** button (near the top of the page) → **Create a new repository**.
 3. Choose your own GitHub account as the owner, give it a name (e.g. `my-beat-book`), and make sure it's set to **Public** — Codespaces on private repos count against a smaller free-hours quota.
 4. Click **Create repository**. This creates your own personal copy that you can edit freely.
