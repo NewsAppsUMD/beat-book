@@ -29,14 +29,12 @@ from chat_provider import (
 # For Anthropic: explore=Haiku, agent=Sonnet.
 # For Ollama: both use the configured OLLAMA_CHAT_MODEL.
 
-# Generous output cap — beat books can be long. Sonnet 4.6 supports a
-# 1M token context window and up to 128k output tokens; 32k per turn is
-# plenty for a beat-book draft plus a few tool calls.
-MAX_TOKENS_PER_TURN = 32768
-# Tighter cap for the forced final generation turn — keeps Sonnet from
-# spending 5+ minutes filling the buffer. A beat book is ~5-10k words,
-# which is comfortably under 16k tokens of output.
+# Ceiling for the forced final-write turn. _final_max_tokens() scales up to
+# this based on the requested word target.
 MAX_TOKENS_FINAL_GENERATE = 16384
+# If the final write still hits max_tokens after this many continuation
+# rounds, save whatever was produced and warn instead of looping forever.
+MAX_FINAL_CONTINUATIONS = 3
 # Hard cap on any single tool result sent back to the model. Prevents one
 # large read_stories_in_topic call from flooding the context.
 MAX_TOOL_RESULT_CHARS = 60_000
@@ -298,20 +296,21 @@ def _clamp_target_words(target_words: int | None) -> int:
 
 
 def _length_directive(target_words: int) -> str:
+    max_words = int(target_words * 1.3)
     return (
         f"**Length.** Aim for roughly {target_words:,} words across the whole "
         f"document — treat this as a target to hit, not a floor to exceed. Be "
         f"concise: cover the beat well within that budget rather than exhausting "
         f"every detail, and if the corpus is thin it is fine to come in under. "
         f"Prioritize what a reporter most needs and cut anything that reads as "
-        f"filler."
+        f"filler. Do not exceed {max_words:,} words under any circumstances."
     )
 
 
 def _final_max_tokens(target_words: int) -> int:
-    """Scale the final-write token ceiling to the word target (~1.5 tok/word)
-    plus headroom for markdown and mild overrun."""
-    return max(2048, min(12000, int(target_words * 2.2) + 800))
+    """Scale the final-write token ceiling to the word target, with generous
+    headroom so a moderate overrun doesn't truncate the document mid-turn."""
+    return max(4096, min(MAX_TOKENS_FINAL_GENERATE, int(target_words * 3) + 1500))
 
 
 def _build_doc_spec(style: str = "narrative",
@@ -606,6 +605,64 @@ async def run_agent(
                 break
         return await api_task
 
+    async def _call_with_retries(request_kwargs: dict) -> ChatResponse | None:
+        """Call the provider with rate-limit/connection/server-error retries.
+        Returns None (after notifying the user) once retries are exhausted
+        on a rate-limit or connection error; re-raises on a persistent
+        server error. Callers must treat a None return as "stop the agent
+        loop"."""
+        for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+            try:
+                print(f"[agent] turn {_turn}: calling "
+                      f"{request_kwargs['model']} "
+                      f"(force_generate={force_generate}, "
+                      f"max_tokens={request_kwargs['max_tokens']}, "
+                      f"messages={len(request_kwargs['messages'])})", flush=True)
+                response = await _api_call_with_heartbeat(**request_kwargs)
+                print(f"[agent] turn {_turn}: stop_reason={response.stop_reason} "
+                      f"blocks={[b.get('type') for b in response.content]} "
+                      f"usage={response.usage}",
+                      flush=True)
+                return response
+            except ChatRateLimitError as e:
+                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
+                    await on_message(
+                        "⚠️ Rate limit persistently exceeded — please wait "
+                        "a few minutes and start a new session."
+                    )
+                    return None
+                pause = retry_pause(rl_attempt, e)
+                await on_message(
+                    f"⏸ Hit rate limit. Waiting {pause:.0f}s before retrying "
+                    f"(attempt {rl_attempt + 1}/{RATE_LIMIT_MAX_RETRIES})…"
+                )
+                await asyncio.sleep(pause)
+            except ChatConnectionError as e:
+                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
+                    await on_message(
+                        f"⚠️ Connection kept failing ({e}). "
+                        "Please check your network and start a new session."
+                    )
+                    return None
+                pause = min(30.0, 5.0 * (2 ** rl_attempt))
+                await on_message(
+                    f"⏸ Connection error ({e}). "
+                    f"Retrying in {pause:.0f}s "
+                    f"(attempt {rl_attempt + 1}/{RATE_LIMIT_MAX_RETRIES})…"
+                )
+                await asyncio.sleep(pause)
+            except ChatServerError as e:
+                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
+                    raise
+                pause = min(30.0, 5.0 * (2 ** rl_attempt))
+                await on_message(
+                    f"⏸ Server error. Retrying in "
+                    f"{pause:.0f}s (attempt {rl_attempt + 1}/"
+                    f"{RATE_LIMIT_MAX_RETRIES})…"
+                )
+                await asyncio.sleep(pause)
+        return None
+
     # Restrict to reporter-selected topics if provided.
     if selected_topics:
         from dataclasses import replace as _replace
@@ -690,96 +747,74 @@ async def run_agent(
         # WebSocket handler stays responsive. throttle=False: this is the
         # interactive path — it must never queue behind background ingest
         # normalization or cluster labeling (see AnthropicChatProvider.create).
-        response: ChatResponse | None = None
-        for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
-            try:
-                if force_generate:
-                    write_messages = list(messages) + [
-                        {
-                            "role": "user",
-                            "content": (
-                                "Now write the full beat book in Markdown. "
-                                "The exploration phase is over and tools are "
-                                "disabled — the earlier instruction to call "
-                                "tools no longer applies. Reply with ONLY "
-                                "the Markdown document — no preamble, no "
-                                "acknowledgement. Start directly with the "
-                                "title (`# ...`)."
-                            ),
-                        },
-                    ]
-                    request_kwargs = dict(
-                        model=provider.agent_model,
-                        max_tokens=final_max_tokens,
-                        system=write_system_prompt,
-                        tools=TOOLS,
-                        tool_choice={"type": "none"},
-                        messages=write_messages,
-                        think=thinking_enabled(),
-                        throttle=False,
-                    )
-                else:
-                    request_kwargs = dict(
-                        model=provider.explore_model,
-                        max_tokens=4096,
-                        system=system_prompt,
-                        tools=TOOLS,
-                        messages=messages,
-                        throttle=False,
-                    )
-                print(f"[agent] turn {_turn}: calling "
-                      f"{request_kwargs['model']} "
-                      f"(force_generate={force_generate}, "
-                      f"max_tokens={request_kwargs['max_tokens']}, "
-                      f"messages={len(messages)})", flush=True)
-                response = await _api_call_with_heartbeat(**request_kwargs)
-                print(f"[agent] turn {_turn}: stop_reason={response.stop_reason} "
-                      f"blocks={[b.get('type') for b in response.content]} "
-                      f"usage={response.usage}",
-                      flush=True)
-                break
-            except ChatRateLimitError as e:
-                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
-                    await on_message(
-                        "⚠️ Rate limit persistently exceeded — please wait "
-                        "a few minutes and start a new session."
-                    )
-                    return
-                pause = retry_pause(rl_attempt, e)
-                await on_message(
-                    f"⏸ Hit rate limit. Waiting {pause:.0f}s before retrying "
-                    f"(attempt {rl_attempt + 1}/{RATE_LIMIT_MAX_RETRIES})…"
-                )
-                await asyncio.sleep(pause)
-            except ChatConnectionError as e:
-                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
-                    await on_message(
-                        f"⚠️ Connection kept failing ({e}). "
-                        "Please check your network and start a new session."
-                    )
-                    return
-                pause = min(30.0, 5.0 * (2 ** rl_attempt))
-                await on_message(
-                    f"⏸ Connection error ({e}). "
-                    f"Retrying in {pause:.0f}s "
-                    f"(attempt {rl_attempt + 1}/{RATE_LIMIT_MAX_RETRIES})…"
-                )
-                await asyncio.sleep(pause)
-            except ChatServerError as e:
-                if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
-                    raise
-                pause = min(30.0, 5.0 * (2 ** rl_attempt))
-                await on_message(
-                    f"⏸ Server error. Retrying in "
-                    f"{pause:.0f}s (attempt {rl_attempt + 1}/"
-                    f"{RATE_LIMIT_MAX_RETRIES})…"
-                )
-                await asyncio.sleep(pause)
-        assert response is not None  # loop above either sets or returns
-
-        text_combined = response.text.strip()
-
         if force_generate:
+            write_messages = list(messages) + [
+                {
+                    "role": "user",
+                    "content": (
+                        "Now write the full beat book in Markdown. "
+                        "The exploration phase is over and tools are "
+                        "disabled — the earlier instruction to call "
+                        "tools no longer applies. Reply with ONLY "
+                        "the Markdown document — no preamble, no "
+                        "acknowledgement. Start directly with the "
+                        "title (`# ...`)."
+                    ),
+                },
+            ]
+            request_kwargs = dict(
+                model=provider.agent_model,
+                max_tokens=final_max_tokens,
+                system=write_system_prompt,
+                tools=TOOLS,
+                tool_choice={"type": "none"},
+                messages=write_messages,
+                think=thinking_enabled(),
+                throttle=False,
+            )
+            response = await _call_with_retries(request_kwargs)
+            if response is None:
+                return
+
+            # The final write can hit the token ceiling mid-document. Ask the
+            # model to continue rather than silently saving a truncated book.
+            text_parts = [response.text]
+            continuation_round = 0
+            while (response.stop_reason == "max_tokens"
+                   and continuation_round < MAX_FINAL_CONTINUATIONS):
+                continuation_round += 1
+                await on_message(
+                    f"Output hit the token limit — continuing the beat book "
+                    f"(round {continuation_round}/{MAX_FINAL_CONTINUATIONS})…"
+                )
+                write_messages = write_messages + [
+                    {"role": "assistant", "content": response.content},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your response was cut off by the token limit. "
+                            "Continue the Markdown document EXACTLY where it "
+                            "stopped — resume mid-sentence or mid-word if "
+                            "needed, do not repeat any text you already "
+                            "wrote, and do not add any preamble."
+                        ),
+                    },
+                ]
+                request_kwargs = dict(request_kwargs, messages=write_messages)
+                response = await _call_with_retries(request_kwargs)
+                if response is None:
+                    return
+                text_parts.append(response.text)
+
+            text_combined = "".join(text_parts).strip()
+
+            if response.stop_reason == "max_tokens":
+                await on_message(
+                    "⚠️ The model hit its output limit mid-turn even after "
+                    f"{MAX_FINAL_CONTINUATIONS} continuation attempts. The "
+                    "beat book may be incomplete."
+                )
+
             # Final-write turn: the text body IS the beat book.
             if text_combined:
                 await on_beat_book(_derive_filename(pipeline_result), text_combined)
@@ -791,6 +826,20 @@ async def run_agent(
                     "Try again."
                 )
                 break
+
+        request_kwargs = dict(
+            model=provider.explore_model,
+            max_tokens=4096,
+            system=system_prompt,
+            tools=TOOLS,
+            messages=messages,
+            throttle=False,
+        )
+        response = await _call_with_retries(request_kwargs)
+        if response is None:
+            return
+
+        text_combined = response.text.strip()
 
         if text_combined and text_combined != last_message_text:
             await on_message(text_combined)
