@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +38,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from anthropic import Anthropic
 
 import shell_sandbox
+from citation_matcher import _claim_key, _segment_markdown, attributed_sources
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -56,6 +58,9 @@ BASH_TIMEOUT_SECONDS = 30
 WEB_SEARCH_MAX_USES = 6
 WEB_FETCH_MAX_USES = 6
 WEB_FETCH_MAX_CONTENT_TOKENS = 15_000
+# Page text kept per fetched page, in memory only, so jobs.py can check each
+# web-added claim against what the page actually says.
+MAX_PAGE_TEXT_CHARS = 200_000
 
 # Set RESEARCH_BASH=off to withhold the shell tool entirely. The agent then
 # researches with web search/fetch and edits the file with the text editor,
@@ -368,11 +373,12 @@ Guidelines:
 
 - Prefer *integrating* new material into existing sections over appending a \
   new "Web research" section at the bottom.
-- When you add a fact from the web, include a brief inline attribution with \
-  the publication and date (e.g. "(Chicago Tribune, Mar 2026)"). The next \
-  pipeline stage will add formal citations from the reporter's own source \
-  stories — so you do not need to insert Markdown footnotes, but do keep \
-  the inline attribution text short and natural.
+- Every paragraph, bullet or row you add or change must carry an inline \
+  attribution naming the page you got it from, with a date: \
+  "(Chicago Tribune, Mar 2026)" or "(CHA board roster, Sep 2026)". Name the \
+  page you actually read, not an article you only saw in search results. \
+  The application checks each addition against the text of the pages you \
+  fetched, and flags lines with no attribution. No Markdown footnotes.
 - **Match the document's existing writing style.** If the file is written \
   in connected prose, add your material as prose — do not convert it to \
   bullet points. If it uses a scannable bullet format, follow that. Read \
@@ -418,6 +424,9 @@ for the scraper requirement above.
    obvious fit (see above). Skip if it would cost more than one turn.
 5. Call `finalize_beat_book` as soon as the gaps you identified are filled. \
    Do not keep searching for more to add once they are.
+
+Do not fetch a page you have already fetched; its text is already in the \
+conversation.
 
 Never run `sleep` or otherwise pause between searches. The application \
 handles pacing, and a pause only uses up one of your turns.
@@ -642,11 +651,56 @@ def _short_detail_for(tool_name: str, tool_input: Dict[str, Any]) -> str:
     return ""
 
 
+def _unattributed_additions(before: str, after: str) -> List[str]:
+    """Lines (paragraphs, bullets, rows) that an edit added or changed whose
+    new claims name no source in an inline "(Publication, Mon YYYY)"
+    attribution. One attribution anywhere in the line covers the line.
+    Reporting Tips lines are advice and are exempt."""
+    from citation_matcher import GUIDANCE_SECTION_RE
+    before_keys = {_claim_key(e["content"]) for e in _segment_markdown(before) if e["needs_embedding"]}
+    missing: List[str] = []
+    section = ""
+    for line in after.split("\n"):
+        if re.match(r"^##\s+", line.strip()):
+            section = line.strip()[2:].strip()
+            continue
+        claims = [e for e in _segment_markdown(line) if e["needs_embedding"]]
+        if not claims or all(_claim_key(e["content"]) in before_keys for e in claims):
+            continue
+        if GUIDANCE_SECTION_RE.search(section) or attributed_sources(line):
+            continue
+        if line.strip() not in missing:
+            missing.append(line.strip())
+    return missing
+
+
+def _attribution_note(before: str, after: str, trace: Dict[str, Any]) -> str:
+    missing = _unattributed_additions(before, after)
+    if not missing:
+        return ""
+    trace["attribution_warnings"] = trace.get("attribution_warnings", 0) + len(missing)
+    shown = "\n".join(f"- {m[:160]}" for m in missing[:5])
+    more = f"\n(and {len(missing) - 5} more)" if len(missing) > 5 else ""
+    return (
+        "\n\n[Application notice] Your edit was saved, but these added lines name no "
+        "source:\n" + shown + more + "\nAdd an inline attribution such as "
+        "(Chicago Tribune, Mar 2026) to each, naming the page you got it from, "
+        "with another str_replace. Reporters use these to verify web facts."
+    )
+
+
 def _file_digest(path: Path) -> Optional[str]:
     try:
         return hashlib.sha256(path.read_bytes()).hexdigest()
     except OSError:
         return None
+
+
+def _read_or_empty(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
 
 
 def _block_get(obj: Any, key: str, default: Any = None) -> Any:
@@ -682,6 +736,11 @@ def _record_web_activity(content: Any, trace: Dict[str, Any]) -> List[tuple]:
             if url:
                 doc = _block_get(res, "content") or {}
                 pages_read.append({"url": url, "title": _block_get(doc, "title", "") or ""})
+                src = _block_get(doc, "source") or {}
+                text = _block_get(src, "data") if _block_get(src, "type") == "text" else None
+                if isinstance(text, str) and text.strip():
+                    texts = trace.setdefault("_page_texts", {})
+                    texts[url] = (texts.get(url, "") + "\n\n" + text)[:MAX_PAGE_TEXT_CHARS].strip()
             continue
         if btype == "server_tool_use":
             name = _block_get(block, "name", "")
@@ -1035,6 +1094,7 @@ async def run_research_agent(
                 if tool_name == "bash":
                     trace["bash_commands"].append(str(tool_input.get("command") or "")[:2000])
                     before = _file_digest(markdown_path)
+                    before_text = _read_or_empty(markdown_path)
                     result = _run_bash(
                         tool_input.get("command"),
                         bool(tool_input.get("restart")),
@@ -1043,13 +1103,18 @@ async def run_research_agent(
                     if _file_digest(markdown_path) != before:
                         # Edits made by a script, not the text editor.
                         trace["file_edits"].append({"command": "bash", "path": markdown_filename})
+                        result += _attribution_note(before_text, _read_or_empty(markdown_path), trace)
                 elif tool_name == "str_replace_based_edit_tool":
                     if tool_input.get("command") != "view":
                         trace["file_edits"].append({
                             "command": tool_input.get("command"),
                             "path": tool_input.get("path"),
                         })
+                    before_text = _read_or_empty(markdown_path)
                     result = _run_text_editor(tool_input, sandbox_dir)
+                    after_text = _read_or_empty(markdown_path)
+                    if after_text != before_text:
+                        result += _attribution_note(before_text, after_text, trace)
                 elif tool_name == FINALIZE_TOOL_NAME:
                     final_filename = tool_input.get("filename") or markdown_filename
                     summary = tool_input.get("summary", "").strip()

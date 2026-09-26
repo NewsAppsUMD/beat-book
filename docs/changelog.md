@@ -43,6 +43,13 @@
 - Web-added claims carry `web_basis`: the source they name was a page the agent read, only a search snippet, not in its research record, or not named. The reader badge and build record show it.
 - Web searches, fetches and results are counted once per block id. Pages the agent read are recorded with titles. Edits the agent makes through shell scripts are now counted.
 
+### Checking web claims against the pages read
+- The research agent mostly stopped naming sources inline, so judging web claims by their attributions labeled 13 of 16 "no source" even when they came from pages it read. Fetched page text is now kept in memory for the run, never written to disk, and each web-added claim is matched against it. The check uses the book's citation cutoff, and every figure in the claim must appear on the page. `web_basis` is now `read`, `snippet`, `unconfirmed` or `unattributed`, with `web_support` naming the page.
+- An attribution at the end of a paragraph now covers every sentence in that paragraph.
+- When an edit adds lines with no source named, the research agent is told which lines and asked to add one. Reporting Tips are exempt. The build record counts the warnings.
+- Draft claims that research rewrote or removed are listed as `replaced_draft_claims`, counted in the sourcing summary, and shown in the build record.
+- The prompt tells the agent not to re-fetch pages.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library

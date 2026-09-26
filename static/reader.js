@@ -421,7 +421,11 @@
     const cited = research.cited_sources || [];
     const pagesRead = research.pages_read || (research.web_fetches || []).map(u => ({ url: u, title: '' }));
     const wb = stats.web_basis || null;
-    const basisHtml = wb ? `<p>Of the ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read)} name a source the agent read, ${fmtNum(wb.snippet)} name a source it only saw as a search snippet, ${fmtNum(wb.unmatched)} name a source not in its research record, and ${fmtNum(wb.unattributed)} name no source. Only the first group rests on a page it read.</p>` : '';
+    const basisHtml = !wb ? '' : wb.method === 'page_text'
+      ? `<p>Of the ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read)} are supported by the text of a page the agent read. That means the passage is similar, above this book's cutoff, and every figure in the claim appears on the page. Of the rest, ${fmtNum(wb.snippet)} name a source it only saw as a search snippet, ${fmtNum(wb.unconfirmed)} name a source that nothing in its record supports, and ${fmtNum(wb.unattributed)} name no source.</p>${research.attribution_warnings ? `<p class="mf-note">The agent was warned ${fmtNum(research.attribution_warnings)} times about added lines with no source named.</p>` : ''}`
+      : `<p>Of the ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read)} name a source the agent read, ${fmtNum(wb.snippet)} name a source it only saw as a search snippet, ${fmtNum((wb.unmatched || 0) + (wb.unconfirmed || 0))} name a source not in its research record, and ${fmtNum(wb.unattributed)} name no source. This older record matched source names, not page text.</p>`;
+    const replacedList = ((m.research_changes || {}).replaced_claims || []);
+    const replacedHtml = replacedList.length ? `<h4>Claims from your stories that research changed or removed</h4><ul class="mf-list">${replacedList.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
     const shellNote = research.bash_enabled === false && research.shell_unavailable_reason
       ? `<p class="mf-note">The shell was off for this run: ${escapeHtml(research.shell_unavailable_reason)}.</p>`
       : (research.shell_sandbox ? `<p class="mf-note">Shell commands ran under ${escapeHtml(research.shell_sandbox)}, which blocks writes outside the book's folder.</p>` : '');
@@ -433,6 +437,7 @@
     const researchBody = (research.model_calls || []).length ? `
       ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary of its changes.</p>` : ''}
       ${basisHtml}
+      ${replacedHtml}
       <p>${fmtNum((research.web_searches || []).length)} web searches, ${fmtNum(pagesRead.length)} pages read, ${fmtNum((research.bash_commands || []).length)} shell commands.
         ${changes.changed ? `It added ${fmtNum(changes.lines_added)} lines and removed ${fmtNum(changes.lines_removed)}.` : 'It made no changes to the draft.'}
         ${finishNote}</p>
@@ -582,12 +587,21 @@
   // What backs a web-added claim, judged from the research record: did the
   // agent read a page from the source it names, or only see a search snippet?
   const WEB_BASIS = {
-    read: { label: 'web', title: 'Added by web research. The agent read a page from the source this sentence names.' },
-    snippet: { label: 'web · snippet', title: 'Added by web research. The agent only saw a search-result snippet from the source this sentence names, not the page. Verify before use.' },
-    unmatched: { label: 'web · unverified', title: 'Added by web research. The source this sentence names is not among the pages or search results the agent saw. Verify before use.' },
-    unattributed: { label: 'web · no source', title: 'Added by web research with no source named in the sentence. Verify before use.' },
+    read: { label: 'web', title: 'Added by web research. A page the agent read supports this.' },
+    snippet: { label: 'web · snippet', title: 'Added by web research. No page the agent read supports this; the source it names appears only in search-result snippets. Verify before use.' },
+    unconfirmed: { label: 'web · unconfirmed', title: 'Added by web research. It names a source, but no page the agent read supports it. Verify before use.' },
+    unmatched: { label: 'web · unconfirmed', title: 'Added by web research. The source this sentence names is not among the pages or search results the agent saw. Verify before use.' },
+    unattributed: { label: 'web · no source', title: 'Added by web research. No page the agent read supports it, and it names no source. Verify before use.' },
     unknown: { label: 'web', title: 'Added by web research. Check the attribution in the sentence; it is not matched to your stories.' },
   };
+
+  // Pages backing web claims, referenced from the badge sentinel by index.
+  let webSupports = [];
+  function webSupportId(entry) {
+    if (!entry.web_support) return '';
+    webSupports.push(entry.web_support);
+    return String(webSupports.length - 1);
+  }
 
   // ── Provenance decoration ───────────────────────────────────────────────
   const LIST_MARKER_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)([\s\S]*)$/;
@@ -606,7 +620,7 @@
     const content = entry.content;
     const cite = number != null ? `[[CITE:${number}]]` : '';
     if (entry.passthrough || !prov) return cite ? `${content}${cite}` : content;
-    const badge = prov === 'web' ? `[[WEB:${entry.web_basis || 'unknown'}]]` : '';
+    const badge = prov === 'web' ? `[[WEB:${entry.web_basis || 'unknown'}:${webSupportId(entry)}]]` : '';
     if (entry.kind === 'table_row') {
       const trimmed = content.replace(/\s+$/, '');
       const cut = trimmed.lastIndexOf('|');
@@ -637,11 +651,12 @@
     ];
     if (st.hasOrigin || st.web) {
       const wb = st.webBasis || {};
-      const weak = (wb.snippet || 0) + (wb.unmatched || 0) + (wb.unattributed || 0);
+      const weak = (wb.snippet || 0) + (wb.unmatched || 0) + (wb.unconfirmed || 0) + (wb.unattributed || 0);
       const detail = st.web && Object.keys(wb).length
-        ? ` (${wb.read || 0} from pages it read, ${weak} from snippets or unconfirmed sources)` : '';
+        ? ` (${wb.read || 0} supported by a page it read, ${weak} not)` : '';
       bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong>&nbsp;added by web research${detail}</span>`);
     }
+    if (st.replaced) bits.push(`<span class="sourcing-stat" title="Claims from the draft, which was written from your stories, that web research rewrote or removed. See the changes in How this book was made."><span class="sourcing-swatch sw-replaced"></span><strong>${st.replaced}</strong>&nbsp;claims from your stories changed by web research</span>`);
     bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-unsupported"></span><strong>${st.unsupported}</strong> with no matching source</span>`);
     if (st.guidance) bits.push(`<span class="sourcing-stat" title="Lines in Reporting Tips with no matching passage. Advice to the reporter has no source to match, so it is not counted as unsourced."><span class="sourcing-swatch sw-guidance"></span><strong>${st.guidance}</strong> reporting tips (advice, not matched)</span>`);
     const threshold = calibration && typeof calibration.threshold === 'number'
@@ -672,6 +687,7 @@
     else if (beatbookData && Array.isArray(beatbookData.entries)) { entries = beatbookData.entries; isNewShape = true; }
     else throw new Error('Unrecognized beat-book JSON shape');
     calibration = (beatbookData && beatbookData.calibration) || null;
+    webSupports = [];
 
     const sourceKey = (p) => `${p.article_id}::${p.passage_offset ?? 'x'}::${p.passage_length ?? 'x'}`;
 
@@ -739,6 +755,7 @@
       unsupported: claims.filter(e => provOf(e) === 'unsupported').length,
       guidance: claims.filter(e => provOf(e) === 'guidance').length,
       webBasis: (beatbookData && beatbookData.stats && beatbookData.stats.web_basis) || {},
+      replaced: (beatbookData && beatbookData.stats && beatbookData.stats.research_replaced) || 0,
       hasOrigin: claims.some(e => e.origin),
     };
 
@@ -767,9 +784,15 @@
     html = html
       .replace(/\[\[PV:(corpus|web|unsupported|guidance)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
       .replace(/\[\[\/PV\]\]/g, '</span>')
-      .replace(/\[\[WEB:(\w+)\]\]/g, (_, basis) => {
+      .replace(/\[\[WEB:(\w+):(\d*)\]\]/g, (_, basis, sid) => {
         const b = WEB_BASIS[basis] || WEB_BASIS.unknown;
-        return `<span class="web-badge web-${basis}" title="${b.title}">${b.label}</span>`;
+        const sup = sid !== '' ? webSupports[+sid] : null;
+        const title = sup
+          ? `${b.title} Page: ${sup.title || sup.url} (match ${fmtSim(sup.similarity)}).`
+          : b.title;
+        const tag = sup && /^https?:\/\//i.test(sup.url) ? 'a' : 'span';
+        const href = tag === 'a' ? ` href="${escapeHtml(sup.url)}" target="_blank" rel="noopener"` : '';
+        return `<${tag} class="web-badge web-${basis}"${href} title="${escapeHtml(title)}">${b.label}</${tag}>`;
       });
 
     html = insertAfterFirstH1(html, renderSourcingSummary());

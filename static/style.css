@@ -1999,6 +1999,9 @@ a:focus-visible {
 .sw-corpus { background: var(--citation-soft); border: 1px solid var(--citation-border); }
 .sw-web { background: var(--prov-web-soft); border: 1px solid var(--prov-web-border); }
 .sw-unsupported { border-bottom: 2px solid var(--prov-unsourced); border-radius: 0; height: 0.45rem; }
+.sw-replaced { background: var(--prov-web-soft); border: 1px dashed var(--prov-web); }
+a.web-badge { text-decoration: none; cursor: pointer; }
+.web-badge.web-unconfirmed { border-style: dashed; text-transform: none; letter-spacing: 0; }
 .sw-guidance { background: var(--surface); border: 1px dashed var(--border-strong); }
 .sourcing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem; margin-top: 0.55rem; }
 .sourcing-threshold { font-variant-numeric: tabular-nums; color: var(--text-faint); cursor: help; }

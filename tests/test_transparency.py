@@ -448,6 +448,70 @@ def test_web_basis_distinguishes_read_pages_from_snippets():
         {"provenance": "web", "content": "The budget is $1.4 billion (The Real Deal, Apr. 2026)."},
         {"provenance": "web", "content": "The agency is large (and old)."},
     ]}
-    counts = jobs.tag_web_basis(entries, trace)
-    assert [e["web_basis"] for e in entries["entries"]] == ["read", "snippet", "unmatched", "unattributed"]
-    assert counts == {"read": 1, "snippet": 1, "unmatched": 1, "unattributed": 1}
+    counts = jobs.tag_web_basis(entries, trace)   # no page text: falls back to names
+    assert [e["web_basis"] for e in entries["entries"]] == ["read", "snippet", "unconfirmed", "unattributed"]
+    assert counts == {"read": 1, "snippet": 1, "unconfirmed": 1, "unattributed": 1, "method": "names"}
+
+
+def test_web_claims_checked_against_page_text():
+    import jobs
+    page = ("The Cook County Board of Review voted to set the Arlington Park valuation at "
+            "$124.7 million, below the school districts' request, and the Bears said they "
+            "were disappointed with the board's decision on the property. ") * 3
+    trace = {"pages_read": [{"url": "https://chicago.suntimes.com/bears/x", "title": "Bears disappointed"}],
+             "web_results": []}
+    entries = {"calibration": {"threshold": 0.5}, "entries": [
+        # Supported by the page, and names no source: page text still backs it.
+        {"provenance": "web", "kind": "sentence", "passthrough": False,
+         "content": "The Board of Review set the Arlington Park valuation at $124.7 million."},
+        # Same topic, but the figure is not on the page.
+        {"provenance": "web", "kind": "sentence", "passthrough": False,
+         "content": "The Board of Review set the Arlington Park valuation at $138 million."},
+    ]}
+    counts = jobs.tag_web_basis(entries, trace, {"https://chicago.suntimes.com/bears/x": page}, HashEmbed())
+    a, b = entries["entries"]
+    assert a["web_basis"] == "read" and a["web_support"]["url"].endswith("/bears/x")
+    assert b["web_basis"] == "unattributed"
+    assert counts["method"] == "page_text" and counts["read"] == 1
+
+
+def test_paragraph_attribution_covers_its_sentences():
+    import jobs
+    items = [
+        {"kind": "sentence", "passthrough": False, "content": "Steele dissented."},
+        {"kind": "sentence", "passthrough": False, "content": "The Bears were disappointed (Chicago Sun-Times, Feb 2024)."},
+        {"kind": "other", "passthrough": True, "content": ""},
+        {"kind": "sentence", "passthrough": False, "content": "Unrelated next paragraph."},
+    ]
+    names = jobs._paragraph_names(items)
+    assert names[0] == ["Chicago Sun-Times"] and names[3] == []
+
+
+def test_research_is_warned_about_unattributed_additions():
+    import research_agent as ra
+    before = "## Key Sources\n\n- **Jane Doe** — director of the housing agency since 2020.\n"
+    after = before + ("- **Jawanza Malone** — chairman of the housing authority board as of mid-2026.\n"
+                      "- **Matt Topic** — lawyer for the plaintiffs in the open meetings case (Loevy press release, Apr 2026).\n")
+    missing = ra._unattributed_additions(before, after)
+    assert missing == ["- **Jawanza Malone** — chairman of the housing authority board as of mid-2026."]
+    trace = {}
+    note = ra._attribution_note(before, after, trace)
+    assert "name no source" in note and trace["attribution_warnings"] == 1
+    tips = "## Reporting Tips\n\nFile records requests early and expect long delays from the agency.\n"
+    assert ra._unattributed_additions("", tips) == []
+
+
+def test_fetched_page_text_is_kept_in_memory():
+    import research_agent as ra
+    trace = {"web_searches": [], "web_results": [], "web_fetches": [], "cited_sources": []}
+    ra._record_web_activity([{"type": "web_fetch_tool_result", "tool_use_id": "f1", "content": {
+        "url": "https://a.org/x", "content": {"title": "A", "source": {"type": "text", "data": "Board roster text"}}}}], trace)
+    assert trace["_page_texts"] == {"https://a.org/x": "Board roster text"}
+
+
+def test_replaced_draft_claims_are_listed():
+    draft = "The board chair is Matthew Brewer, who certified the appointment.\n\nThe city council voted to approve the parks department budget."
+    final = "The board chair is Jawanza Malone, as of mid-2026.\n\nThe city council voted to approve the parks department budget."
+    out = _entries(final, draft)
+    assert out["replaced_draft_claims"] == ["The board chair is Matthew Brewer, who certified the appointment."]
+    assert out["stats"]["research_replaced"] == 1

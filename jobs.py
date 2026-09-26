@@ -39,9 +39,11 @@ import store
 from agent import run_agent
 from research_agent import run_research_agent
 from citation_matcher import (
+    attributed_sources,
     embed_source_stories,
     markdown_to_beatbook_entries,
     build_sources_file,
+    match_claims_to_pages,
 )
 from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
@@ -151,35 +153,20 @@ def _draft_diff(draft: str, final: str) -> dict:
 
 
 # ── Web-claim basis ──────────────────────────────────────────────────────────
-# The research agent attributes web facts inline, e.g. "(Chicago Tribune,
-# Mar 2026)". It often names an article it only saw as a search snippet. Each
-# web-added claim is checked against the research record: was the named
-# source a page it actually read, only a search result, or neither?
+# What backs each web-added claim. The primary test is the text itself: does
+# a page the research agent fetched say this? (Same embedding cutoff as the
+# corpus citations, and every figure in the claim must appear on the page.)
+# When that fails, the source the sentence names is checked against the
+# research record, since the agent often names articles it only saw as
+# search snippets.
 
-_ATTRIBUTION_RE = re.compile(r"\(([^()]{2,160}?)\)")
-_DATEISH_RE = re.compile(
-    r"^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*)?"
-    r"(?:\d{1,2},?\s*)?(?:19|20)\d{2}$", re.I)
 _GENERIC_WORDS = {"the", "of", "and", "a", "press", "release", "report", "news", "statement",
                   "analysis", "data", "records", "results", "certified", "website", "site",
-                  "filing", "filings", "official", "page", "fy", "update"}
+                  "filing", "filings", "official", "page", "fy", "update", "roster"}
 
 
 def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
-
-
-def _attributed_sources(text: str) -> List[str]:
-    """Source names from inline attributions like "(WTTW, Chicago Sun-Times,
-    Mar. 2026)" → ["WTTW", "Chicago Sun-Times"]. Parentheticals without a
-    trailing date are ignored (they are usually asides, not attributions)."""
-    names: List[str] = []
-    for m in _ATTRIBUTION_RE.finditer(text):
-        parts = [x.strip() for x in re.split(r"[;,]", m.group(1)) if x.strip()]
-        if len(parts) < 2 or not _DATEISH_RE.match(parts[-1]):
-            continue
-        names.extend(x for x in parts[:-1] if not _DATEISH_RE.match(x))
-    return names
 
 
 def _source_matches(name: str, url: str, title: str) -> bool:
@@ -194,30 +181,78 @@ def _source_matches(name: str, url: str, title: str) -> bool:
     return all(f" {w} " in haystack for w in words)
 
 
-def tag_web_basis(entries: dict, research_trace: dict) -> Dict[str, int]:
-    """Add `web_basis` to each web-provenance entry: "read" (a named source
-    matches a page the agent fetched), "snippet" (it matches only a search
-    result the agent saw), "unmatched" (no match in the research record) or
-    "unattributed" (no inline attribution). Returns counts per basis."""
-    pages = research_trace.get("pages_read") or [
+def _paragraph_names(entries: List[dict]) -> List[List[str]]:
+    """Source names for each entry: its own inline attributions, or, for a
+    sentence with none, those of the other sentences in its paragraph (an
+    attribution at the end of a paragraph covers the paragraph)."""
+    own = [attributed_sources(e.get("content", "")) for e in entries]
+    out = [list(n) for n in own]
+    i = 0
+    while i < len(entries):
+        if entries[i].get("kind") != "sentence" or entries[i].get("passthrough"):
+            i += 1
+            continue
+        j = i
+        while j < len(entries) and entries[j].get("kind") == "sentence" and not entries[j].get("passthrough"):
+            j += 1
+        para = [n for k in range(i, j) for n in own[k]]
+        for k in range(i, j):
+            if not out[k]:
+                out[k] = list(dict.fromkeys(para))
+        i = j
+    return out
+
+
+def tag_web_basis(entries: dict, research_trace: dict, page_texts: Optional[Dict[str, str]] = None,
+                  embed_client: Any = None) -> Dict[str, Any]:
+    """Add `web_basis` to each web-provenance entry and return counts:
+
+    - "read": a page the agent fetched says this (`web_support` holds the
+      page and passage).
+    - "snippet": not found on a fetched page; the source it names appears
+      only among search results the agent saw.
+    - "unconfirmed": names a source, but no fetched page supports it and the
+      source isn't among its search results either.
+    - "unattributed": no fetched page supports it and it names no source.
+    """
+    items = entries.get("entries", [])
+    names_for = _paragraph_names(items)
+    pages_meta = research_trace.get("pages_read") or [
         {"url": u, "title": ""} for u in research_trace.get("web_fetches", [])]
     results = research_trace.get("web_results", [])
-    counts = {"read": 0, "snippet": 0, "unmatched": 0, "unattributed": 0}
-    for e in entries.get("entries", []):
-        if e.get("provenance") != "web":
-            continue
-        names = _attributed_sources(e.get("content", ""))
-        if not names:
-            basis = "unattributed"
-        elif any(_source_matches(n, p.get("url", ""), p.get("title", "")) for n in names for p in pages):
+    web_idx = [i for i, e in enumerate(items) if e.get("provenance") == "web"]
+
+    supports: Dict[int, Any] = {}
+    method = "names"
+    if page_texts and embed_client is not None and web_idx:
+        titles = {p["url"]: p.get("title", "") for p in pages_meta}
+        pages = [{"url": u, "title": titles.get(u, ""), "text": t} for u, t in page_texts.items()]
+        threshold = (entries.get("calibration") or {}).get("threshold", 0.6)
+        matches = match_claims_to_pages([items[i]["content"] for i in web_idx], pages,
+                                        embed_client, threshold)
+        supports = {i: m for i, m in zip(web_idx, matches) if m}
+        method = "page_text"
+
+    counts: Dict[str, Any] = {"read": 0, "snippet": 0, "unconfirmed": 0, "unattributed": 0}
+    for i in web_idx:
+        e = items[i]
+        names = names_for[i]
+        if i in supports:
+            basis = "read"
+            e["web_support"] = supports[i]
+        elif method == "names" and any(_source_matches(n, p.get("url", ""), p.get("title", ""))
+                                       for n in names for p in pages_meta):
             basis = "read"
         elif any(_source_matches(n, r.get("url", ""), r.get("title", "")) for n in names for r in results):
             basis = "snippet"
+        elif names:
+            basis = "unconfirmed"
         else:
-            basis = "unmatched"
+            basis = "unattributed"
         e["web_basis"] = basis
         e["web_sources_named"] = names
         counts[basis] += 1
+    counts["method"] = method
     return counts
 
 
@@ -386,6 +421,10 @@ async def run_generation(
 
         await emit({"type": "research_complete"})
         _stage("research", t_research)
+        # Page text stays out of the manifest (size, and it is other
+        # publishers' content); it is only used to check claims below.
+        page_texts = research_trace.pop("_page_texts", {}) or {}
+        research_trace["pages_with_text"] = len(page_texts)
         manifest["research_changes"] = _draft_diff(markdown, revised_markdown)
 
         # 4. Canonical markdown.
@@ -433,6 +472,9 @@ async def run_generation(
                 revised_markdown, source_embeddings, embed_client, on_matcher_progress,
                 draft_markdown=markdown,
             )
+            on_matcher_progress("web_claims", 0.5, "Checking web additions against the pages read…")
+            entries.setdefault("stats", {})["web_basis"] = tag_web_basis(
+                entries, research_trace, page_texts, embed_client)
             sources = build_sources_file(stories, source_embeddings)
             return entries, sources
 
@@ -470,8 +512,6 @@ async def run_generation(
             book_written = True
             return
 
-        web_basis = tag_web_basis(entries, research_trace)
-        entries.setdefault("stats", {})["web_basis"] = web_basis
         (OUTPUT_DIR / f"{stem}.json").write_text(
             json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
         (OUTPUT_DIR / f"{stem}_sources.json").write_text(
@@ -481,6 +521,7 @@ async def run_generation(
             "calibration": entries.get("calibration", {}),
             "stats": entries.get("stats", {}),
         }
+        manifest["research_changes"]["replaced_claims"] = entries.get("replaced_draft_claims", [])
 
         _finish_ready()
         await _emit_beat_book()

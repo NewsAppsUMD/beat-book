@@ -296,6 +296,27 @@ def _segment_line(line: str, i: int, lines: List[str], entries: List[Dict[str, A
         entries.append({"content": line, "needs_embedding": False, "kind": "other"})
 
 
+# ── Inline attributions ("(Chicago Tribune, Mar 2026)") ───────────────────────
+
+_ATTRIBUTION_RE = re.compile(r"\(([^()]{2,160}?)\)")
+_DATEISH_RE = re.compile(
+    r"^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*)?"
+    r"(?:\d{1,2},?\s*)?(?:19|20)\d{2}$", re.I)
+
+
+def attributed_sources(text: str) -> List[str]:
+    """Source names from inline attributions like "(WTTW, Chicago Sun-Times,
+    Mar. 2026)" → ["WTTW", "Chicago Sun-Times"]. Parentheticals without a
+    trailing date are ignored (they are usually asides, not attributions)."""
+    names: List[str] = []
+    for m in _ATTRIBUTION_RE.finditer(text or ""):
+        parts = [x.strip() for x in re.split(r"[;,]", m.group(1)) if x.strip()]
+        if len(parts) < 2 or not _DATEISH_RE.match(parts[-1]):
+            continue
+        names.extend(x for x in parts[:-1] if not _DATEISH_RE.match(x))
+    return names
+
+
 def _claim_key(text: str) -> str:
     """Normalize a claim for draft-vs-final comparison."""
     return re.sub(r"[^a-z0-9]+", " ", _plain_text(text).lower()).strip()
@@ -687,7 +708,8 @@ def markdown_to_beatbook_entries(
               ],
             }, ...
           ],
-          "stats": {claims, cited, research_added, unsupported, ...},
+          "stats": {claims, cited, research_added, research_replaced, ...},
+          "replaced_draft_claims": [draft claims research rewrote or removed],
         }
 
     When `draft_markdown` (the writing agent's draft, before web research) is
@@ -926,7 +948,22 @@ def markdown_to_beatbook_entries(
             "supports": supports,
         })
 
-    return {"calibration": calibration, "entries": out_entries, "stats": stats}
+    # Claims from the draft that no longer appear: the research agent
+    # rewrote or removed them. The draft came from the reporter's stories,
+    # so these are places where web research overrode the corpus.
+    replaced: List[str] = []
+    if draft_markdown is not None:
+        final_keys = {_claim_key(e["content"]) for e in out_entries if not e["passthrough"]}
+        seen = set()
+        for e in _segment_markdown(draft_markdown):
+            k = _claim_key(e["content"])
+            if e["needs_embedding"] and k not in final_keys and k not in seen:
+                seen.add(k)
+                replaced.append(e["content"])
+    stats["research_replaced"] = len(replaced)
+
+    return {"calibration": calibration, "entries": out_entries, "stats": stats,
+            "replaced_draft_claims": replaced}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -958,3 +995,66 @@ def build_sources_file(
             }
         )
     return out
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WEB CLAIMS → PAGES THE RESEARCH AGENT READ
+# ─────────────────────────────────────────────────────────────────────────────
+
+_NUMBER_RE = re.compile(r"\$?\d[\d,]*(?:\.\d+)?%?")
+
+
+def _numbers_in(text: str) -> List[str]:
+    """Figures a claim states (dollar amounts, percentages, counts), with
+    punctuation stripped, ignoring bare years and single digits so dates and
+    ordinals don't block a match."""
+    out = []
+    for m in _NUMBER_RE.finditer(text or ""):
+        n = re.sub(r"[$,%]", "", m.group())
+        if not n or re.fullmatch(r"(19|20)\d{2}", n) or len(n.replace(".", "")) < 2:
+            continue
+        out.append(n)
+    return out
+
+
+def match_claims_to_pages(
+    claims: List[str],
+    pages: List[Dict[str, str]],
+    embed_client: EmbedClient,
+    threshold: float,
+) -> List[Optional[Dict[str, Any]]]:
+    """For each claim, the best-matching passage from the web pages the
+    research agent read, or None.
+
+    A match needs similarity at or above `threshold` (the book's calibrated
+    citation cutoff) and every figure the claim states to appear in that
+    page's text: a claim of "$124.7 million" is not supported by a page that
+    never says 124.7. `pages` are {"url", "title", "text"}."""
+    if not claims or not pages:
+        return [None] * len(claims)
+    passages: List[Dict[str, Any]] = []
+    for pi, page in enumerate(pages):
+        for w in _passage_windows(page.get("text", "") or ""):
+            passages.append({"page": pi, "text": w["text"]})
+    if not passages:
+        return [None] * len(claims)
+    p_emb = _l2_normalize(_embed_many(embed_client, [p["text"] for p in passages], None, "web_pages"))
+    c_emb = _l2_normalize(_embed_many(embed_client, [_plain_text(c) for c in claims], None, "web_claims"))
+    sims = c_emb @ p_emb.T
+    flat_pages = [re.sub(r"[,$%]", "", p.get("text", "") or "") for p in pages]
+    out: List[Optional[Dict[str, Any]]] = []
+    for ci, claim in enumerate(claims):
+        numbers = _numbers_in(claim)
+        best = None
+        for j in np.argsort(-sims[ci])[:TOP_K]:
+            sim = float(sims[ci, j])
+            if sim < threshold:
+                break
+            page_i = passages[j]["page"]
+            if all(n in flat_pages[page_i] for n in numbers):
+                best = {"url": pages[page_i].get("url", ""), "title": pages[page_i].get("title", ""),
+                        "similarity": round(sim, 4), "passage_text": passages[j]["text"]}
+                break
+        out.append(best)
+    return out
+
