@@ -1978,6 +1978,9 @@ a:focus-visible {
   color: var(--prov-web); background: var(--prov-web-soft);
   border: 1px solid var(--prov-web-border); border-radius: 3px; cursor: help;
 }
+.web-badge.web-snippet, .web-badge.web-unmatched, .web-badge.web-unattributed {
+  border-style: dashed; text-transform: none; letter-spacing: 0;
+}
 #reader-content.show-sourcing .claim-unsupported {
   text-decoration: underline wavy color-mix(in srgb, var(--prov-unsourced) 60%, transparent);
   text-decoration-thickness: 1px; text-underline-offset: 3px;

@@ -427,9 +427,8 @@ def _progress_report(
     lines.append(
         f"Total stories read (unique): {len(read_indices)}. "
         "Targets: every story in topics with fewer than 8 stories, otherwise a "
-        "third (max 10). "
-        "Scanning a topic with read_stories_in_topic credits 5 reads; "
-        "use read_story for the rest."
+        "third (max 10). Only full reads with read_story count; scanning a "
+        "topic with read_stories_in_topic shows excerpts and does not count."
     )
     if not all_met:
         lines.append(
@@ -742,7 +741,8 @@ async def run_agent(
     # agent has read via read_story. Both feed _progress_report, which is
     # surfaced in every local tool result AND used to gate generate_beat_book.
     listed_topics: set = set()
-    read_indices: set = set()
+    read_indices: set = set()       # read in full with read_story
+    scanned_indices: set = set()    # seen only as excerpts via read_stories_in_topic
 
     exploration_fired = False
 
@@ -750,6 +750,10 @@ async def run_agent(
         trace["stories_read"] = [
             {"index": i, "title": pipeline_result.stories[i].get("title", "")}
             for i in sorted(read_indices)
+        ]
+        trace["stories_scanned_only"] = [
+            {"index": i, "title": pipeline_result.stories[i].get("title", "")}
+            for i in sorted(scanned_indices - read_indices)
         ]
         trace["topics_listed"] = sorted(listed_topics)
         trace["turns"] = _turn + 1
@@ -1013,16 +1017,13 @@ async def run_agent(
                     if topic and topic in pipeline_result.topics:
                         listed_topics.add(topic)
                 elif tool_name == "read_stories_in_topic":
+                    # A scan returns 2,000-character excerpts. It used to credit
+                    # five reads per topic, which met small targets outright:
+                    # books were written without a single full story read.
                     topic = tool_input.get("topic", "")
                     if topic and topic in pipeline_result.topics:
                         listed_topics.add(topic)
-                        indices = pipeline_result.topics[topic]
-                        scan_credit = min(5, len(indices))
-                        # Credit the tail of the list: read_story calls tend to
-                        # start from the front, so crediting the front here
-                        # would make those calls look like zero progress.
-                        if scan_credit:
-                            read_indices.update(list(indices)[-scan_credit:])
+                        scanned_indices.update(pipeline_result.topics[topic])
                 elif tool_name == "read_story":
                     idx = tool_input.get("index")
                     if isinstance(idx, int) and pipeline_result.get_story(idx) is not None:

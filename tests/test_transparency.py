@@ -5,6 +5,7 @@ the Word export, and the per-book file routes."""
 import hashlib
 import json
 import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -384,3 +385,69 @@ def test_finalize_only_turn_failure_is_harmless(tmp_path):
     path, summary = asyncio.run(ra._finalize_only_turn(
         Boom(), "system", [], [{"role": "user", "content": "x"}], None, tmp_path, "book.md", trace))
     assert path is None and summary == "" and "api down" in trace["finalize_turn_error"]
+
+
+# ── Shell confinement, dedupe, reads, web basis ────────────────────────────
+
+def test_research_shell_cannot_write_outside_its_folder(tmp_path):
+    import research_agent as ra
+    import shell_sandbox
+    if shell_sandbox.detect()["kind"] is None:
+        pytest.skip("no OS sandbox on this machine; the shell is disabled instead")
+    box = tmp_path / "box"
+    box.mkdir()
+    outside = tmp_path / "escaped.txt"
+    out = ra._run_bash(f"echo hi > inside.txt; echo x > {outside}; echo y > /tmp/beatbook_escape_probe; "
+                       f"python3 -c \"open('{outside}.py','w')\"", False, box)
+    assert (box / "inside.txt").read_text().strip() == "hi"
+    assert not outside.exists() and not (tmp_path / "escaped.txt.py").exists()
+    assert not Path("/tmp/beatbook_escape_probe").exists()
+    assert "Operation not permitted" in out or "Read-only" in out or "Permission denied" in out
+
+
+def test_shell_fails_closed_without_a_sandbox(tmp_path, monkeypatch):
+    import research_agent as ra
+    import shell_sandbox
+    monkeypatch.setattr(shell_sandbox, "_cached", {"kind": None, "reason": "test"})
+    assert ra._run_bash("echo hi > x.txt", False, tmp_path).startswith("Error: the shell is unavailable")
+    assert not (tmp_path / "x.txt").exists()
+    assert not ra.shell_status()["enabled"]
+    assert all(t.get("name") != "bash" for t in ra.build_tools())
+
+
+
+def test_repeated_blocks_are_counted_once():
+    import research_agent as ra
+    trace = {"web_searches": [], "web_results": [], "web_fetches": [], "cited_sources": []}
+    turn = [
+        {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "q"}},
+        {"type": "server_tool_use", "id": "f1", "name": "web_fetch", "input": {"url": "https://a.org/x"}},
+        {"type": "web_fetch_tool_result", "tool_use_id": "f1",
+         "content": {"url": "https://a.org/x", "content": {"title": "A page"}}},
+    ]
+    ra._record_web_activity(turn, trace)
+    ra._record_web_activity(turn, trace)          # resumed response repeats blocks
+    assert trace["web_searches"] == ["q"] and trace["web_fetches"] == ["https://a.org/x"]
+    assert trace["pages_read"] == [{"url": "https://a.org/x", "title": "A page"}]
+
+
+def test_topic_scans_do_not_count_as_reads():
+    from agent import _progress_report
+    pr = _pipeline_result()
+    text, met = _progress_report(pr, {"Parks", "Schools"}, set())
+    assert not met and "does not count" in text
+
+
+def test_web_basis_distinguishes_read_pages_from_snippets():
+    import jobs
+    trace = {"pages_read": [{"url": "https://www.thecha.org/x", "title": "Keith Pettigrew | CHA"}],
+             "web_results": [{"url": "https://washingtoncitypaper.com/a", "title": "DCHA audit"}]}
+    entries = {"entries": [
+        {"provenance": "web", "content": "He began April 20 (CHA press release, Apr. 2026)."},
+        {"provenance": "web", "content": "The audit found 19 weaknesses (Washington City Paper, 2024)."},
+        {"provenance": "web", "content": "The budget is $1.4 billion (The Real Deal, Apr. 2026)."},
+        {"provenance": "web", "content": "The agency is large (and old)."},
+    ]}
+    counts = jobs.tag_web_basis(entries, trace)
+    assert [e["web_basis"] for e in entries["entries"]] == ["read", "snippet", "unmatched", "unattributed"]
+    assert counts == {"read": 1, "snippet": 1, "unmatched": 1, "unattributed": 1}

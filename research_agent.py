@@ -27,6 +27,7 @@ returned to the caller, which hands it to the citation matcher.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import subprocess
 import sys
@@ -34,6 +35,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from anthropic import Anthropic
+
+import shell_sandbox
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIG
@@ -56,8 +59,21 @@ WEB_FETCH_MAX_CONTENT_TOKENS = 15_000
 
 # Set RESEARCH_BASH=off to withhold the shell tool entirely. The agent then
 # researches with web search/fetch and edits the file with the text editor,
-# but cannot run scrapers.
+# but cannot run scrapers. The shell is also withheld automatically when no
+# OS sandbox is available to stop it writing outside its folder (see
+# shell_sandbox.py and shell_status()).
 BASH_ENABLED = os.environ.get("RESEARCH_BASH", "on").strip().lower() not in ("0", "off", "false", "no")
+
+
+def shell_status() -> Dict[str, Any]:
+    """Whether the research agent gets a shell, and why not if it doesn't."""
+    if not BASH_ENABLED:
+        return {"enabled": False, "sandbox": None, "reason": "RESEARCH_BASH=off"}
+    det = shell_sandbox.detect()
+    if det["kind"] is None:
+        return {"enabled": False, "sandbox": None,
+                "reason": f"no working sandbox ({det['reason']})"}
+    return {"enabled": True, "sandbox": det["kind"], "reason": None}
 # Resource ceilings applied to every shell command (POSIX only).
 BASH_MAX_FILE_BYTES = 50 * 1024 * 1024
 BASH_MAX_CPU_SECONDS = 30
@@ -107,7 +123,7 @@ def build_tools() -> List[Dict[str, Any]]:
     execution environments (per the server-tools docs).
     """
     tools: List[Dict[str, Any]] = []
-    if BASH_ENABLED:
+    if shell_status()["enabled"]:
         tools.append({"type": "bash_20250124", "name": "bash"})
     return tools + [
         {
@@ -450,9 +466,9 @@ def _bash_env(sandbox_dir: Path) -> Dict[str, str]:
     app's full environment would hand it ANTHROPIC_API_KEY, OPENAI_API_KEY and
     the rest. Only what a Python scraper needs goes through.
 
-    This is not a filesystem sandbox: a command can still read files the app
-    user can read. Set RESEARCH_BASH=off, or run the app in a container, when
-    that matters."""
+    File writes are confined separately, by the OS sandbox in
+    shell_sandbox.py. Reads are not: a command can still read files the app
+    user can read, which is why secrets are kept out of the environment."""
     home = str(sandbox_dir.resolve())
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -487,10 +503,14 @@ def _run_bash(command: Optional[str], restart: bool, sandbox_dir: Path) -> str:
     if not command:
         return "Error: bash requires a `command` or `restart: true`."
 
+    argv = shell_sandbox.sandboxed_argv(sandbox_dir, command)
+    if argv is None:
+        # Fail closed: never run an unconfined command.
+        return "Error: the shell is unavailable because no sandbox could confine it."
+
     try:
         proc = subprocess.run(
-            command,
-            shell=True,
+            argv,
             cwd=str(sandbox_dir),
             capture_output=True,
             text=True,
@@ -518,7 +538,9 @@ def _run_text_editor(tool_input: Dict[str, Any], sandbox_dir: Path) -> str:
     raw_path = tool_input.get("path", "")
     resolved = _resolve_inside_sandbox(sandbox_dir, raw_path)
     if resolved is None:
-        return f"Error: path '{raw_path}' is outside the sandbox and cannot be accessed."
+        return (f"Error: path '{raw_path}' is outside your working folder and cannot be "
+                "accessed. Use a relative path such as the beat book's filename; "
+                f"your working folder is {sandbox_dir.resolve()}.")
 
     try:
         if command == "view":
@@ -620,6 +642,13 @@ def _short_detail_for(tool_name: str, tool_input: Dict[str, Any]) -> str:
     return ""
 
 
+def _file_digest(path: Path) -> Optional[str]:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
 def _block_get(obj: Any, key: str, default: Any = None) -> Any:
     if isinstance(obj, dict):
         return obj.get(key, default)
@@ -634,8 +663,26 @@ def _record_web_activity(content: Any, trace: Dict[str, Any]) -> List[tuple]:
     statuses: List[tuple] = []
     seen_results = {r["url"] for r in trace["web_results"]}
     seen_cited = {c["url"] for c in trace["cited_sources"]}
+    seen_ids = set(trace.setdefault("_seen_block_ids", []))
+    pages_read = trace.setdefault("pages_read", [])
     for block in content or []:
         btype = _block_get(block, "type")
+        # A resumed (pause_turn) response can repeat blocks already seen;
+        # count each tool call and result once, by id.
+        bid = _block_get(block, "id") or _block_get(block, "tool_use_id")
+        if bid and btype in ("server_tool_use", "web_search_tool_result", "web_fetch_tool_result"):
+            key = f"{btype}:{bid}"
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            trace["_seen_block_ids"].append(key)
+        if btype == "web_fetch_tool_result":
+            res = _block_get(block, "content") or {}
+            url = _block_get(res, "url")
+            if url:
+                doc = _block_get(res, "content") or {}
+                pages_read.append({"url": url, "title": _block_get(doc, "title", "") or ""})
+            continue
         if btype == "server_tool_use":
             name = _block_get(block, "name", "")
             tinput = _block_get(block, "input", {}) or {}
@@ -774,7 +821,11 @@ async def run_research_agent(
         trace = {}
     trace.update({
         "model": MODEL,
-        "bash_enabled": BASH_ENABLED,
+        "bash_enabled": shell_status()["enabled"],
+        "shell_sandbox": shell_status()["sandbox"],
+        "shell_unavailable_reason": shell_status()["reason"],
+        "pages_read": [],
+        "_seen_block_ids": [],
         "turns": 0,
         "model_calls": [],
         "web_searches": [],
@@ -803,7 +854,7 @@ async def run_research_agent(
         suggested_sources=SUGGESTED_SOURCES,
         max_turns=MAX_TURNS,
     )
-    if not BASH_ENABLED:
+    if not shell_status()["enabled"]:
         system_prompt += (
             "\n\n# Shell disabled\n\nThe `bash` tool is not available in this "
             "run, so skip the scraper step and ignore the Python instructions "
@@ -814,10 +865,13 @@ async def run_research_agent(
         {
             "role": "user",
             "content": (
-                f"Your sandbox is ready. The beat book Markdown is at "
-                f"`{markdown_filename}`. Read it, plan your research, revise "
-                "it with additional contextual material, and call "
-                "`finalize_beat_book` when done."
+                f"Your working folder is `{sandbox_dir.resolve()}`, and every "
+                "command and file path starts there. The beat book Markdown is "
+                f"`{markdown_filename}` in that folder. You cannot write anywhere "
+                "else, including /tmp; keep any scripts and data files in the "
+                "folder. Read the file, plan your research, revise it with "
+                "additional contextual material, and call `finalize_beat_book` "
+                "when done."
             ),
         }
     ]
@@ -980,11 +1034,15 @@ async def run_research_agent(
 
                 if tool_name == "bash":
                     trace["bash_commands"].append(str(tool_input.get("command") or "")[:2000])
+                    before = _file_digest(markdown_path)
                     result = _run_bash(
                         tool_input.get("command"),
                         bool(tool_input.get("restart")),
                         sandbox_dir,
                     )
+                    if _file_digest(markdown_path) != before:
+                        # Edits made by a script, not the text editor.
+                        trace["file_edits"].append({"command": "bash", "path": markdown_filename})
                 elif tool_name == "str_replace_based_edit_tool":
                     if tool_input.get("command") != "view":
                         trace["file_edits"].append({
@@ -1051,6 +1109,7 @@ async def run_research_agent(
             markdown_path = finalized_path
             await _emit(on_progress, "finalizing", summary or "Finalized.")
 
+    trace.pop("_seen_block_ids", None)
     await _emit(on_progress, "done", "Research agent finished")
     return markdown_path.read_text(encoding="utf-8")
 

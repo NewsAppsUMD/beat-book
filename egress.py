@@ -50,7 +50,8 @@ def egress_plan() -> List[Dict[str, Any]]:
     embed = _embed_destination()
     anthropic = _destination("api.anthropic.com", "Anthropic")
     firecrawl = bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
-    bash_on = os.environ.get("RESEARCH_BASH", "on").strip().lower() not in ("0", "off", "false", "no")
+    from research_agent import shell_status
+    bash_on = shell_status()["enabled"]
 
     rows: List[Dict[str, Any]] = []
     if firecrawl:
@@ -106,7 +107,8 @@ def egress_plan() -> List[Dict[str, Any]]:
             "phase": "generate",
             "sends": "The full draft beat book, not the source stories. The model then "
                      "searches and reads public web pages"
-                     + ("; it can also run shell commands on this machine" if bash_on else ""),
+                     + ("; it can also run shell commands on this machine, "
+                        "sandboxed so they can only write inside the book's folder" if bash_on else ""),
             "content": "derived",
             "to": anthropic,
         },

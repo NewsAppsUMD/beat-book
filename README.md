@@ -190,7 +190,9 @@ If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely
 
 ### The research agent's shell
 
-The research agent can run shell commands on the server to write scrapers. Its commands get a minimal environment with no API keys, a home directory inside its sandbox folder, and CPU-time and file-size limits. They can still read any file the app's user can read. Set `RESEARCH_BASH=off` to remove the shell tool; the agent then uses web search, web fetch and the text editor only.
+The research agent can run shell commands on the server to write scrapers. Every command runs under an operating-system sandbox that blocks file writes outside the book's sandbox folder, including `/tmp`: `sandbox-exec` on macOS, and bubblewrap (`bwrap`) on Linux. Network access and file reads stay allowed. Commands also get a minimal environment with no API keys, a home directory inside the sandbox folder, and CPU-time and file-size limits.
+
+The app checks the sandbox once at startup by trying a write inside and outside a test folder. If no sandbox tool is installed, or the check fails, the agent gets no shell for that run. It never runs unconfined. The book's build record says which sandbox ran or why the shell was off. On Linux, install bubblewrap (`sudo apt-get install bubblewrap`); the Codespaces setup tries to. Set `RESEARCH_BASH=off` to remove the shell regardless.
 
 ### Selecting the embedding model in the UI
 
@@ -371,7 +373,7 @@ The reader shows how well each part of the book is sourced, so a reporter knows 
 - **Match strength.** Each citation chip's border shows how far its similarity sits above the book's cutoff: solid green for strong, blue for moderate, dashed amber for weak. The source panel states the score, the cutoff, and that a match is text similarity, not a fact check.
 - **Alternate passages.** The matcher keeps up to five passages per claim. The source panel lists them all, and clicking one opens it.
 - **Key phrases.** Inside the highlighted passage, a darker highlight marks the words that matter most to the match.
-- **Web-added claims.** Sentences the research step added carry a small "web" badge. They are compared against the draft, not guessed.
+- **Web-added claims.** Sentences the research step added carry a "web" badge. They are found by comparing against the draft, not guessed. The badge also says what backs the claim. Plain "web" means the source it names is a page the agent read. "Snippet" means the agent only saw a search-result snippet from that source. "Unverified" means the source is not in its research record at all.
 - **Advice and labels.** Unmatched lines under Reporting Tips count as guidance, not as unsourced claims, because advice has no source to match. All-bold subheads and short "Label:" lines are not counted as claims at all.
 - **Cited bullets and table rows.** Bullets and table rows with at least six words are cited as one claim each. Key Sources, Story Ideas and the Calendar are usually lists, so these sections now get citations.
 - **How this book was made.** A panel, opened from the reader header, reads the book's build record. It shows the models and token counts, time per stage, where each stage sent material, the stories the writing agent read, the instructions it was given, the research agent's searches, cited pages and summary, a diff of what research changed, and how the citation cutoff was set.

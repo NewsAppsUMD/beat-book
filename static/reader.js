@@ -402,18 +402,29 @@
       <p class="mf-note">From the configuration when this book was built. Upload stages ran before this book was queued.</p>` : '<p class="mf-note">Not recorded.</p>';
 
     const read = agent.stories_read || [];
-    const readList = read.length ? `<ol class="mf-list">${read.map(r => `<li>${escapeHtml(r.title || `Story ${r.index}`)}</li>`).join('')}</ol>` : '<p class="mf-note">Not recorded.</p>';
+    const scanned = agent.stories_scanned_only;   // absent in older records
+    const readList = read.length ? `<h4>Read in full</h4><ol class="mf-list">${read.map(r => `<li>${escapeHtml(r.title || `Story ${r.index}`)}</li>`).join('')}</ol>` : '<p class="mf-note">No stories were read in full.</p>';
+    const scannedList = scanned && scanned.length ? `<details><summary>${scanned.length} more seen only as 2,000-character excerpts</summary><ol class="mf-list">${scanned.map(r => `<li>${escapeHtml(r.title || `Story ${r.index}`)}</li>`).join('')}</ol></details>` : '';
     const toolCounts = {};
     (agent.tool_calls || []).forEach(t => { toolCounts[t.tool] = (toolCounts[t.tool] || 0) + 1; });
     const searches = (agent.tool_calls || []).filter(t => t.tool === 'search_stories').map(t => (t.input || {}).query).filter(Boolean);
-    const agentBody = `<p>The writing agent read or scanned <strong>${fmtNum(read.length)}</strong> stories in ${fmtNum(agent.turns)} turns before it wrote the draft.
+    const readSentence = scanned
+      ? `The writing agent read <strong>${fmtNum(read.length)}</strong> stories in full and saw ${fmtNum(scanned.length)} more only as excerpts, over ${fmtNum(agent.turns)} turns.`
+      : `The writing agent read or scanned <strong>${fmtNum(read.length)}</strong> stories in ${fmtNum(agent.turns)} turns before it wrote the draft. This older record counts topic scans as reads.`;
+    const agentBody = `<p>${readSentence}
         ${agent.final_write && agent.final_write.truncated ? ' <strong>The draft hit the output limit and may be cut off.</strong>' : ''}</p>
       <p class="mf-note">Tool use: ${Object.entries(toolCounts).map(([k, v]) => `${escapeHtml(k)} ×${v}`).join(', ') || 'none'}.
       ${searches.length ? `Searches: ${searches.map(q => `“${escapeHtml(q)}”`).join(', ')}.` : ''}</p>
-      ${readList}
+      ${readList}${scannedList}
       ${agent.write_system_prompt ? `<details class="mf-prompt"><summary>Instructions given to the writing model</summary><pre>${escapeHtml(agent.write_system_prompt)}</pre></details>` : ''}`;
 
     const cited = research.cited_sources || [];
+    const pagesRead = research.pages_read || (research.web_fetches || []).map(u => ({ url: u, title: '' }));
+    const wb = stats.web_basis || null;
+    const basisHtml = wb ? `<p>Of the ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read)} name a source the agent read, ${fmtNum(wb.snippet)} name a source it only saw as a search snippet, ${fmtNum(wb.unmatched)} name a source not in its research record, and ${fmtNum(wb.unattributed)} name no source. Only the first group rests on a page it read.</p>` : '';
+    const shellNote = research.bash_enabled === false && research.shell_unavailable_reason
+      ? `<p class="mf-note">The shell was off for this run: ${escapeHtml(research.shell_unavailable_reason)}.</p>`
+      : (research.shell_sandbox ? `<p class="mf-note">Shell commands ran under ${escapeHtml(research.shell_sandbox)}, which blocks writes outside the book's folder.</p>` : '');
     const results = research.web_results || [];
     const changes = m.research_changes || {};
     const finishNote = research.finalized
@@ -421,12 +432,15 @@
       : ' It did not formally finish, so its last file state was used.';
     const researchBody = (research.model_calls || []).length ? `
       ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary of its changes.</p>` : ''}
-      <p>${fmtNum((research.web_searches || []).length)} web searches, ${fmtNum((research.web_fetches || []).length)} pages read, ${fmtNum((research.bash_commands || []).length)} shell commands.
+      ${basisHtml}
+      <p>${fmtNum((research.web_searches || []).length)} web searches, ${fmtNum(pagesRead.length)} pages read, ${fmtNum((research.bash_commands || []).length)} shell commands.
         ${changes.changed ? `It added ${fmtNum(changes.lines_added)} lines and removed ${fmtNum(changes.lines_removed)}.` : 'It made no changes to the draft.'}
         ${finishNote}</p>
       ${(research.web_searches || []).length ? `<p class="mf-note">Searches: ${research.web_searches.map(q => `“${escapeHtml(q)}”`).join(', ')}</p>` : ''}
+      ${shellNote}
+      ${pagesRead.length ? `<h4>Pages it read</h4><ul class="mf-list">${pagesRead.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
       ${cited.length ? `<h4>Pages the model cited</h4><ul class="mf-list">${cited.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
-      ${results.length ? `<details><summary>All ${results.length} search results it saw</summary><ul class="mf-list">${results.map(r => `<li><a href="${safeHref(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || hostLink(r.url))}</a> <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
+      ${results.length ? `<details><summary>${results.length} search results it saw as snippets</summary><ul class="mf-list">${results.map(r => `<li><a href="${safeHref(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || hostLink(r.url))}</a> <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
       ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
     ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
 
@@ -565,6 +579,16 @@
     scrollBound = true;
   }
 
+  // What backs a web-added claim, judged from the research record: did the
+  // agent read a page from the source it names, or only see a search snippet?
+  const WEB_BASIS = {
+    read: { label: 'web', title: 'Added by web research. The agent read a page from the source this sentence names.' },
+    snippet: { label: 'web · snippet', title: 'Added by web research. The agent only saw a search-result snippet from the source this sentence names, not the page. Verify before use.' },
+    unmatched: { label: 'web · unverified', title: 'Added by web research. The source this sentence names is not among the pages or search results the agent saw. Verify before use.' },
+    unattributed: { label: 'web · no source', title: 'Added by web research with no source named in the sentence. Verify before use.' },
+    unknown: { label: 'web', title: 'Added by web research. Check the attribution in the sentence; it is not matched to your stories.' },
+  };
+
   // ── Provenance decoration ───────────────────────────────────────────────
   const LIST_MARKER_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)([\s\S]*)$/;
 
@@ -582,7 +606,7 @@
     const content = entry.content;
     const cite = number != null ? `[[CITE:${number}]]` : '';
     if (entry.passthrough || !prov) return cite ? `${content}${cite}` : content;
-    const badge = prov === 'web' ? '[[WEB]]' : '';
+    const badge = prov === 'web' ? `[[WEB:${entry.web_basis || 'unknown'}]]` : '';
     if (entry.kind === 'table_row') {
       const trimmed = content.replace(/\s+$/, '');
       const cut = trimmed.lastIndexOf('|');
@@ -611,7 +635,13 @@
     const bits = [
       `<span class="sourcing-stat"><span class="sourcing-swatch sw-corpus"></span><strong>${st.corpus}</strong> of ${st.claims} claims matched to your stories (${pct(st.corpus)}%)</span>`,
     ];
-    if (st.hasOrigin || st.web) bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong> added by web research</span>`);
+    if (st.hasOrigin || st.web) {
+      const wb = st.webBasis || {};
+      const weak = (wb.snippet || 0) + (wb.unmatched || 0) + (wb.unattributed || 0);
+      const detail = st.web && Object.keys(wb).length
+        ? ` (${wb.read || 0} from pages it read, ${weak} from snippets or unconfirmed sources)` : '';
+      bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong>&nbsp;added by web research${detail}</span>`);
+    }
     bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-unsupported"></span><strong>${st.unsupported}</strong> with no matching source</span>`);
     if (st.guidance) bits.push(`<span class="sourcing-stat" title="Lines in Reporting Tips with no matching passage. Advice to the reporter has no source to match, so it is not counted as unsourced."><span class="sourcing-swatch sw-guidance"></span><strong>${st.guidance}</strong> reporting tips (advice, not matched)</span>`);
     const threshold = calibration && typeof calibration.threshold === 'number'
@@ -708,6 +738,7 @@
       web: claims.filter(e => provOf(e) === 'web').length,
       unsupported: claims.filter(e => provOf(e) === 'unsupported').length,
       guidance: claims.filter(e => provOf(e) === 'guidance').length,
+      webBasis: (beatbookData && beatbookData.stats && beatbookData.stats.web_basis) || {},
       hasOrigin: claims.some(e => e.origin),
     };
 
@@ -736,7 +767,10 @@
     html = html
       .replace(/\[\[PV:(corpus|web|unsupported|guidance)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
       .replace(/\[\[\/PV\]\]/g, '</span>')
-      .replace(/\[\[WEB\]\]/g, '<span class="web-badge" title="Added by the web-research step. Check the attribution in the sentence; it is not matched to your stories.">web</span>');
+      .replace(/\[\[WEB:(\w+)\]\]/g, (_, basis) => {
+        const b = WEB_BASIS[basis] || WEB_BASIS.unknown;
+        return `<span class="web-badge web-${basis}" title="${b.title}">${b.label}</span>`;
+      });
 
     html = insertAfterFirstH1(html, renderSourcingSummary());
     if (Object.keys(sourcesByKey).length > 0) html += renderFootnotesSection(sourcesByKey);

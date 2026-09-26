@@ -32,7 +32,7 @@ import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import quote
 
 import store
@@ -148,6 +148,77 @@ def _draft_diff(draft: str, final: str) -> dict:
         "unified_diff": diff[:MAX_DIFF_CHARS],
         "truncated": len(diff) > MAX_DIFF_CHARS,
     }
+
+
+# ── Web-claim basis ──────────────────────────────────────────────────────────
+# The research agent attributes web facts inline, e.g. "(Chicago Tribune,
+# Mar 2026)". It often names an article it only saw as a search snippet. Each
+# web-added claim is checked against the research record: was the named
+# source a page it actually read, only a search result, or neither?
+
+_ATTRIBUTION_RE = re.compile(r"\(([^()]{2,160}?)\)")
+_DATEISH_RE = re.compile(
+    r"^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*)?"
+    r"(?:\d{1,2},?\s*)?(?:19|20)\d{2}$", re.I)
+_GENERIC_WORDS = {"the", "of", "and", "a", "press", "release", "report", "news", "statement",
+                  "analysis", "data", "records", "results", "certified", "website", "site",
+                  "filing", "filings", "official", "page", "fy", "update"}
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def _attributed_sources(text: str) -> List[str]:
+    """Source names from inline attributions like "(WTTW, Chicago Sun-Times,
+    Mar. 2026)" → ["WTTW", "Chicago Sun-Times"]. Parentheticals without a
+    trailing date are ignored (they are usually asides, not attributions)."""
+    names: List[str] = []
+    for m in _ATTRIBUTION_RE.finditer(text):
+        parts = [x.strip() for x in re.split(r"[;,]", m.group(1)) if x.strip()]
+        if len(parts) < 2 or not _DATEISH_RE.match(parts[-1]):
+            continue
+        names.extend(x for x in parts[:-1] if not _DATEISH_RE.match(x))
+    return names
+
+
+def _source_matches(name: str, url: str, title: str) -> bool:
+    words = [w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in _GENERIC_WORDS]
+    if not words:
+        return False
+    host = _norm(re.sub(r"^https?://", "", url or "").split("/")[0])
+    joined = "".join(words)
+    if len(joined) >= 3 and joined in host:
+        return True
+    haystack = f" {' '.join(re.findall(r'[a-z0-9]+', (title or '').lower()))} "
+    return all(f" {w} " in haystack for w in words)
+
+
+def tag_web_basis(entries: dict, research_trace: dict) -> Dict[str, int]:
+    """Add `web_basis` to each web-provenance entry: "read" (a named source
+    matches a page the agent fetched), "snippet" (it matches only a search
+    result the agent saw), "unmatched" (no match in the research record) or
+    "unattributed" (no inline attribution). Returns counts per basis."""
+    pages = research_trace.get("pages_read") or [
+        {"url": u, "title": ""} for u in research_trace.get("web_fetches", [])]
+    results = research_trace.get("web_results", [])
+    counts = {"read": 0, "snippet": 0, "unmatched": 0, "unattributed": 0}
+    for e in entries.get("entries", []):
+        if e.get("provenance") != "web":
+            continue
+        names = _attributed_sources(e.get("content", ""))
+        if not names:
+            basis = "unattributed"
+        elif any(_source_matches(n, p.get("url", ""), p.get("title", "")) for n in names for p in pages):
+            basis = "read"
+        elif any(_source_matches(n, r.get("url", ""), r.get("title", "")) for n in names for r in results):
+            basis = "snippet"
+        else:
+            basis = "unmatched"
+        e["web_basis"] = basis
+        e["web_sources_named"] = names
+        counts[basis] += 1
+    return counts
 
 
 def _title_from_markdown(md: str) -> Optional[str]:
@@ -399,6 +470,8 @@ async def run_generation(
             book_written = True
             return
 
+        web_basis = tag_web_basis(entries, research_trace)
+        entries.setdefault("stats", {})["web_basis"] = web_basis
         (OUTPUT_DIR / f"{stem}.json").write_text(
             json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
         (OUTPUT_DIR / f"{stem}_sources.json").write_text(

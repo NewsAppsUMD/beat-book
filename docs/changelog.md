@@ -36,6 +36,13 @@
 - Unmatched lines under Reporting Tips are `guidance`, not `unsupported`. Entries carry their `section`.
 - All-bold subheads and short lines ending in a colon are no longer counted as claims.
 
+### Research safeguards
+- The research shell runs under an OS sandbox (`sandbox-exec` on macOS, bubblewrap on Linux) that blocks writes outside the book's folder. A startup probe checks it; with no working sandbox the shell is withheld, never run unconfined. A run had left `/tmp/search.py` behind.
+- The agent is told its working folder in its first message, and a refused text-editor path now names the folder.
+- Topic scans no longer count as story reads. A run had written a 20,000-character book from 2,000-character excerpts without one full read. The build record lists full reads and excerpt-only stories separately.
+- Web-added claims carry `web_basis`: the source they name was a page the agent read, only a search snippet, not in its research record, or not named. The reader badge and build record show it.
+- Web searches, fetches and results are counted once per block id. Pages the agent read are recorded with titles. Edits the agent makes through shell scripts are now counted.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library
