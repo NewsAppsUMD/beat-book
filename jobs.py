@@ -207,13 +207,16 @@ def tag_web_basis(entries: dict, research_trace: dict, page_texts: Optional[Dict
                   embed_client: Any = None) -> Dict[str, Any]:
     """Add `web_basis` to each web-provenance entry and return counts:
 
-    - "read": a page the agent fetched says this (`web_support` holds the
+    - "read": a page the agent fetched supports it (`web_support` holds the
       page and passage).
-    - "snippet": not found on a fetched page; the source it names appears
-      only among search results the agent saw.
-    - "unconfirmed": names a source, but no fetched page supports it and the
-      source isn't among its search results either.
+    - "unconfirmed": no fetched page supports it, and the source it names
+      is either a page it read or nowhere in its record.
+    - "snippet": no fetched page supports it, and the source it names
+      appears only in search results it saw, never opened.
     - "unattributed": no fetched page supports it and it names no source.
+
+    Every checked claim also gets `web_best`: the closest passage and its
+    scores, whether or not it passed, so a failure can be explained.
     """
     items = entries.get("entries", [])
     names_for = _paragraph_names(items)
@@ -222,7 +225,7 @@ def tag_web_basis(entries: dict, research_trace: dict, page_texts: Optional[Dict
     results = research_trace.get("web_results", [])
     web_idx = [i for i, e in enumerate(items) if e.get("provenance") == "web"]
 
-    supports: Dict[int, Any] = {}
+    checks: Dict[int, Any] = {}
     method = "names"
     if page_texts and embed_client is not None and web_idx:
         titles = {p["url"]: p.get("title", "") for p in pages_meta}
@@ -230,20 +233,30 @@ def tag_web_basis(entries: dict, research_trace: dict, page_texts: Optional[Dict
         threshold = (entries.get("calibration") or {}).get("threshold", 0.6)
         matches = match_claims_to_pages([items[i]["content"] for i in web_idx], pages,
                                         embed_client, threshold)
-        supports = {i: m for i, m in zip(web_idx, matches) if m}
+        checks = dict(zip(web_idx, matches))
         method = "page_text"
 
     counts: Dict[str, Any] = {"read": 0, "snippet": 0, "unconfirmed": 0, "unattributed": 0}
     for i in web_idx:
         e = items[i]
         names = names_for[i]
-        if i in supports:
+        check = checks.get(i)
+        named_read = any(_source_matches(n, p.get("url", ""), p.get("title", ""))
+                         for n in names for p in pages_meta)
+        named_result = any(_source_matches(n, r.get("url", ""), r.get("title", ""))
+                           for n in names for r in results)
+        if check is not None:
+            e["web_best"] = {k: check[k] for k in ("url", "similarity", "lexical",
+                                                   "numbers_missing", "test")}
+        if check and check["supported"]:
             basis = "read"
-            e["web_support"] = supports[i]
-        elif method == "names" and any(_source_matches(n, p.get("url", ""), p.get("title", ""))
-                                       for n in names for p in pages_meta):
-            basis = "read"
-        elif any(_source_matches(n, r.get("url", ""), r.get("title", "")) for n in names for r in results):
+            e["web_support"] = {k: check[k] for k in ("url", "title", "similarity", "lexical",
+                                                      "passage_text", "test")}
+        elif method == "names" and named_read:
+            basis = "read"      # older runs without page text: trust the name
+        elif named_read:
+            basis = "unconfirmed"   # it read the page it names, which doesn't back this
+        elif named_result:
             basis = "snippet"
         elif names:
             basis = "unconfirmed"

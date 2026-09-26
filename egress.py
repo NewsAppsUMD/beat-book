@@ -105,8 +105,9 @@ def egress_plan() -> List[Dict[str, Any]]:
         {
             "stage": "Add web research",
             "phase": "generate",
-            "sends": "The full draft beat book, not the source stories. The model then "
-                     "searches and reads public web pages"
+            "sends": "The full draft beat book, not the source stories, plus the text of "
+                     "web pages it reads. Searches run at Anthropic; pages are fetched "
+                     + ("by Firecrawl" if firecrawl else "from this machine")
                      + ("; it can also run shell commands on this machine, "
                         "sandboxed so they can only write inside the book's folder" if bash_on else ""),
             "content": "derived",

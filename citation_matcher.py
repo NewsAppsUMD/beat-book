@@ -299,9 +299,10 @@ def _segment_line(line: str, i: int, lines: List[str], entries: List[Dict[str, A
 # ── Inline attributions ("(Chicago Tribune, Mar 2026)") ───────────────────────
 
 _ATTRIBUTION_RE = re.compile(r"\(([^()]{2,160}?)\)")
-_DATEISH_RE = re.compile(
-    r"^(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?\s*)?"
-    r"(?:\d{1,2},?\s*)?(?:19|20)\d{2}$", re.I)
+_MONTH = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_DATEISH_RE = re.compile(rf"^(?:{_MONTH}\s*)?(?:\d{{1,2}},?\s*)?(?:19|20)\d{{2}}$", re.I)
+# A date fragment left over from splitting "(CHA, Apr. 20, 2026)" on commas.
+_DATE_FRAGMENT_RE = re.compile(rf"^(?:{_MONTH}\s*\d{{1,2}}|\d{{1,2}}\s*{_MONTH}|{_MONTH})$", re.I)
 
 
 def attributed_sources(text: str) -> List[str]:
@@ -313,13 +314,23 @@ def attributed_sources(text: str) -> List[str]:
         parts = [x.strip() for x in re.split(r"[;,]", m.group(1)) if x.strip()]
         if len(parts) < 2 or not _DATEISH_RE.match(parts[-1]):
             continue
-        names.extend(x for x in parts[:-1] if not _DATEISH_RE.match(x))
+        names.extend(x for x in parts[:-1]
+                     if not _DATEISH_RE.match(x) and not _DATE_FRAGMENT_RE.match(x))
     return names
 
 
+def strip_attributions(text: str) -> str:
+    """Remove dated inline attributions, so adding "(WTTW, Mar. 2026)" to a
+    sentence doesn't make it a different claim."""
+    def drop(m: "re.Match[str]") -> str:
+        return "" if attributed_sources(m.group(0)) else m.group(0)
+    return _ATTRIBUTION_RE.sub(drop, text or "")
+
+
 def _claim_key(text: str) -> str:
-    """Normalize a claim for draft-vs-final comparison."""
-    return re.sub(r"[^a-z0-9]+", " ", _plain_text(text).lower()).strip()
+    """Normalize a claim for draft-vs-final comparison. Inline attributions
+    are ignored: sourcing a draft sentence doesn't make it a new claim."""
+    return re.sub(r"[^a-z0-9]+", " ", _plain_text(strip_attributions(text)).lower()).strip()
 
 
 def claims_in_markdown(markdown: str) -> set:
@@ -1017,44 +1028,91 @@ def _numbers_in(text: str) -> List[str]:
     return out
 
 
+_STOPWORDS = set("""a an and are as at be been but by for from had has have he her his in into is
+it its of on or she that the their them they this to was were which who will with after
+before about over under more than also since while where when what""".split())
+
+# Word-overlap acceptance: a claim whose key words mostly appear in one
+# passage of a page, with every figure present, is supported even when a
+# paraphrase scores below the embedding cutoff (small local embedding models
+# score paraphrases low).
+LEXICAL_SUPPORT = 0.6
+
+
+def _key_words(text: str) -> List[str]:
+    words = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", _plain_text(strip_attributions(text)))
+    return [w.lower() for w in words if w.lower() not in _STOPWORDS]
+
+
+def _lexical_overlap(claim: str, passage: str) -> float:
+    words = _key_words(claim)
+    if not words:
+        return 0.0
+    hay = set(re.findall(r"[a-z][a-z'-]{2,}", passage.lower()))
+    return sum(1 for w in words if w in hay) / len(words)
+
+
 def match_claims_to_pages(
     claims: List[str],
     pages: List[Dict[str, str]],
     embed_client: EmbedClient,
     threshold: float,
-) -> List[Optional[Dict[str, Any]]]:
-    """For each claim, the best-matching passage from the web pages the
-    research agent read, or None.
+) -> List[Dict[str, Any]]:
+    """Check each claim against the text of the web pages the research agent
+    read. Returns one dict per claim:
 
-    A match needs similarity at or above `threshold` (the book's calibrated
-    citation cutoff) and every figure the claim states to appear in that
-    page's text: a claim of "$124.7 million" is not supported by a page that
-    never says 124.7. `pages` are {"url", "title", "text"}."""
-    if not claims or not pages:
-        return [None] * len(claims)
+        {"supported": bool, "url", "title", "similarity", "lexical",
+         "numbers_missing": [...], "passage_text", "test": "embedding" |
+         "words" | None}
+
+    for the best candidate passage, whether or not it passed, so a failure
+    can be explained. A claim is supported when every figure it states
+    appears on the page and either its similarity reaches `threshold` (the
+    book's citation cutoff) or at least LEXICAL_SUPPORT of its key words
+    appear in one passage. `pages` are {"url", "title", "text"}."""
+    empty = {"supported": False, "url": "", "title": "", "similarity": None, "lexical": None,
+             "numbers_missing": [], "passage_text": "", "test": None}
+    if not claims:
+        return []
     passages: List[Dict[str, Any]] = []
     for pi, page in enumerate(pages):
         for w in _passage_windows(page.get("text", "") or ""):
             passages.append({"page": pi, "text": w["text"]})
     if not passages:
-        return [None] * len(claims)
+        return [dict(empty) for _ in claims]
     p_emb = _l2_normalize(_embed_many(embed_client, [p["text"] for p in passages], None, "web_pages"))
-    c_emb = _l2_normalize(_embed_many(embed_client, [_plain_text(c) for c in claims], None, "web_claims"))
+    c_emb = _l2_normalize(_embed_many(embed_client, [_plain_text(strip_attributions(c)) for c in claims],
+                                      None, "web_claims"))
     sims = c_emb @ p_emb.T
     flat_pages = [re.sub(r"[,$%]", "", p.get("text", "") or "") for p in pages]
-    out: List[Optional[Dict[str, Any]]] = []
+    out: List[Dict[str, Any]] = []
     for ci, claim in enumerate(claims):
-        numbers = _numbers_in(claim)
-        best = None
-        for j in np.argsort(-sims[ci])[:TOP_K]:
-            sim = float(sims[ci, j])
-            if sim < threshold:
-                break
+        numbers = _numbers_in(strip_attributions(claim))
+        # Candidates: the top passages by similarity plus the best by word
+        # overlap, so a paraphrase with low similarity is still considered.
+        order = list(np.argsort(-sims[ci])[:TOP_K])
+        lex = [_lexical_overlap(claim, p["text"]) for p in passages]
+        best_lex = int(np.argmax(lex))
+        if best_lex not in order:
+            order.append(best_lex)
+        best, best_score = None, -1.0
+        for j in order:
             page_i = passages[j]["page"]
-            if all(n in flat_pages[page_i] for n in numbers):
-                best = {"url": pages[page_i].get("url", ""), "title": pages[page_i].get("title", ""),
-                        "similarity": round(sim, 4), "passage_text": passages[j]["text"]}
-                break
-        out.append(best)
+            sim = float(sims[ci, j])
+            missing = [n for n in numbers if n not in flat_pages[page_i]]
+            test = None
+            if not missing:
+                if sim >= threshold:
+                    test = "embedding"
+                elif lex[j] >= LEXICAL_SUPPORT:
+                    test = "words"
+            cand = {"supported": test is not None, "url": pages[page_i].get("url", ""),
+                    "title": pages[page_i].get("title", ""), "similarity": round(sim, 4),
+                    "lexical": round(lex[j], 3), "numbers_missing": missing,
+                    "passage_text": passages[j]["text"], "test": test}
+            score = (2.0 if test else 0.0) + sim + lex[j]
+            if score > best_score:
+                best, best_score = cand, score
+        out.append(best or dict(empty))
     return out
 

@@ -188,6 +188,10 @@ Even with `CHAT_PROVIDER=ollama`, two features still use the Anthropic API:
 
 If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely.
 
+### How the research agent reads web pages
+
+Searches run on Anthropic's servers. Pages are fetched by the app itself (`page_fetcher.py`), from your machine, or through Firecrawl when `FIRECRAWL_API_KEY` is set. The agent can only fetch URLs that have already appeared in the run: search results, pages it has read, or the beat book. Each redirect is checked against private and loopback addresses. A page it has already read comes back as a short note, not the page again. Pages are also cached in `.cache/web_pages/` for seven days, so the same page isn't fetched again for the next book. At most 8 new pages are fetched per run. The app keeps the exact text the agent read and uses it to check each web-added claim.
+
 ### The research agent's shell
 
 The research agent can run shell commands on the server to write scrapers. Every command runs under an operating-system sandbox that blocks file writes outside the book's sandbox folder, including `/tmp`: `sandbox-exec` on macOS, and bubblewrap (`bwrap`) on Linux. Network access and file reads stay allowed. Commands also get a minimal environment with no API keys, a home directory inside the sandbox folder, and CPU-time and file-size limits.

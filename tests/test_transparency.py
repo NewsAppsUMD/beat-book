@@ -515,3 +515,152 @@ def test_replaced_draft_claims_are_listed():
     out = _entries(final, draft)
     assert out["replaced_draft_claims"] == ["The board chair is Matthew Brewer, who certified the appointment."]
     assert out["stats"]["research_replaced"] == 1
+
+
+# ── App-side page fetcher ──────────────────────────────────────────────────
+
+def _fake_http(monkeypatch, routes):
+    """Route page_fetcher's httpx client through a MockTransport."""
+    import httpx
+    import page_fetcher as pf
+    calls = []
+    def handler(request):
+        calls.append(str(request.url))
+        status, headers, body = routes[str(request.url)]
+        return httpx.Response(status, headers=headers, content=body)
+    real = httpx.Client
+    monkeypatch.setattr(pf.httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(pf, "_is_blocked_ip", lambda host: host.startswith("10.") or host == "internal")
+    monkeypatch.setattr(pf, "_firecrawl_available", lambda: False)
+    return calls
+
+
+HTML = b"<html><head><title>CHA Board</title></head><body><p>Jawanza Malone chairs the board. " \
+       b"See https://example.org/more for details.</p></body></html>"
+
+
+def test_fetcher_caches_repeats_and_limits_urls(tmp_path, monkeypatch):
+    import page_fetcher as pf
+    monkeypatch.setattr(pf, "CACHE_DIR", tmp_path / "cache")
+    calls = _fake_http(monkeypatch, {"https://thecha.org/board": (200, {"content-type": "text/html"}, HTML)})
+    f = pf.PageFetcher(max_fetches=3, seed_text=["The board page is https://thecha.org/board"])
+    first = f.fetch("https://thecha.org/board")
+    assert first["ok"] and "Jawanza Malone" in first["text"] and "untrusted" in first["text"]
+    assert first["record"]["title"] == "CHA Board"
+    again = f.fetch("https://thecha.org/board#top")
+    assert again["repeat"] and "already fetched" in again["text"]
+    assert len(calls) == 1
+    # Not seen in the run yet: refused. Seen on a page it read: allowed.
+    assert "has not appeared" in f.fetch("https://evil.example/steal")["text"]
+    assert "https://example.org/more" in f.allowed
+    # A new run reuses the disk cache without a network call.
+    g = pf.PageFetcher(max_fetches=3, seed_text=["https://thecha.org/board"])
+    assert g.fetch("https://thecha.org/board")["record"]["cached"] and len(calls) == 1
+
+
+def test_fetcher_blocks_redirects_to_private_addresses(tmp_path, monkeypatch):
+    import page_fetcher as pf
+    monkeypatch.setattr(pf, "CACHE_DIR", tmp_path / "cache")
+    _fake_http(monkeypatch, {"https://public.org/x": (302, {"location": "http://internal/admin"}, b"")})
+    f = pf.PageFetcher(max_fetches=3, seed_text=["https://public.org/x"])
+    out = f.fetch("https://public.org/x")
+    assert not out["ok"] and "private" in out["text"]
+
+
+def test_fetcher_enforces_fetch_limit(tmp_path, monkeypatch):
+    import page_fetcher as pf
+    monkeypatch.setattr(pf, "CACHE_DIR", tmp_path / "cache")
+    _fake_http(monkeypatch, {f"https://a.org/{i}": (200, {"content-type": "text/plain"}, b"page text") for i in range(3)})
+    f = pf.PageFetcher(max_fetches=2, seed_text=[" ".join(f"https://a.org/{i}" for i in range(3))])
+    assert f.fetch("https://a.org/0")["ok"] and f.fetch("https://a.org/1")["ok"]
+    assert "limit" in f.fetch("https://a.org/2")["text"]
+
+
+# ── Matching fixes ─────────────────────────────────────────────────────────
+
+def test_date_fragments_are_not_source_names():
+    assert cm.attributed_sources("He began (CHA press release, Apr. 20, 2026).") == ["CHA press release"]
+    assert cm.attributed_sources("(WTTW News, March 17, 2026)") == ["WTTW News"]
+
+
+def test_adding_an_attribution_does_not_make_a_new_claim():
+    draft = "A longtime operative rather than a housing or tax policy expert, she faces a learning curve."
+    final = "A longtime operative rather than a housing or tax policy expert, she faces a learning curve (WTTW News voter guide, Mar. 2026)."
+    assert cm._claim_key(draft) == cm._claim_key(final)
+    out = _entries(final, draft)
+    claim = [e for e in out["entries"] if not e["passthrough"]][0]
+    assert claim["origin"] == "draft" and out["stats"]["research_replaced"] == 0
+
+
+def test_word_overlap_supports_a_paraphrase():
+    page = {"url": "https://thecha.org/news/x", "title": "Pettigrew begins",
+            "text": ("Keith Pettigrew previously served as executive director of the District of Columbia "
+                     "Housing Authority, where he developed a three-year recovery plan. ") * 3}
+    claim = "Before CHA, he served as executive director of the Washington D.C. Housing Authority and developed a recovery plan."
+    [res] = cm.match_claims_to_pages([claim], [page], HashEmbed(), threshold=0.99)   # embedding can't pass
+    assert res["supported"] and res["test"] == "words" and res["lexical"] >= cm.LEXICAL_SUPPORT
+
+
+def test_named_page_that_does_not_back_the_claim_is_unconfirmed_not_snippet():
+    import jobs
+    trace = {"pages_read": [{"url": "https://www.thecha.org/news/x", "title": "Pettigrew begins"}],
+             "web_results": [{"url": "https://www.thecha.org/news/x", "title": "Pettigrew begins"}]}
+    entries = {"calibration": {"threshold": 0.5}, "entries": [
+        {"provenance": "web", "kind": "sentence", "passthrough": False,
+         "content": "Pettigrew grew up in public housing and has 30 years of experience (CHA press release, Apr. 20, 2026)."}]}
+    jobs.tag_web_basis(entries, trace, {"https://www.thecha.org/news/x": "Unrelated text about budgets. " * 20}, HashEmbed())
+    e = entries["entries"][0]
+    assert e["web_basis"] == "unconfirmed"
+    assert e["web_best"]["numbers_missing"] == ["30"]
+
+
+def test_research_loop_fetches_through_the_app(tmp_path, monkeypatch):
+    """Drive run_research_agent with a scripted client: search, fetch the same
+    page twice, edit, finalize. No network, no API."""
+    import asyncio
+    import research_agent as ra
+    import page_fetcher as pf
+    monkeypatch.setattr(pf, "CACHE_DIR", tmp_path / "cache")
+    calls = _fake_http(monkeypatch, {"https://thecha.org/board": (200, {"content-type": "text/html"}, HTML)})
+    (tmp_path / "book.md").write_text("# Book\n\n## Key Sources\n\n- **Jane Doe** — director of the agency since 2020.\n")
+
+    B = _FakeBlock
+    script = [
+        B(stop_reason="tool_use", usage=None, content=[
+            B(type="server_tool_use", id="s1", name="web_search", input={"query": "cha board"}),
+            B(type="web_search_tool_result", tool_use_id="s1", content=[
+                B(type="web_search_result", url="https://thecha.org/board", title="Board", page_age="")]),
+            B(type="tool_use", id="t1", name="fetch_page", input={"url": "https://thecha.org/board"}),
+            B(type="tool_use", id="t2", name="fetch_page", input={"url": "https://thecha.org/board"}),
+        ]),
+        B(stop_reason="tool_use", usage=None, content=[
+            B(type="tool_use", id="t3", name="str_replace_based_edit_tool", input={
+                "command": "str_replace", "path": "book.md",
+                "old_str": "- **Jane Doe** — director of the agency since 2020.",
+                "new_str": "- **Jane Doe** — director of the agency since 2020.\n- **Jawanza Malone** — chairs the CHA board as of 2026."}),
+        ]),
+        B(stop_reason="tool_use", usage=None, content=[
+            B(type="tool_use", id="t4", name=ra.FINALIZE_TOOL_NAME, input={"filename": "book.md", "summary": "Added Malone."}),
+        ]),
+    ]
+    sent = []
+
+    class Client:
+        class messages:
+            @staticmethod
+            def stream(**kw):
+                sent.append(kw)
+                return _FakeStream(script[len(sent) - 1])
+    monkeypatch.setattr(ra, "Anthropic", lambda **kw: Client())
+    trace = {}
+    out = asyncio.run(ra.run_research_agent(tmp_path, "book.md", "key", trace=trace))
+    assert "Jawanza Malone" in out and trace["finalized"]
+    assert len(calls) == 1 and trace["repeat_fetches"] == 1
+    assert trace["pages_read"][0]["title"] == "CHA Board" and "text" not in trace["pages_read"][0]
+    assert "Jawanza Malone" in trace["_page_texts"]["https://thecha.org/board"]
+    assert trace["attribution_warnings"] == 1       # the added bullet names no source
+    tool_names = [t["name"] for t in sent[0]["tools"]]
+    assert "fetch_page" in tool_names and "web_fetch" not in tool_names
+    # The second request carries the page text back to the model.
+    results = sent[1]["messages"][-1]["content"]
+    assert any("BEGIN PAGE" in str(r.get("content")) for r in results if isinstance(r, dict))

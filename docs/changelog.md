@@ -50,6 +50,13 @@
 - Draft claims that research rewrote or removed are listed as `replaced_draft_claims`, counted in the sourcing summary, and shown in the build record.
 - The prompt tells the agent not to re-fetch pages.
 
+### App-side page fetching
+- The research agent's `web_fetch` (Anthropic server tool) is replaced by `fetch_page`, run by the app in `page_fetcher.py`. The server tool could not be cached, and its text came back for only some pages. Repeats within a run return a note, and pages are cached on disk for 7 days (`.cache/web_pages/`). Only URLs already seen in the run can be fetched, every redirect hop is checked against private addresses, page text is marked untrusted, and there are at most 8 network fetches per run. The build record lists characters fetched, cached copies, repeat requests and refused fetches.
+- A web claim now counts as supported by a page when every figure is present and either the similarity cutoff is met or at least 60% of its key words appear in one passage. Each checked claim records its closest passage and scores (`web_best`).
+- "Snippet" now means the named source was only seen in search results. A named source that was read but doesn't back the claim is "unconfirmed".
+- Date fragments like "Apr. 20" are no longer read as source names.
+- Draft-versus-final comparison ignores inline attributions, so sourcing a draft sentence doesn't make it a research claim or a replaced one.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library

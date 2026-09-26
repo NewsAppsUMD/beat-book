@@ -443,7 +443,14 @@
         ${finishNote}</p>
       ${(research.web_searches || []).length ? `<p class="mf-note">Searches: ${research.web_searches.map(q => `“${escapeHtml(q)}”`).join(', ')}</p>` : ''}
       ${shellNote}
-      ${pagesRead.length ? `<h4>Pages it read</h4><ul class="mf-list">${pagesRead.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
+      ${pagesRead.length ? `<h4>Pages it read</h4><ul class="mf-list">${pagesRead.map(c => {
+          const bits = [hostLink(c.url)];
+          if (typeof c.chars === 'number') bits.push(c.chars ? `${fmtNum(c.chars)} characters${c.truncated ? ', shown in part' : ''}` : 'no readable text');
+          if (c.cached) bits.push('cached copy');
+          return `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(bits.join(' · '))}</span></li>`;
+        }).join('')}</ul>` : ''}
+      ${research.repeat_fetches ? `<p class="mf-note">It asked for ${fmtNum(research.repeat_fetches)} pages it had already read; the app answered from its copy.</p>` : ''}
+      ${(research.fetch_errors || []).length ? `<details><summary>${research.fetch_errors.length} fetches refused or failed</summary><ul class="mf-list">${research.fetch_errors.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></details>` : ''}
       ${cited.length ? `<h4>Pages the model cited</h4><ul class="mf-list">${cited.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
       ${results.length ? `<details><summary>${results.length} search results it saw as snippets</summary><ul class="mf-list">${results.map(r => `<li><a href="${safeHref(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || hostLink(r.url))}</a> <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
       ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
@@ -589,7 +596,7 @@
   const WEB_BASIS = {
     read: { label: 'web', title: 'Added by web research. A page the agent read supports this.' },
     snippet: { label: 'web · snippet', title: 'Added by web research. No page the agent read supports this; the source it names appears only in search-result snippets. Verify before use.' },
-    unconfirmed: { label: 'web · unconfirmed', title: 'Added by web research. It names a source, but no page the agent read supports it. Verify before use.' },
+    unconfirmed: { label: 'web · unconfirmed', title: 'Added by web research. It names a source, but no page the agent read supports it: the closest passage was not similar enough, or a figure in the claim is not on the page. Verify before use.' },
     unmatched: { label: 'web · unconfirmed', title: 'Added by web research. The source this sentence names is not among the pages or search results the agent saw. Verify before use.' },
     unattributed: { label: 'web · no source', title: 'Added by web research. No page the agent read supports it, and it names no source. Verify before use.' },
     unknown: { label: 'web', title: 'Added by web research. Check the attribution in the sentence; it is not matched to your stories.' },
@@ -788,7 +795,7 @@
         const b = WEB_BASIS[basis] || WEB_BASIS.unknown;
         const sup = sid !== '' ? webSupports[+sid] : null;
         const title = sup
-          ? `${b.title} Page: ${sup.title || sup.url} (match ${fmtSim(sup.similarity)}).`
+          ? `${b.title} Page: ${sup.title || sup.url} (${sup.test === 'words' ? `${Math.round((sup.lexical || 0) * 100)}% of its key words appear there` : `similarity ${fmtSim(sup.similarity)}`}; every figure appears on the page).`
           : b.title;
         const tag = sup && /^https?:\/\//i.test(sup.url) ? 'a' : 'span';
         const href = tag === 'a' ? ` href="${escapeHtml(sup.url)}" target="_blank" rel="noopener"` : '';
