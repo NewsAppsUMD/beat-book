@@ -30,6 +30,12 @@
 - Static assets carry a version query so browsers pick up the new reader.
 - Added a pytest suite in `tests/`.
 
+### Follow-ups after the first real runs
+- The research agent's turn ceiling was 4. Runs spent three turns reading the file, searched on the last turn, and stopped before editing: research changed only 4 of 13 saved books. The ceiling is now 8, the model is told two turns before the end (and again on the last) to stop researching and write its edits, and it is told not to list the folder or `sleep`.
+- If the agent ends without calling `finalize_beat_book`, one extra request forced to that tool records its summary. A failure there loses only the summary.
+- Unmatched lines under Reporting Tips are `guidance`, not `unsupported`. Entries carry their `section`.
+- All-bold subheads and short lines ending in a colon are no longer counted as claims.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library

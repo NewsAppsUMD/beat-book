@@ -672,6 +672,37 @@ def _record_web_activity(content: Any, trace: Dict[str, Any]) -> List[tuple]:
     return statuses
 
 
+def _stream_request(client: Anthropic, request_kwargs: Dict[str, Any]):
+    """One streamed request. Returns (final_message, container_id or None).
+
+    Streaming keeps long server-tool turns under the SDK's synchronous
+    request limit. The server-tool container_id arrives in mid-stream
+    message_start / message_delta events, not the consolidated final
+    Message, so the events are walked to capture it."""
+    streamed_container_id: Optional[str] = None
+    with client.messages.stream(**request_kwargs) as stream:
+        for event in stream:
+            etype = getattr(event, "type", None)
+            if etype == "message_start":
+                msg = getattr(event, "message", None)
+                c = getattr(msg, "container", None) if msg is not None else None
+                if c is not None:
+                    streamed_container_id = c.id
+            elif etype == "message_delta":
+                delta = getattr(event, "delta", None)
+                c = getattr(delta, "container", None) if delta is not None else None
+                if c is not None:
+                    streamed_container_id = c.id
+        return stream.get_final_message(), streamed_container_id
+
+
+FINALIZE_NOTE = (
+    "[Application notice] Research time is over and no more edits can be "
+    "made. Call `finalize_beat_book` now with the filename and a short "
+    "summary of what you added and which sources you drew on."
+)
+
+
 def _wrap_up_note(turns_left: int) -> str:
     if turns_left <= 1:
         return (
@@ -836,31 +867,8 @@ async def run_research_agent(
             flush=True,
         )
 
-        def _stream_once():
-            # Stream so the async event loop (FastAPI's WebSocket handler)
-            # is never blocked.
-            #
-            # The server-tool container_id is delivered through mid-stream
-            # message_start / message_delta events, not the consolidated
-            # final Message — so we iterate the stream to capture it.
-            streamed_container_id: Optional[str] = None
-            with client.messages.stream(**request_kwargs) as stream:
-                for event in stream:
-                    etype = getattr(event, "type", None)
-                    if etype == "message_start":
-                        msg = getattr(event, "message", None)
-                        c = getattr(msg, "container", None) if msg is not None else None
-                        if c is not None:
-                            streamed_container_id = c.id
-                    elif etype == "message_delta":
-                        delta = getattr(event, "delta", None)
-                        c = getattr(delta, "container", None) if delta is not None else None
-                        if c is not None:
-                            streamed_container_id = c.id
-                return stream.get_final_message(), streamed_container_id
-
         try:
-            response, streamed_cid = await asyncio.to_thread(_stream_once)
+            response, streamed_cid = await asyncio.to_thread(_stream_request, client, request_kwargs)
         except Exception as e:
             raise RuntimeError(f"Research agent request failed on turn {turn + 1}: {e}") from e
 
@@ -1029,5 +1037,80 @@ async def run_research_agent(
         await _emit(on_progress, "unexpected_stop", f"Unexpected stop_reason: {stop_reason}")
         break
 
+    # The loop can end at the turn ceiling right after executing the model's
+    # last edits, or on end_turn without a finalize call. The edits are
+    # already in the file, but the summary of what changed is lost. Spend
+    # one extra request, forced to call finalize_beat_book, to record it.
+    # Skipped after pause_turn, where the transcript must be resent as is.
+    if not finalized and trace.get("stop") != "pause_turn":
+        finalized_path, summary = await _finalize_only_turn(
+            client, system_prompt, tools, messages, container_id,
+            sandbox_dir, markdown_filename, trace,
+        )
+        if finalized_path is not None:
+            markdown_path = finalized_path
+            await _emit(on_progress, "finalizing", summary or "Finalized.")
+
     await _emit(on_progress, "done", "Research agent finished")
     return markdown_path.read_text(encoding="utf-8")
+
+
+async def _finalize_only_turn(
+    client: Anthropic,
+    system_prompt: str,
+    tools: List[Dict[str, Any]],
+    messages: List[Dict[str, Any]],
+    container_id: Optional[str],
+    sandbox_dir: Path,
+    markdown_filename: str,
+    trace: Dict[str, Any],
+) -> tuple[Optional[Path], str]:
+    """Ask the model for its finalize call and nothing else. Returns the
+    finalized file path (or None) and the summary. Never raises: a failure
+    here only loses the summary, never the edits."""
+    msgs = list(messages)
+    if not _append_user_note(msgs, FINALIZE_NOTE):
+        msgs.append({"role": "user", "content": FINALIZE_NOTE})
+    request_kwargs: Dict[str, Any] = {
+        "model": MODEL,
+        "max_tokens": 2048,
+        "system": [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+        # Same tool list as every other turn: earlier web results in the
+        # transcript refer to these tool definitions.
+        "tools": tools,
+        "tool_choice": {"type": "tool", "name": FINALIZE_TOOL_NAME},
+        "messages": _add_cache_breakpoints(msgs),
+        "temperature": 0.2,
+    }
+    if container_id is not None:
+        request_kwargs["container"] = container_id
+    trace["finalize_turn"] = True
+    try:
+        response, _ = await asyncio.to_thread(_stream_request, client, request_kwargs)
+    except Exception as e:
+        print(f"[research_agent] finalize-only turn failed: {type(e).__name__}: {e}", flush=True)
+        trace["finalize_turn_error"] = f"{type(e).__name__}: {e}"
+        return None, ""
+    u = getattr(response, "usage", None)
+    trace["model_calls"].append({
+        "turn": "finalize",
+        "stop_reason": response.stop_reason,
+        "usage": {
+            k: getattr(u, k, None) or 0
+            for k in ("input_tokens", "output_tokens",
+                      "cache_creation_input_tokens", "cache_read_input_tokens")
+        } if u is not None else {},
+    })
+    for block in response.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == FINALIZE_TOOL_NAME:
+            tool_input = block.input or {}
+            summary = str(tool_input.get("summary", "")).strip()
+            trace["summary"] = summary
+            candidate = _resolve_inside_sandbox(sandbox_dir, tool_input.get("filename") or markdown_filename)
+            if candidate is not None and candidate.is_file():
+                trace["finalized"] = True
+                return candidate, summary
+            # Named a file that doesn't exist: keep the summary, use the
+            # original file.
+            return None, summary
+    return None, ""

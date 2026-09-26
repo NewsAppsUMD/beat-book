@@ -372,6 +372,7 @@ The reader shows how well each part of the book is sourced, so a reporter knows 
 - **Alternate passages.** The matcher keeps up to five passages per claim. The source panel lists them all, and clicking one opens it.
 - **Key phrases.** Inside the highlighted passage, a darker highlight marks the words that matter most to the match.
 - **Web-added claims.** Sentences the research step added carry a small "web" badge. They are compared against the draft, not guessed.
+- **Advice and labels.** Unmatched lines under Reporting Tips count as guidance, not as unsourced claims, because advice has no source to match. All-bold subheads and short "Label:" lines are not counted as claims at all.
 - **Cited bullets and table rows.** Bullets and table rows with at least six words are cited as one claim each. Key Sources, Story Ideas and the Calendar are usually lists, so these sections now get citations.
 - **How this book was made.** A panel, opened from the reader header, reads the book's build record. It shows the models and token counts, time per stage, where each stage sent material, the stories the writing agent read, the instructions it was given, the research agent's searches, cited pages and summary, a diff of what research changed, and how the citation cutoff was set.
 

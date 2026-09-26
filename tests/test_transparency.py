@@ -300,3 +300,87 @@ def test_wrap_up_note_goes_on_trailing_user_message_only():
     assert not ra._append_user_note(paused, "note")
     assert "LAST turn" in ra._wrap_up_note(1)
     assert ra.MAX_TURNS > ra.WRAP_UP_TURNS_LEFT
+
+
+# ── Labels, guidance, and the finalize-only turn ───────────────────────────
+
+def test_label_lines_are_not_claims():
+    md = "\n".join([
+        "## Key Sources & Players",
+        "**At the Chicago Housing Authority:**",
+        "Key agencies:",
+        "**On the CHA beat:** The agency resists public records requests and delays FOIA replies.",
+    ])
+    entries = cm._segment_markdown(md)
+    claims = [e for e in entries if e["needs_embedding"]]
+    assert [e["content"] for e in claims] == [
+        "**On the CHA beat:** The agency resists public records requests and delays FOIA replies."]
+    assert all(e["section"] == "Key Sources & Players" for e in entries[1:])
+
+
+def test_unmatched_reporting_tips_are_guidance_not_unsourced():
+    md = ("## Reporting Tips\n\nFile records requests early and expect long delays from agencies.\n\n"
+          "## Background & Context\n\nQuantum chromodynamics describes gluon interactions inside protons.")
+    out = _entries(md, md)
+    claims = [e for e in out["entries"] if not e["passthrough"]]
+    assert [c["provenance"] for c in claims] == ["guidance", "unsupported"]
+    assert claims[0]["section"] == "Reporting Tips"
+    assert out["stats"]["guidance"] == 1 and out["stats"]["unsupported"] == 1
+
+
+class _FakeBlock:
+    def __init__(self, **kw): self.__dict__.update(kw)
+
+
+class _FakeStream:
+    def __init__(self, message): self.message = message
+    def __enter__(self): return self
+    def __exit__(self, *a): return False
+    def __iter__(self): return iter([])
+    def get_final_message(self): return self.message
+
+
+class _FakeClient:
+    def __init__(self, message):
+        self.requests = []
+        outer = self
+        class Messages:
+            def stream(self, **kw):
+                outer.requests.append(kw)
+                return _FakeStream(message)
+        self.messages = Messages()
+
+
+def test_finalize_only_turn_records_summary(tmp_path):
+    import asyncio
+    import research_agent as ra
+    (tmp_path / "book.md").write_text("# Book\n")
+    msg = _FakeBlock(stop_reason="tool_use", usage=None, content=[
+        _FakeBlock(type="tool_use", name=ra.FINALIZE_TOOL_NAME,
+                   input={"filename": "book.md", "summary": "Added the 2026 CHA budget."})])
+    client = _FakeClient(msg)
+    trace = {"model_calls": []}
+    messages = [{"role": "user", "content": "start"}, {"role": "assistant", "content": []}]
+    path, summary = asyncio.run(ra._finalize_only_turn(
+        client, "system", [], messages, "cont-1", tmp_path, "book.md", trace))
+    assert path == (tmp_path / "book.md").resolve() and summary == "Added the 2026 CHA budget."
+    assert trace["finalized"] and trace["finalize_turn"]
+    req = client.requests[0]
+    assert req["tool_choice"] == {"type": "tool", "name": ra.FINALIZE_TOOL_NAME}
+    assert req["container"] == "cont-1"
+    assert req["messages"][-1]["role"] == "user"      # note added after the assistant turn
+    assert len(messages) == 2                          # caller's transcript untouched
+
+
+def test_finalize_only_turn_failure_is_harmless(tmp_path):
+    import asyncio
+    import research_agent as ra
+
+    class Boom:
+        class messages:
+            @staticmethod
+            def stream(**kw): raise RuntimeError("api down")
+    trace = {"model_calls": []}
+    path, summary = asyncio.run(ra._finalize_only_turn(
+        Boom(), "system", [], [{"role": "user", "content": "x"}], None, tmp_path, "book.md", trace))
+    assert path is None and summary == "" and "api down" in trace["finalize_turn_error"]

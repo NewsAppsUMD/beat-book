@@ -416,18 +416,21 @@
     const cited = research.cited_sources || [];
     const results = research.web_results || [];
     const changes = m.research_changes || {};
+    const finishNote = research.finalized
+      ? (research.finalize_turn ? ' It finished on an extra turn reserved for recording its summary.' : '')
+      : ' It did not formally finish, so its last file state was used.';
     const researchBody = (research.model_calls || []).length ? `
       ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary of its changes.</p>` : ''}
       <p>${fmtNum((research.web_searches || []).length)} web searches, ${fmtNum((research.web_fetches || []).length)} pages read, ${fmtNum((research.bash_commands || []).length)} shell commands.
         ${changes.changed ? `It added ${fmtNum(changes.lines_added)} lines and removed ${fmtNum(changes.lines_removed)}.` : 'It made no changes to the draft.'}
-        ${research.finalized ? '' : ' It did not formally finish, so its last file state was used.'}</p>
+        ${finishNote}</p>
       ${(research.web_searches || []).length ? `<p class="mf-note">Searches: ${research.web_searches.map(q => `“${escapeHtml(q)}”`).join(', ')}</p>` : ''}
       ${cited.length ? `<h4>Pages the model cited</h4><ul class="mf-list">${cited.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
       ${results.length ? `<details><summary>All ${results.length} search results it saw</summary><ul class="mf-list">${results.map(r => `<li><a href="${safeHref(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || hostLink(r.url))}</a> <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
       ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
     ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
 
-    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} had no match above the cutoff.
+    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} had no match above the cutoff.${stats.guidance ? ` ${fmtNum(stats.guidance)} lines of reporting tips had no match; they are advice, so they are not counted as unsourced.` : ''}
         ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
       <p class="mf-note">The cutoff is ${fmtSim(cal.threshold)}: the typical similarity of random, unrelated pairs in this corpus (${fmtSim(cal.noise_median)}) plus ${escapeHtml(String(cal.sigma || 3))} spreads, kept between ${fmtSim(0.40)} and ${fmtSim(cal.ceiling)}.${typeof cal.raw_threshold === 'number' && cal.raw_threshold > cal.threshold ? ' The upper limit clamped it, which happens with narrow single-topic corpora.' : ''}</p>`;
 
@@ -610,6 +613,7 @@
     ];
     if (st.hasOrigin || st.web) bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong> added by web research</span>`);
     bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-unsupported"></span><strong>${st.unsupported}</strong> with no matching source</span>`);
+    if (st.guidance) bits.push(`<span class="sourcing-stat" title="Lines in Reporting Tips with no matching passage. Advice to the reporter has no source to match, so it is not counted as unsourced."><span class="sourcing-swatch sw-guidance"></span><strong>${st.guidance}</strong> reporting tips (advice, not matched)</span>`);
     const threshold = calibration && typeof calibration.threshold === 'number'
       ? `<span class="sourcing-threshold" title="Similarity cutoff computed for this corpus from random sentence and passage pairs. Matches below it are not shown.">Match cutoff ${fmtSim(calibration.threshold)}</span>` : '';
     return `<div class="sourcing-summary" role="note">
@@ -703,6 +707,7 @@
       corpus: claims.filter(e => provOf(e) === 'corpus').length,
       web: claims.filter(e => provOf(e) === 'web').length,
       unsupported: claims.filter(e => provOf(e) === 'unsupported').length,
+      guidance: claims.filter(e => provOf(e) === 'guidance').length,
       hasOrigin: claims.some(e => e.origin),
     };
 
@@ -729,7 +734,7 @@
       return `<sup class="footnote-ref ${band}" onclick="Reader.openCitation(${num})" onmouseenter="Reader.showPreview('${safeId}', event)" onmouseleave="Reader.hidePreview()" title="${titleAttr}">${num}</sup>`;
     });
     html = html
-      .replace(/\[\[PV:(corpus|web|unsupported)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
+      .replace(/\[\[PV:(corpus|web|unsupported|guidance)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
       .replace(/\[\[\/PV\]\]/g, '</span>')
       .replace(/\[\[WEB\]\]/g, '<span class="web-badge" title="Added by the web-research step. Check the attribution in the sentence; it is not matched to your stories.">web</span>');
 

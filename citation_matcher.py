@@ -190,6 +190,23 @@ def _is_code_block_delimiter(line: str) -> bool:
 MIN_CITABLE_WORDS = 6
 
 _LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+# A paragraph line that is only emphasized text, like "**At the CHA:**", is a
+# subheading the writer used instead of "###", not a claim.
+_EMPHASIS_ONLY_RE = re.compile(r"^\s*(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1\s*:?\s*$")
+
+# Sections whose content is advice to the reporter ("FOIA everything early"),
+# not claims about the beat. Their unmatched lines are counted as guidance,
+# not as unsourced claims. Matched against H2 heading text.
+GUIDANCE_SECTION_RE = re.compile(r"\b(reporting tips|tips for (?:covering|reporters)|how to cover)\b", re.I)
+
+
+def _is_label_line(line: str) -> bool:
+    """Short label lines: all-emphasis subheads, or a few words ending in a
+    colon ("Key agencies:")."""
+    stripped = line.strip()
+    if _EMPHASIS_ONLY_RE.match(stripped):
+        return True
+    return stripped.endswith(":") and len(_plain_text(stripped).split()) < MIN_CITABLE_WORDS
 _TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{2,}:?$")
 
 
@@ -211,60 +228,72 @@ def _segment_markdown(markdown: str) -> List[Dict[str, Any]]:
 
     Each entry has `content` (the Markdown to render, verbatim for list items
     and table rows), `needs_embedding`, `kind` ("sentence", "list_item",
-    "table_row" or "other") and, for embedded entries, `embed_text` — the
-    plain words the embedding model should see.
+    "table_row" or "other"), `section` (the text of the H2 it sits under)
+    and, for embedded entries, `embed_text` — the plain words the embedding
+    model should see.
 
     Paragraph sentences are embedded one by one. List items and body table
     rows are embedded whole, as one claim each, when they carry at least
     MIN_CITABLE_WORDS words; beat books keep their sources, story ideas and
     calendars in lists, so skipping lists left the most actionable sections
-    uncited. Headings, table header/separator rows, blank lines and code
+    uncited. Headings, label lines (an all-bold subhead, or a few words
+    ending in a colon), table header/separator rows, blank lines and code
     blocks pass through."""
     entries: List[Dict[str, Any]] = []
-    in_code_block = False
     lines = markdown.split("\n")
+    in_code_block = False
+    section = ""
 
     for i, line in enumerate(lines):
+        if not in_code_block and re.match(r"^##\s+", line.strip()):
+            section = re.sub(r"^##\s+", "", line.strip()).strip()
+        start = len(entries)
+        _segment_line(line, i, lines, entries, in_code_block)
+        for e in entries[start:]:
+            e["section"] = section
         if _is_code_block_delimiter(line):
             in_code_block = not in_code_block
-            entries.append({"content": line, "needs_embedding": False, "kind": "other"})
-            continue
-
-        if in_code_block or not line.strip() or _is_markdown_heading(line):
-            entries.append({"content": line, "needs_embedding": False, "kind": "other"})
-            continue
-
-        if _is_markdown_list_item(line):
-            text = _plain_text(_LIST_MARKER_RE.sub("", line, count=1))
-            citable = len(text.split()) >= MIN_CITABLE_WORDS
-            entry = {"content": line, "needs_embedding": citable, "kind": "list_item"}
-            if citable:
-                entry["embed_text"] = text
-            entries.append(entry)
-            continue
-
-        if _is_markdown_table_row(line):
-            nxt = lines[i + 1] if i + 1 < len(lines) else ""
-            is_header = _is_markdown_table_row(nxt) and _is_table_separator(nxt)
-            cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            text = _plain_text(" — ".join(c for c in cells if c))
-            citable = (not is_header and not _is_table_separator(line)
-                       and len(text.split()) >= MIN_CITABLE_WORDS)
-            entry = {"content": line, "needs_embedding": citable, "kind": "table_row"}
-            if citable:
-                entry["embed_text"] = text
-            entries.append(entry)
-            continue
-
-        sentences = split_into_sentences(line)
-        if sentences:
-            for sentence in sentences:
-                entries.append({"content": sentence, "needs_embedding": True,
-                                "kind": "sentence", "embed_text": _plain_text(sentence)})
-        else:
-            entries.append({"content": line, "needs_embedding": False, "kind": "other"})
 
     return entries
+
+
+def _segment_line(line: str, i: int, lines: List[str], entries: List[Dict[str, Any]],
+                  in_code_block: bool) -> None:
+    """Append the entries for one Markdown line (see _segment_markdown)."""
+    if (_is_code_block_delimiter(line) or in_code_block or not line.strip()
+            or _is_markdown_heading(line) or _is_label_line(line)):
+        entries.append({"content": line, "needs_embedding": False, "kind": "other"})
+        return
+
+    if _is_markdown_list_item(line):
+        text = _plain_text(_LIST_MARKER_RE.sub("", line, count=1))
+        citable = len(text.split()) >= MIN_CITABLE_WORDS
+        entry = {"content": line, "needs_embedding": citable, "kind": "list_item"}
+        if citable:
+            entry["embed_text"] = text
+        entries.append(entry)
+        return
+
+    if _is_markdown_table_row(line):
+        nxt = lines[i + 1] if i + 1 < len(lines) else ""
+        is_header = _is_markdown_table_row(nxt) and _is_table_separator(nxt)
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        text = _plain_text(" — ".join(c for c in cells if c))
+        citable = (not is_header and not _is_table_separator(line)
+                   and len(text.split()) >= MIN_CITABLE_WORDS)
+        entry = {"content": line, "needs_embedding": citable, "kind": "table_row"}
+        if citable:
+            entry["embed_text"] = text
+        entries.append(entry)
+        return
+
+    sentences = split_into_sentences(line)
+    if sentences:
+        for sentence in sentences:
+            entries.append({"content": sentence, "needs_embedding": True,
+                            "kind": "sentence", "embed_text": _plain_text(sentence)})
+    else:
+        entries.append({"content": line, "needs_embedding": False, "kind": "other"})
 
 
 def _claim_key(text: str) -> str:
@@ -637,8 +666,9 @@ def markdown_to_beatbook_entries(
               "kind": str,               # sentence | list_item | table_row | other
               "origin": str,             # draft | research (non-passthrough only;
                                          #   needs draft_markdown)
-              "provenance": str,         # corpus | web | unsupported
+              "provenance": str,         # corpus | web | unsupported | guidance
                                          #   (non-passthrough only)
+              "section": str,            # H2 heading the entry sits under
               "supports": [
                 {
                   "article_id": str,
@@ -664,7 +694,9 @@ def markdown_to_beatbook_entries(
     given, every claim that is not in the draft is tagged `origin: research`
     and `provenance: web`: it came from the research agent's web work, so any
     match against the reporter's corpus is at best corroboration, not its
-    source. Claims with no support above threshold are `unsupported`.
+    source. Claims with no support above threshold are `unsupported`, except
+    in advice sections such as Reporting Tips (GUIDANCE_SECTION_RE), where
+    they are `guidance`: advice to the reporter has no source to match.
     """
     client = embed_client
 
@@ -850,8 +882,8 @@ def markdown_to_beatbook_entries(
 
     # ── Phase 4: assemble the output entry list.
     out_entries: List[Dict[str, Any]] = []
-    stats = {"claims": 0, "cited": 0, "unsupported": 0, "research_added": 0,
-             "list_items_cited": 0, "table_rows_cited": 0}
+    stats = {"claims": 0, "cited": 0, "unsupported": 0, "guidance": 0,
+             "research_added": 0, "list_items_cited": 0, "table_rows_cited": 0}
     for i, entry in enumerate(entries):
         kind = entry.get("kind", "other")
         if i not in entry_to_embed_idx:
@@ -859,6 +891,7 @@ def markdown_to_beatbook_entries(
                 "content": entry["content"],
                 "passthrough": True,
                 "kind": kind,
+                "section": entry.get("section", ""),
                 "supports": [],
             })
             continue
@@ -870,11 +903,14 @@ def markdown_to_beatbook_entries(
             provenance = "web"
         elif supports:
             provenance = "corpus"
+        elif GUIDANCE_SECTION_RE.search(entry.get("section", "")):
+            provenance = "guidance"
         else:
             provenance = "unsupported"
         stats["claims"] += 1
         stats["cited"] += 1 if provenance == "corpus" else 0
         stats["unsupported"] += 1 if provenance == "unsupported" else 0
+        stats["guidance"] += 1 if provenance == "guidance" else 0
         stats["research_added"] += 1 if origin == "research" else 0
         if provenance == "corpus" and kind == "list_item":
             stats["list_items_cited"] += 1
@@ -886,6 +922,7 @@ def markdown_to_beatbook_entries(
             "kind": kind,
             "origin": origin if draft_claims is not None else None,
             "provenance": provenance,
+            "section": entry.get("section", ""),
             "supports": supports,
         })
 

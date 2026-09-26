@@ -1996,6 +1996,7 @@ a:focus-visible {
 .sw-corpus { background: var(--citation-soft); border: 1px solid var(--citation-border); }
 .sw-web { background: var(--prov-web-soft); border: 1px solid var(--prov-web-border); }
 .sw-unsupported { border-bottom: 2px solid var(--prov-unsourced); border-radius: 0; height: 0.45rem; }
+.sw-guidance { background: var(--surface); border: 1px dashed var(--border-strong); }
 .sourcing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem; margin-top: 0.55rem; }
 .sourcing-threshold { font-variant-numeric: tabular-nums; color: var(--text-faint); cursor: help; }
 .sourcing-note { margin: 0.55rem 0 0 !important; font-size: 0.8rem; color: var(--text-faint); }
