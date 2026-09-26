@@ -288,3 +288,15 @@ def test_draft_diff_counts_added_lines():
 def test_alderman_abbreviation_does_not_split_sentences():
     assert cm.split_into_sentences("Retired Ald. Walter Burnett will lead the agency. He starts Monday.") == [
         "Retired Ald. Walter Burnett will lead the agency.", "He starts Monday."]
+
+
+def test_wrap_up_note_goes_on_trailing_user_message_only():
+    import research_agent as ra
+    msgs = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}]
+    assert ra._append_user_note(msgs, "note")
+    assert msgs[-1]["content"][-1] == {"type": "text", "text": "note"}
+    assert msgs[-1]["content"][0]["type"] == "tool_result"
+    paused = [{"role": "assistant", "content": []}]
+    assert not ra._append_user_note(paused, "note")
+    assert "LAST turn" in ra._wrap_up_note(1)
+    assert ra.MAX_TURNS > ra.WRAP_UP_TURNS_LEFT

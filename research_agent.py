@@ -41,7 +41,14 @@ from anthropic import Anthropic
 
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS_PER_TURN = 16000
-MAX_TURNS = 4   # safety ceiling only; research is demand-driven and often exits far sooner
+# Ceiling on model turns. At 4, runs routinely spent three turns listing and
+# viewing the file, did every search on the last turn, and ran out before
+# editing anything: research changed only 4 of 13 saved books. Turns are
+# cheap (the prefix is cached); searches and fetches have their own caps.
+MAX_TURNS = 8
+# How many turns before the ceiling the model is told to stop researching
+# and write its edits.
+WRAP_UP_TURNS_LEFT = 2
 BASH_TIMEOUT_SECONDS = 30
 WEB_SEARCH_MAX_USES = 6
 WEB_FETCH_MAX_USES = 6
@@ -383,7 +390,8 @@ for the scraper requirement above.
 
 # Workflow
 
-1. View the Markdown file.
+1. View the Markdown file once. Do not list the directory first; the \
+   filename is given above.
 2. Decide what — if anything — actually needs research (see "What to \
    research"). If nothing does, call `finalize_beat_book` now and stop.
 3. Otherwise, research only those specific gaps. Prefer primary sources and \
@@ -394,6 +402,13 @@ for the scraper requirement above.
    obvious fit (see above). Skip if it would cost more than one turn.
 5. Call `finalize_beat_book` as soon as the gaps you identified are filled. \
    Do not keep searching for more to add once they are.
+
+Never run `sleep` or otherwise pause between searches. The application \
+handles pacing, and a pause only uses up one of your turns.
+
+Research you do not write into the file is lost. Save a turn for editing: \
+make your `str_replace` / `insert` edits as soon as you have the facts, then \
+call `finalize_beat_book`.
 
 Keep your running text messages brief — your real work is in the tools. \
 Do not narrate every step; progress updates are enough.\
@@ -657,6 +672,38 @@ def _record_web_activity(content: Any, trace: Dict[str, Any]) -> List[tuple]:
     return statuses
 
 
+def _wrap_up_note(turns_left: int) -> str:
+    if turns_left <= 1:
+        return (
+            "[Application notice] This is your LAST turn. Do not search or "
+            "fetch anything else. Write your edits into the file now with "
+            "`str_replace` or `insert`, and call `finalize_beat_book` in this "
+            "same turn. Anything not written into the file will be lost."
+        )
+    return (
+        f"[Application notice] You have {turns_left} turns left, including "
+        "this one. Stop researching. Use what you already found: write your "
+        "edits into the file now with `str_replace` or `insert`, then call "
+        "`finalize_beat_book`."
+    )
+
+
+def _append_user_note(messages: List[Dict[str, Any]], note: str) -> bool:
+    """Add a text note to the trailing user message (usually a batch of tool
+    results). Returns False when the last message is not from the user, e.g.
+    after a pause_turn, where the transcript must be re-sent unchanged."""
+    if not messages or messages[-1].get("role") != "user":
+        return False
+    content = messages[-1]["content"]
+    if isinstance(content, str):
+        content = [{"type": "text", "text": content}]
+    else:
+        content = list(content)
+    content.append({"type": "text", "text": note})
+    messages[-1] = {**messages[-1], "content": content}
+    return True
+
+
 async def _emit(cb: Optional[Callable], *args) -> None:
     if cb is None:
         return
@@ -750,9 +797,18 @@ async def run_research_agent(
 
     await _emit(on_progress, "starting", f"Research agent initializing in sandbox {sandbox_dir.name}")
 
+    last_notice_at: Optional[int] = None
     for turn in range(MAX_TURNS):
         trace["turns"] = turn + 1
         await _emit(on_progress, "thinking", f"Turn {turn + 1}/{MAX_TURNS}")
+
+        # Near the ceiling, tell the model to stop researching and write.
+        # Repeat on the last turn with a stronger notice.
+        turns_left = MAX_TURNS - turn
+        if turns_left in (WRAP_UP_TURNS_LEFT, 1) and last_notice_at != turns_left:
+            if _append_user_note(messages, _wrap_up_note(turns_left)):
+                last_notice_at = turns_left
+                trace.setdefault("wrap_up_notices", []).append(turn + 1)
 
         # Server-executed tools (web_search / web_fetch with dynamic filtering)
         # run inside an Anthropic-managed code-execution container. Once one is
