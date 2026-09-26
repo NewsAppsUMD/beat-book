@@ -188,6 +188,10 @@ Even with `CHAT_PROVIDER=ollama`, two features still use the Anthropic API:
 
 If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely.
 
+### The research agent's shell
+
+The research agent can run shell commands on the server to write scrapers. Its commands get a minimal environment with no API keys, a home directory inside its sandbox folder, and CPU-time and file-size limits. They can still read any file the app's user can read. Set `RESEARCH_BASH=off` to remove the shell tool; the agent then uses web search, web fetch and the text editor only.
+
 ### Selecting the embedding model in the UI
 
 When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the preview toolbar (next to the "Run pipeline" button) showing the available embedding model. For Ollama, this lists models pulled on your instance; for OpenAI, it shows the configured model.
@@ -308,7 +312,7 @@ A beat book is a durable, listable thing — not a transient tab session. Two sm
 
 ### `store.py` — the library index
 
-A JSON file at `output/library.json`, guarded by a lock and written atomically, with one record per book: `{id, title, stem, status, created_at, updated_at, error, num_stories, num_topics, selected_topics, opened_at}`. The **stem** (e.g. `city_budget_beat_book`) is the unique filename base for that book's output files; collisions are resolved with a numeric suffix at creation time, so two corpora topping the same topic never overwrite each other. Status flows **`queued` → `generating` → `ready` | `failed`**. On startup, any record left `queued`/`generating` by a crash is marked `failed` (its in-memory state is gone).
+A JSON file at `output/library.json`, guarded by a lock and written atomically, with one record per book: `{id, title, stem, style, target_words, status, created_at, updated_at, error, num_stories, num_topics, selected_topics, opened_at}`. The **stem** (e.g. `city_budget_beat_book`) is the unique filename base for that book's output files; collisions are resolved with a numeric suffix at creation time, so two corpora topping the same topic never overwrite each other. Status flows **`queued` → `generating` → `ready` | `failed`**. On startup, any record left `queued`/`generating` by a crash is marked `failed` (its in-memory state is gone).
 
 ### `jobs.py` — the generation queue
 
@@ -316,7 +320,9 @@ A JSON file at `output/library.json`, guarded by a lock and written atomically, 
 
 ### Endpoints
 
-`POST /books` (enqueue), `GET /books` (list, newest first), `GET /books/{id}`, `PATCH /books/{id}` (rename / mark-opened), `DELETE /books/{id}` (record + output files + sandbox; refused while actively generating), and `WS /ws/books/{id}` (reconnectable progress).
+`POST /books` (enqueue), `GET /books` (list, newest first), `GET /books/{id}`, `GET /books/{id}/files/{markdown|draft|entries|sources|manifest}`, `PATCH /books/{id}` (rename / mark-opened), `DELETE /books/{id}` (record + output files + sandbox; refused while actively generating), and `WS /ws/books/{id}` (reconnectable progress).
+
+The `output/` folder is no longer served as a static directory. A book's files are served only through the routes above, by book id. The app has no login, so keep it bound to `127.0.0.1` or put it behind one.
 
 ---
 
@@ -345,7 +351,9 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 
 - **Models:** `claude-sonnet-4-6` for writing; `claude-haiku-4-5` for the lightweight coverage-exploration pass.
 - After the draft, the **research agent** (`research_agent.py`, Claude Sonnet 4.6) runs in a sandbox with bash + text-editor tools to enrich the draft with public-web research; its additions are merged onto the draft.
-- Finally `citation_matcher.py` embeds source passages and beat-book sentences (OpenAI) and matches each claim back to its source, producing the `<stem>.json` + `<stem>_sources.json` the reader uses.
+- Finally `citation_matcher.py` embeds source passages and beat-book claims (OpenAI) and matches each claim back to its source, producing the `<stem>.json` + `<stem>_sources.json` the reader uses. Each claim is tagged with where it came from: matched to the corpus, added by web research, or unsupported.
+- `jobs.py` writes `<stem>.manifest.json`, the book's build record. See [The Reader](#sourcing-and-transparency).
+- The writing agent only sees stories in the topics the reporter selected. `view_topics`, `read_story` and `search_stories` are all scoped to them.
 
 ---
 
@@ -353,7 +361,21 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 
 **File:** `static/reader.js` (styled in `static/style.css`)
 
-The reader renders a finished book inline in the main panel. It loads `/output/<stem>.json` (beat-book entries) and `/output/<stem>_sources.json` (source stories), renders the Markdown with [marked](https://marked.js.org/) (vendored at `static/vendor/marked.min.js`), and computes academic-style inline `[N]` citation chips plus a "Sources" footnote list. Hovering a chip previews the source; clicking it opens the source article in a side panel with the matched passage highlighted. A section navigator and reading-progress bar live in the reader's header. The reading column is sized so opening the source panel never reflows the body text.
+The reader renders a finished book inline in the main panel. It loads the book's citation entries and source stories from `GET /books/{id}/files/entries` and `/files/sources`, renders the Markdown with [marked](https://marked.js.org/) (vendored at `static/vendor/marked.min.js`), and computes academic-style inline `[N]` citation chips plus a "Sources" footnote list. Hovering a chip previews the source; clicking it opens the source article in a side panel with the matched passage highlighted. A section navigator and reading-progress bar live in the reader's header. The reading column is sized so opening the source panel never reflows the body text.
+
+### Sourcing and transparency
+
+The reader shows how well each part of the book is sourced, so a reporter knows what to check before relying on it.
+
+- **Sourcing summary.** Under the title, a box counts the claims matched to the reporter's stories, the claims added by web research, and the claims with no matching source. It also shows the book's match cutoff. "Highlight unsourced claims" underlines the unsourced ones and shades the web-added ones.
+- **Match strength.** Each citation chip's border shows how far its similarity sits above the book's cutoff: solid green for strong, blue for moderate, dashed amber for weak. The source panel states the score, the cutoff, and that a match is text similarity, not a fact check.
+- **Alternate passages.** The matcher keeps up to five passages per claim. The source panel lists them all, and clicking one opens it.
+- **Key phrases.** Inside the highlighted passage, a darker highlight marks the words that matter most to the match.
+- **Web-added claims.** Sentences the research step added carry a small "web" badge. They are compared against the draft, not guessed.
+- **Cited bullets and table rows.** Bullets and table rows with at least six words are cited as one claim each. Key Sources, Story Ideas and the Calendar are usually lists, so these sections now get citations.
+- **How this book was made.** A panel, opened from the reader header, reads the book's build record. It shows the models and token counts, time per stage, where each stage sent material, the stories the writing agent read, the instructions it was given, the research agent's searches, cited pages and summary, a diff of what research changed, and how the citation cutoff was set.
+
+The topic screen also shows, before generation, which provider each stage sends material to under the current `.env` settings (`GET /api/egress-plan`).
 
 > See `docs/inline-citations-embeddings.md` for how citations are matched and calibrated.
 
@@ -401,6 +423,8 @@ beat-book/
 │   ├── style.css           # Styles (design tokens in :root)
 │   └── vendor/marked.min.js# Vendored Markdown renderer
 ├── docs/                   # Architecture deep-dives
+├── egress.py               # What each stage sends off the machine, from config
+├── tests/                  # pytest suite: install pytest into .venv, then .venv/bin/python -m pytest tests
 ├── output/                 # Generated beat books + library.json + sandboxes/ (gitignored)
 └── .cache/                 # Embedding cache (auto-generated)
 ```

@@ -710,7 +710,7 @@
     const stories = [];
     for (const src of previewState) for (const s of src.stories) {
       if (!s.included) continue;
-      stories.push({ title: s.title, content: s.content, date: s.date, author: s.author, organization: s.organization, link: s.link, content_type: s.content_type || "article", metadata: s.metadata || {} });
+      stories.push({ title: s.title, content: s.content, date: s.date, author: s.author, organization: s.organization, language: s.language || "", link: s.link, content_type: s.content_type || "article", metadata: s.metadata || {} });
     }
     if (stories.length === 0) return;
 
@@ -776,8 +776,34 @@
       list.appendChild(item);
     });
     updateTopicBtn();
+    renderEgressPlan();
     switchScreen("topic");
     $("create-scroll").scrollTo({ top: 0 });
+  }
+
+  // Show, from the server's current configuration, what each stage sends off
+  // this machine and where — before the reporter commits to generating.
+  async function renderEgressPlan() {
+    const box = $("egress-plan");
+    if (!box) return;
+    let plan;
+    try {
+      const r = await fetch("/api/egress-plan");
+      if (!r.ok) throw new Error();
+      plan = await r.json();
+    } catch (e) { box.hidden = true; return; }
+    const hosts = plan.full_text_leaves_machine_to || [];
+    $("egress-plan-summary").textContent = hosts.length
+      ? `Where your material goes: story text is sent to ${hosts.join(", ")}`
+      : "Where your material goes: story text stays on this machine";
+    $("egress-plan-lede").textContent = "Each step below uses the providers set in the server's .env file. The upload steps have already run.";
+    const rows = (plan.rows || []).map(r => {
+      const where = r.to && r.to.local ? '<span class="mf-local">This machine</span>' : escapeHtml(`${r.to.service} · ${r.to.host}`);
+      const done = r.phase === "ingest" || r.phase === "analyze";
+      return `<tr class="${done ? "egress-phase-done" : ""}"><td>${escapeHtml(r.stage)}${done ? " (done)" : ""}</td><td>${escapeHtml(r.sends)}</td><td>${where}</td></tr>`;
+    }).join("");
+    $("egress-plan-table").innerHTML = `<table class="mf-table"><thead><tr><th>Step</th><th>What is sent</th><th>Where</th></tr></thead><tbody>${rows}</tbody></table>`;
+    box.hidden = false;
   }
 
   function updateTopicBtn() {

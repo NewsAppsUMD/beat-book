@@ -137,6 +137,8 @@ _ABBREVIATIONS = [
     (r"\bSen\.", "Sen<<DOT>>"),
     (r"\bRep\.", "Rep<<DOT>>"),
     (r"\bGov\.", "Gov<<DOT>>"),
+    (r"\bAld\.", "Ald<<DOT>>"),   # Chicago alderpersons: "Ald. Walter Burnett"
+    (r"\bSupt\.", "Supt<<DOT>>"),
 ]
 
 
@@ -182,40 +184,102 @@ def _is_code_block_delimiter(line: str) -> bool:
     return line.strip().startswith("```")
 
 
+# A list item or table row needs at least this many words of real text to be
+# worth citing. Shorter ones ("- Budget hearings", "| Date | Event |") are
+# labels, not claims, and would only attract noise matches.
+MIN_CITABLE_WORDS = 6
+
+_LIST_MARKER_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+_TABLE_SEPARATOR_CELL_RE = re.compile(r"^:?-{2,}:?$")
+
+
+def _plain_text(markdown_fragment: str) -> str:
+    """Strip inline Markdown (bold, italics, links, code) so the embedding
+    sees words, not syntax."""
+    t = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", markdown_fragment)
+    t = re.sub(r"[*_`]+", "", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _is_table_separator(line: str) -> bool:
+    cells = [c.strip() for c in line.strip().strip("|").split("|")]
+    return bool(cells) and all(_TABLE_SEPARATOR_CELL_RE.match(c or "-") for c in cells)
+
+
 def _segment_markdown(markdown: str) -> List[Dict[str, Any]]:
-    """Break markdown into a sequence of entries. Sentences inside paragraphs
-    get `needs_embedding=True`; headings, list items, table rows, blank lines,
-    and code blocks pass through untouched (`needs_embedding=False`)."""
+    """Break markdown into a sequence of entries.
+
+    Each entry has `content` (the Markdown to render, verbatim for list items
+    and table rows), `needs_embedding`, `kind` ("sentence", "list_item",
+    "table_row" or "other") and, for embedded entries, `embed_text` — the
+    plain words the embedding model should see.
+
+    Paragraph sentences are embedded one by one. List items and body table
+    rows are embedded whole, as one claim each, when they carry at least
+    MIN_CITABLE_WORDS words; beat books keep their sources, story ideas and
+    calendars in lists, so skipping lists left the most actionable sections
+    uncited. Headings, table header/separator rows, blank lines and code
+    blocks pass through."""
     entries: List[Dict[str, Any]] = []
     in_code_block = False
+    lines = markdown.split("\n")
 
-    for line in markdown.split("\n"):
+    for i, line in enumerate(lines):
         if _is_code_block_delimiter(line):
             in_code_block = not in_code_block
-            entries.append({"content": line, "needs_embedding": False})
+            entries.append({"content": line, "needs_embedding": False, "kind": "other"})
             continue
 
-        if in_code_block:
-            entries.append({"content": line, "needs_embedding": False})
+        if in_code_block or not line.strip() or _is_markdown_heading(line):
+            entries.append({"content": line, "needs_embedding": False, "kind": "other"})
             continue
 
-        if (
-            not line.strip()
-            or _is_markdown_heading(line)
-            or _is_markdown_list_item(line)
-            or _is_markdown_table_row(line)
-        ):
-            entries.append({"content": line, "needs_embedding": False})
+        if _is_markdown_list_item(line):
+            text = _plain_text(_LIST_MARKER_RE.sub("", line, count=1))
+            citable = len(text.split()) >= MIN_CITABLE_WORDS
+            entry = {"content": line, "needs_embedding": citable, "kind": "list_item"}
+            if citable:
+                entry["embed_text"] = text
+            entries.append(entry)
+            continue
+
+        if _is_markdown_table_row(line):
+            nxt = lines[i + 1] if i + 1 < len(lines) else ""
+            is_header = _is_markdown_table_row(nxt) and _is_table_separator(nxt)
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            text = _plain_text(" — ".join(c for c in cells if c))
+            citable = (not is_header and not _is_table_separator(line)
+                       and len(text.split()) >= MIN_CITABLE_WORDS)
+            entry = {"content": line, "needs_embedding": citable, "kind": "table_row"}
+            if citable:
+                entry["embed_text"] = text
+            entries.append(entry)
             continue
 
         sentences = split_into_sentences(line)
         if sentences:
             for sentence in sentences:
-                entries.append({"content": sentence, "needs_embedding": True})
+                entries.append({"content": sentence, "needs_embedding": True,
+                                "kind": "sentence", "embed_text": _plain_text(sentence)})
         else:
-            entries.append({"content": line, "needs_embedding": False})
+            entries.append({"content": line, "needs_embedding": False, "kind": "other"})
 
     return entries
+
+
+def _claim_key(text: str) -> str:
+    """Normalize a claim for draft-vs-final comparison."""
+    return re.sub(r"[^a-z0-9]+", " ", _plain_text(text).lower()).strip()
+
+
+def claims_in_markdown(markdown: str) -> set:
+    """The set of normalized claims (sentences, citable bullets and rows) in a
+    Markdown document. Used to tell which claims the research agent added."""
+    return {
+        _claim_key(e["content"])
+        for e in _segment_markdown(markdown or "")
+        if e["needs_embedding"]
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -552,6 +616,7 @@ def markdown_to_beatbook_entries(
     source_index: Dict[str, Any],
     embed_client: EmbedClient,
     on_progress: Optional[ProgressCallback] = None,
+    draft_markdown: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Convert a Markdown beat book into a citation-annotated entry list.
 
@@ -568,7 +633,12 @@ def markdown_to_beatbook_entries(
           "entries": [
             {
               "content": str,            # the original Markdown line / sentence
-              "passthrough": bool,       # True for headings, list items, etc.
+              "passthrough": bool,       # True for headings, blank lines, etc.
+              "kind": str,               # sentence | list_item | table_row | other
+              "origin": str,             # draft | research (non-passthrough only;
+                                         #   needs draft_markdown)
+              "provenance": str,         # corpus | web | unsupported
+                                         #   (non-passthrough only)
               "supports": [
                 {
                   "article_id": str,
@@ -587,11 +657,19 @@ def markdown_to_beatbook_entries(
               ],
             }, ...
           ],
+          "stats": {claims, cited, research_added, unsupported, ...},
         }
+
+    When `draft_markdown` (the writing agent's draft, before web research) is
+    given, every claim that is not in the draft is tagged `origin: research`
+    and `provenance: web`: it came from the research agent's web work, so any
+    match against the reporter's corpus is at best corroboration, not its
+    source. Claims with no support above threshold are `unsupported`.
     """
     client = embed_client
 
     entries = _segment_markdown(markdown)
+    draft_claims = claims_in_markdown(draft_markdown) if draft_markdown is not None else None
 
     # Build the running sentence stream (positions used by context-sum).
     sentence_positions: List[int] = []
@@ -601,9 +679,16 @@ def markdown_to_beatbook_entries(
     for i, e in enumerate(entries):
         if e["needs_embedding"] and e["content"].strip():
             entry_to_embed_idx[i] = len(sentence_texts)
-            sentence_texts.append(e["content"])
-            sentence_positions.append(pos)
-            pos += 1
+            sentence_texts.append(e.get("embed_text") or e["content"])
+            if e.get("kind") in ("list_item", "table_row"):
+                # Each bullet or row is its own claim: don't blend it with
+                # its neighbors the way context-sum blends prose sentences.
+                # Positions of -2 never satisfy the "adjacent" test.
+                sentence_positions.append(-2 - i * 2)
+                pos = 0
+            else:
+                sentence_positions.append(pos)
+                pos += 1
         else:
             # Reset the running paragraph position on a non-sentence break
             # so context-sum doesn't bleed across headings or blank lines.
@@ -765,21 +850,46 @@ def markdown_to_beatbook_entries(
 
     # ── Phase 4: assemble the output entry list.
     out_entries: List[Dict[str, Any]] = []
+    stats = {"claims": 0, "cited": 0, "unsupported": 0, "research_added": 0,
+             "list_items_cited": 0, "table_rows_cited": 0}
     for i, entry in enumerate(entries):
+        kind = entry.get("kind", "other")
         if i not in entry_to_embed_idx:
             out_entries.append({
                 "content": entry["content"],
                 "passthrough": True,
+                "kind": kind,
                 "supports": [],
             })
+            continue
+        supports = draft_supports.get(i, [])
+        origin = "draft"
+        if draft_claims is not None and _claim_key(entry["content"]) not in draft_claims:
+            origin = "research"
+        if origin == "research":
+            provenance = "web"
+        elif supports:
+            provenance = "corpus"
         else:
-            out_entries.append({
-                "content": entry["content"],
-                "passthrough": False,
-                "supports": draft_supports.get(i, []),
-            })
+            provenance = "unsupported"
+        stats["claims"] += 1
+        stats["cited"] += 1 if provenance == "corpus" else 0
+        stats["unsupported"] += 1 if provenance == "unsupported" else 0
+        stats["research_added"] += 1 if origin == "research" else 0
+        if provenance == "corpus" and kind == "list_item":
+            stats["list_items_cited"] += 1
+        if provenance == "corpus" and kind == "table_row":
+            stats["table_rows_cited"] += 1
+        out_entries.append({
+            "content": entry["content"],
+            "passthrough": False,
+            "kind": kind,
+            "origin": origin if draft_claims is not None else None,
+            "provenance": provenance,
+            "supports": supports,
+        })
 
-    return {"calibration": calibration, "entries": out_entries}
+    return {"calibration": calibration, "entries": out_entries, "stats": stats}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -804,6 +914,10 @@ def build_sources_file(
                 "author": story.get("author", ""),
                 "content": story.get("content", ""),
                 "link": story.get("link", ""),
+                "organization": story.get("organization", ""),
+                "language": story.get("language", ""),
+                "content_type": story.get("content_type", "article"),
+                "metadata": story.get("metadata", {}) or {},
             }
         )
     return out

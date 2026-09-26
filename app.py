@@ -54,6 +54,7 @@ from embed_client import (
     list_ollama_models,
 )
 from chat_provider import ChatProvider, get_chat_provider
+from egress import egress_summary
 import store
 from jobs import BookJob, generation_worker
 
@@ -175,6 +176,13 @@ async def embed_config():
         result["models"] = [{"name": model}]
         result["default_model"] = model
     return JSONResponse(result)
+
+
+@app.get("/api/egress-plan")
+async def egress_plan_endpoint():
+    """What each stage sends off this machine, and where, under the current
+    configuration. Shown on the create screen before generation starts."""
+    return JSONResponse(egress_summary())
 
 
 async def _run_ingest_job(
@@ -495,7 +503,8 @@ def _citation_numbering(entries: List[Dict[str, Any]]) -> tuple[Dict[int, int], 
     primary_by_idx: List[Optional[Dict[str, Any]]] = []
     for entry in entries:
         content = entry.get("content", "")
-        if content.lstrip().startswith("|"):
+        # Older books never cited table rows; their rows have no `kind`.
+        if content.lstrip().startswith("|") and entry.get("kind") != "table_row":
             primary_by_idx.append(None)
             continue
         primary = None
@@ -583,8 +592,11 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
         line = entry.get("content", "").rstrip()
         stripped = line.strip()
         is_passthrough = entry.get("passthrough", True)
+        marker = number_by_idx.get(i)
 
-        if not is_passthrough:
+        # Cited bullets and table rows are non-passthrough but must still
+        # render as bullets and rows, with the marker at the end.
+        if not is_passthrough and entry.get("kind", "sentence") == "sentence":
             if current_p is None:
                 current_p = doc.add_paragraph()
             else:
@@ -623,12 +635,16 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
         if bullet:
             p = doc.add_paragraph(style="List Bullet")
             _docx_add_inline(p, bullet.group(1))
+            if marker:
+                _docx_add_citation_marker(p, marker)
             continue
 
         numbered = re.match(r"^\d+[.)]\s+(.*)$", stripped)
         if numbered:
             p = doc.add_paragraph(style="List Number")
             _docx_add_inline(p, numbered.group(1))
+            if marker:
+                _docx_add_citation_marker(p, marker)
             continue
 
         if stripped.startswith("|") and stripped.endswith("|"):
@@ -637,6 +653,8 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
                 continue   # table separator row
             p = doc.add_paragraph()
             _docx_add_inline(p, "  |  ".join(cells))
+            if marker:
+                _docx_add_citation_marker(p, marker)
             continue
 
         p = doc.add_paragraph()
@@ -680,6 +698,37 @@ async def get_book_endpoint(book_id: str):
     if not rec:
         return JSONResponse({"error": "Beat book not found."}, status_code=404)
     return JSONResponse(rec)
+
+
+# Files a book's reader may load, by name. Everything else under output/
+# (other books' files, library.json, research sandboxes) stays unserved.
+_BOOK_FILES = {
+    "markdown": (".md", "text/markdown; charset=utf-8"),
+    "draft": (".draft.md", "text/markdown; charset=utf-8"),
+    "entries": (".json", "application/json"),
+    "sources": ("_sources.json", "application/json"),
+    "manifest": (".manifest.json", "application/json"),
+}
+BOOK_FILE_SUFFIXES = tuple(v[0] for v in _BOOK_FILES.values())
+
+
+@app.get("/books/{book_id}/files/{kind}")
+async def get_book_file(book_id: str, kind: str):
+    """Serve one of a book's output files by book id. Replaces the old static
+    mount of the whole output/ directory, which let any client that could
+    reach the server list-guess stems and read full source text, library.json,
+    and the research agent's sandbox. The app still has no authentication, so
+    keep it bound to 127.0.0.1."""
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    spec = _BOOK_FILES.get(kind)
+    if spec is None:
+        return JSONResponse({"error": f"Unknown file '{kind}'."}, status_code=404)
+    path = OUTPUT_DIR / f"{rec['stem']}{spec[0]}"
+    if not path.is_file():
+        return JSONResponse({"error": "Not available for this beat book."}, status_code=404)
+    return FileResponse(path, media_type=spec[1], headers={"Cache-Control": "no-store"})
 
 
 @app.get("/books/{book_id}/docx")
@@ -780,7 +829,7 @@ async def delete_book_endpoint(book_id: str):
     removed = store.delete_book(book_id)
     if removed:
         stem = removed.get("stem", "")
-        for suffix in (".draft.md", ".md", ".json", "_sources.json"):
+        for suffix in BOOK_FILE_SUFFIXES:
             try:
                 (OUTPUT_DIR / f"{stem}{suffix}").unlink(missing_ok=True)
             except OSError:
@@ -841,7 +890,7 @@ async def book_ws(ws: WebSocket, book_id: str):
             await ws.send_json({
                 "type": "beat_book",
                 "filename": filename,
-                "markdown_path": f"/output/{quote(filename)}",
+                "markdown_path": f"/books/{quote(book_id)}/files/markdown",
                 "stem": stem,
             })
         elif rec["status"] == "failed":
@@ -854,4 +903,3 @@ async def book_ws(ws: WebSocket, book_id: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/output", StaticFiles(directory="output"), name="output")

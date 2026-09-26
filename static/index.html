@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=PT+Sans+Caption:wght@400;700&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2">
   <script src="/static/vendor/marked.min.js"></script>
 </head>
 
@@ -199,6 +199,12 @@
                   </div>
                 </div>
 
+                <details class="egress-plan" id="egress-plan" hidden>
+                  <summary id="egress-plan-summary">Where your material goes</summary>
+                  <p class="egress-plan-lede" id="egress-plan-lede"></p>
+                  <div class="egress-plan-wrap" id="egress-plan-table"></div>
+                </details>
+
                 <div class="topic-select-actions">
                   <div class="topic-select-toggles">
                     <button id="topic-select-all" class="btn-link">Select all</button>
@@ -288,6 +294,16 @@
             </button>
             <div class="section-menu" id="sectionMenu"></div>
           </div>
+          <button type="button" class="reader-download reader-howmade" id="reader-howmade" hidden
+             title="Models, sources, web research and citation settings for this book">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <line x1="12" y1="11" x2="12" y2="16" />
+              <line x1="12" y1="8" x2="12" y2="8" />
+            </svg>
+            <span>How it was made</span>
+          </button>
           <a class="reader-download" id="reader-download" hidden download
              title="Download as Word document" aria-label="Download as Word document">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -352,8 +368,8 @@
     </div>
   </div>
 
-  <script src="/static/reader.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/reader.js?v=2"></script>
+  <script src="/static/app.js?v=2"></script>
 </body>
 
 </html>

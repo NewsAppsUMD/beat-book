@@ -1946,3 +1946,117 @@ a:focus-visible {
   .reader-article-panel { width: calc(100% - 2rem); right: -110%; }
   .reader-title { max-width: 50%; }
 }
+
+
+/* ── Sourcing transparency (Phase 1) ─────────────────────────────────────── */
+:root {
+  --prov-web: #7a4b00;
+  --prov-web-soft: #fbf1df;
+  --prov-web-border: #e7c98f;
+  --prov-unsourced: #a61b15;
+  --sim-strong: #106b3a;
+  --sim-medium: #1c5fb8;
+  --sim-weak: #9a6a00;
+}
+
+.reader-howmade + .reader-download { margin-left: 0.4rem; }
+.reader-howmade[hidden] { display: none; }
+
+/* Chip border tells the reader how strong the match is. */
+.footnote-ref.sim-strong { border-color: color-mix(in srgb, var(--sim-strong) 55%, transparent); }
+.footnote-ref.sim-medium { border-color: var(--citation-border); }
+.footnote-ref.sim-weak { border-style: dashed; border-color: var(--sim-weak); }
+.sim-dot { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; margin-right: 0.4rem; background: var(--text-faint); flex-shrink: 0; }
+.sim-dot.sim-strong { background: var(--sim-strong); }
+.sim-dot.sim-medium { background: var(--sim-medium); }
+.sim-dot.sim-weak { background: var(--sim-weak); }
+
+.web-badge {
+  display: inline-block; margin: 0 0.15rem; padding: 0 0.35rem;
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase;
+  line-height: 1.5; vertical-align: 0.12rem;
+  color: var(--prov-web); background: var(--prov-web-soft);
+  border: 1px solid var(--prov-web-border); border-radius: 3px; cursor: help;
+}
+#reader-content.show-sourcing .claim-unsupported {
+  text-decoration: underline wavy color-mix(in srgb, var(--prov-unsourced) 60%, transparent);
+  text-decoration-thickness: 1px; text-underline-offset: 3px;
+}
+#reader-content.show-sourcing .claim-web { background: var(--prov-web-soft); border-radius: 2px; }
+
+.sourcing-summary {
+  margin: -1rem 0 2rem; padding: 0.85rem 1rem;
+  background: var(--bg-muted); border: 1px solid var(--border); border-radius: var(--radius);
+  font-size: 0.88rem; color: var(--text-muted);
+}
+.sourcing-stats { display: flex; flex-wrap: wrap; gap: 0.35rem 1.1rem; }
+.sourcing-stat { display: inline-flex; align-items: center; }
+.sourcing-stat strong { color: var(--text); margin-right: 0.25rem; }
+.sourcing-swatch { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 2px; margin-right: 0.4rem; }
+.sw-corpus { background: var(--citation-soft); border: 1px solid var(--citation-border); }
+.sw-web { background: var(--prov-web-soft); border: 1px solid var(--prov-web-border); }
+.sw-unsupported { border-bottom: 2px solid var(--prov-unsourced); border-radius: 0; height: 0.45rem; }
+.sourcing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 1rem; margin-top: 0.55rem; }
+.sourcing-threshold { font-variant-numeric: tabular-nums; color: var(--text-faint); cursor: help; }
+.sourcing-note { margin: 0.55rem 0 0 !important; font-size: 0.8rem; color: var(--text-faint); }
+.sourcing-summary .btn-link { font-size: 0.85rem; }
+
+/* Source panel additions */
+.match-strength { display: flex; align-items: baseline; margin-top: 0.55rem; font-size: 0.8rem; color: var(--text-muted); line-height: 1.45; }
+.match-strength .sim-dot { position: relative; top: 0.05rem; }
+.match-web-note { margin-top: 0.55rem; padding: 0.45rem 0.6rem; font-size: 0.8rem; line-height: 1.45; color: var(--prov-web); background: var(--prov-web-soft); border: 1px solid var(--prov-web-border); border-radius: var(--radius-sm); }
+.match-alternates { margin-top: 0.7rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.match-alternates-label { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); margin-bottom: 0.15rem; }
+.match-alt {
+  display: flex; align-items: center; gap: 0.2rem; width: 100%; text-align: left;
+  padding: 0.3rem 0.45rem; border: 1px solid transparent; border-radius: var(--radius-sm);
+  background: transparent; font-family: var(--sans); font-size: 0.82rem; color: var(--text); cursor: pointer;
+}
+.match-alt:hover { background: var(--surface); border-color: var(--border); }
+.match-alt.current { background: var(--surface); border-color: var(--citation-border); }
+.match-alt-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-alt-sim { font-variant-numeric: tabular-nums; color: var(--text-faint); font-size: 0.78rem; }
+mark.passage-key {
+  background: color-mix(in srgb, var(--citation) 34%, transparent);
+  box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--citation) 60%, transparent);
+}
+
+/* Build record ("How this book was made") */
+.manifest { font-size: 0.92rem; line-height: 1.55; color: var(--text); }
+.mf-section { border-bottom: 1px solid var(--border); padding: 0.6rem 0; }
+.mf-section > summary { cursor: pointer; font-family: var(--serif); font-weight: 700; font-size: 1rem; list-style-position: outside; }
+.mf-body { padding: 0.6rem 0 0.3rem; }
+.mf-body p { margin: 0 0 0.6rem; }
+.mf-body h4 { font-size: 0.85rem; margin: 0.8rem 0 0.35rem; }
+.mf-dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0; }
+.mf-dl dt { color: var(--text-faint); }
+.mf-dl dd { margin: 0; }
+.mf-table { width: 100%; border-collapse: collapse; margin: 0.3rem 0 0.8rem; font-size: 0.84rem; }
+.mf-table th, .mf-table td { text-align: left; vertical-align: top; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--border); }
+.mf-table th { color: var(--text-faint); font-weight: 700; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.mf-local { color: var(--success); font-weight: 700; }
+.mf-note { color: var(--text-faint); font-size: 0.82rem; }
+.mf-list { margin: 0.2rem 0 0.6rem 1.2rem; padding: 0; font-size: 0.86rem; }
+.mf-list li { margin-bottom: 0.2rem; }
+.mf-host { color: var(--text-faint); font-size: 0.78rem; }
+.mf-quote { margin: 0 0 0.3rem; padding: 0.5rem 0.75rem; border-left: 3px solid var(--border-strong); background: var(--bg-muted); color: var(--text-muted); font-style: italic; }
+.mf-errors { margin-top: 0.6rem; padding: 0.5rem 0.75rem; border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); border-radius: var(--radius-sm); color: var(--danger); font-size: 0.85rem; }
+.mf-errors ul { margin: 0.25rem 0 0 1.1rem; }
+.mf-prompt summary, .mf-body details > summary { cursor: pointer; color: var(--accent); font-size: 0.85rem; margin: 0.3rem 0; }
+.mf-body pre { white-space: pre-wrap; word-break: break-word; font-size: 0.78rem; line-height: 1.45; background: var(--bg-muted); padding: 0.6rem 0.75rem; border-radius: var(--radius-sm); max-height: 24rem; overflow: auto; }
+.mf-diff .d-add { color: var(--success); background: var(--success-soft); display: inline-block; width: 100%; }
+.mf-diff .d-del { color: var(--danger); display: inline-block; width: 100%; }
+
+/* Create screen: where material goes */
+.egress-plan { margin: 1.5rem 0 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.egress-plan > summary { cursor: pointer; padding: 0.7rem 0.9rem; font-weight: 700; font-size: 0.92rem; }
+.egress-plan-lede { margin: 0 0.9rem 0.5rem; font-size: 0.85rem; color: var(--text-muted); }
+.egress-plan .mf-table { margin: 0; }
+.egress-plan .mf-table td:first-child { white-space: nowrap; }
+.egress-plan-wrap { padding: 0 0.9rem 0.8rem; overflow-x: auto; }
+.egress-phase-done td { color: var(--text-faint); }
+
+@media (max-width: 720px) {
+  .reader-howmade span { display: none; }
+  .egress-plan .mf-table td:first-child { white-space: normal; }
+}

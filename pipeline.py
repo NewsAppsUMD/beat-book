@@ -58,6 +58,12 @@ class PipelineResult:
     story_topics: List[List[str]]                # per-story list of topic labels
     broad_topics: Dict[str, List[int]]           # broad topic → [story indices]
     specific_topics: Dict[str, List[int]]        # specific topic → [story indices]
+    # When set, the agent may only see these story indices (the stories in the
+    # reporter's selected topics). None means the whole corpus is in scope.
+    allowed_indices: Optional[frozenset] = None
+
+    def in_scope(self, idx: int) -> bool:
+        return self.allowed_indices is None or idx in self.allowed_indices
 
     def topic_summary(self) -> str:
         """Human-readable summary of the broad topics the agent should explore."""
@@ -67,7 +73,7 @@ class PipelineResult:
         return "\n".join(lines)
 
     def get_story(self, idx: int) -> Optional[dict]:
-        if 0 <= idx < len(self.stories):
+        if 0 <= idx < len(self.stories) and self.in_scope(idx):
             return self.stories[idx]
         return None
 
@@ -75,6 +81,8 @@ class PipelineResult:
         q = query.lower()
         results = []
         for i, s in enumerate(self.stories):
+            if not self.in_scope(i):
+                continue
             text = f"{s.get('title','')} {s.get('content','')}".lower()
             if q in text:
                 results.append({"index": i, "title": s["title"], "date": s.get("date", "")})

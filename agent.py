@@ -426,7 +426,8 @@ def _progress_report(
         )
     lines.append(
         f"Total stories read (unique): {len(read_indices)}. "
-        "Targets: every story in topics with <15 stories, otherwise half (max 25). "
+        "Targets: every story in topics with fewer than 8 stories, otherwise a "
+        "third (max 10). "
         "Scanning a topic with read_stories_in_topic credits 5 reads; "
         "use read_story for the rest."
     )
@@ -451,15 +452,20 @@ def execute_local_tool(name: str, input_data: dict, result: PipelineResult) -> s
         return json.dumps(stories, indent=2)
 
     if name == "read_story":
-        story = result.get_story(input_data["index"])
+        idx = input_data.get("index")
+        story = result.get_story(idx) if isinstance(idx, int) else None
         if not story:
-            return f"Invalid index {input_data['index']}. Valid range: 0–{len(result.stories)-1}."
+            if isinstance(idx, int) and 0 <= idx < len(result.stories):
+                return (f"Story {idx} is outside the topics the reporter selected. "
+                        "Use list_stories_in_topic to find stories in scope.")
+            return f"Invalid index {idx}. Valid range: 0–{len(result.stories)-1}."
+        in_scope_topics = [t for t in result.story_topics[idx] if t in result.topics]
         return json.dumps({
-            "index": input_data["index"],
+            "index": idx,
             "title": story.get("title", ""),
             "author": story.get("author", ""),
             "date": story.get("date", ""),
-            "topics": result.story_topics[input_data["index"]],
+            "topics": in_scope_topics,
             "content": story.get("content", "")[:4000],
         }, indent=2)
 
@@ -565,6 +571,7 @@ async def run_agent(
     selected_topics: list[str] | None = None,
     style: str = "narrative",
     target_words: int = DEFAULT_TARGET_WORDS,
+    trace: dict | None = None,
 ) -> None:
     """
     Run the agent loop.
@@ -579,12 +586,32 @@ async def run_agent(
             call covers (0 when not applicable).
         on_heartbeat: optional async callback fired every ~15s during API calls
                       to keep the WebSocket connection alive.
+        trace: optional dict the loop fills in with a record of the run —
+               models, prompts, every model call's token usage, every tool
+               call, and the stories actually read. jobs.py writes it into the
+               book's manifest so the reporter can see how the book was made.
     """
+    if trace is None:
+        trace = {}
     target_words = _clamp_target_words(target_words)
     final_max_tokens = _final_max_tokens(target_words)
     doc_spec = _build_doc_spec(style, target_words)
     system_prompt = _EXPLORE_TEMPLATE.format(doc_spec=doc_spec)
     write_system_prompt = _WRITE_TEMPLATE.format(doc_spec=doc_spec)
+
+    trace.update({
+        "explore_model": provider.explore_model,
+        "write_model": provider.agent_model,
+        "style": style,
+        "target_words": target_words,
+        "explore_system_prompt": system_prompt,
+        "write_system_prompt": write_system_prompt,
+        "model_calls": [],
+        "tool_calls": [],
+        "stories_read": [],
+        "topics_listed": [],
+        "final_write": {},
+    })
 
     async def _api_call_with_heartbeat(**kwargs) -> ChatResponse:
         """Run the provider call in a thread while sending heartbeats
@@ -619,6 +646,13 @@ async def run_agent(
                       f"max_tokens={request_kwargs['max_tokens']}, "
                       f"messages={len(request_kwargs['messages'])})", flush=True)
                 response = await _api_call_with_heartbeat(**request_kwargs)
+                trace["model_calls"].append({
+                    "turn": _turn,
+                    "model": request_kwargs["model"],
+                    "phase": "write" if force_generate else "explore",
+                    "stop_reason": response.stop_reason,
+                    "usage": dict(response.usage or {}),
+                })
                 print(f"[agent] turn {_turn}: stop_reason={response.stop_reason} "
                       f"blocks={[b.get('type') for b in response.content]} "
                       f"usage={response.usage}",
@@ -664,13 +698,27 @@ async def run_agent(
         return None
 
     # Restrict to reporter-selected topics if provided.
+    # view_topics reads broad_topics and read_story/search_stories used to
+    # reach the whole corpus, so all three are scoped here — otherwise the
+    # agent still sees, and writes about, topics the reporter deselected.
     if selected_topics:
         from dataclasses import replace as _replace
-        filtered = {t: v for t, v in pipeline_result.topics.items()
-                    if t in set(selected_topics)}
-        pipeline_result = _replace(pipeline_result, topics=filtered)
+        wanted = set(selected_topics)
+        filtered = {t: v for t, v in pipeline_result.topics.items() if t in wanted}
+        allowed = frozenset(i for v in filtered.values() for i in v)
+        pipeline_result = _replace(
+            pipeline_result,
+            topics=filtered,
+            broad_topics={t: v for t, v in pipeline_result.broad_topics.items() if t in wanted},
+            allowed_indices=allowed,
+        )
 
-    n_stories = len(pipeline_result.stories)
+    if pipeline_result.allowed_indices is not None:
+        n_stories = len(pipeline_result.allowed_indices)
+    else:
+        n_stories = len(pipeline_result.stories)
+    trace["selected_topics"] = list(pipeline_result.topics.keys())
+    trace["stories_in_scope"] = n_stories
     n_topics  = len(pipeline_result.topics)
 
     messages: list[dict] = [
@@ -696,7 +744,18 @@ async def run_agent(
     listed_topics: set = set()
     read_indices: set = set()
 
+    exploration_fired = False
+
+    def _finish_trace():
+        trace["stories_read"] = [
+            {"index": i, "title": pipeline_result.stories[i].get("title", "")}
+            for i in sorted(read_indices)
+        ]
+        trace["topics_listed"] = sorted(listed_topics)
+        trace["turns"] = _turn + 1
+
     MAX_TURNS = 40
+    _turn = 0
     for _turn in range(MAX_TURNS):
         messages = _prune_history(messages)
 
@@ -707,8 +766,8 @@ async def run_agent(
             pipeline_result, listed_topics, read_indices,
         )
         force_generate = threshold_met and not beat_book_done
-        if force_generate and on_exploration_done and not getattr(run_agent, "_exploration_fired", False):
-            run_agent._exploration_fired = True
+        if force_generate and on_exploration_done and not exploration_fired:
+            exploration_fired = True
             # Build a context doc with topic summaries + story excerpts for
             # the research agent to start on in parallel.
             context_lines = ["# Beat Book Research Context\n"]
@@ -815,8 +874,14 @@ async def run_agent(
                     "beat book may be incomplete."
                 )
 
+            trace["final_write"] = {
+                "continuation_rounds": continuation_round,
+                "truncated": response.stop_reason == "max_tokens",
+                "chars": len(text_combined),
+            }
             # Final-write turn: the text body IS the beat book.
             if text_combined:
+                _finish_trace()
                 await on_beat_book(_derive_filename(pipeline_result), text_combined)
                 beat_book_done = True
                 break
@@ -930,6 +995,8 @@ async def run_agent(
                         "the loop now."
                     )
                 else:
+                    _finish_trace()
+                    trace["final_write"] = {"via_tool": True}
                     await on_beat_book(
                         tool_input.get("filename", "beat_book.md"),
                         tool_input.get("markdown_content", ""),
@@ -958,7 +1025,7 @@ async def run_agent(
                             read_indices.update(list(indices)[-scan_credit:])
                 elif tool_name == "read_story":
                     idx = tool_input.get("index")
-                    if isinstance(idx, int) and 0 <= idx < len(pipeline_result.stories):
+                    if isinstance(idx, int) and pipeline_result.get_story(idx) is not None:
                         read_indices.add(idx)
                 progress, _ = _progress_report(
                     pipeline_result, listed_topics, read_indices,
@@ -981,6 +1048,12 @@ async def run_agent(
                     except Exception:
                         pass
 
+            trace["tool_calls"].append({
+                "turn": _turn,
+                "tool": tool_name,
+                "input": {k: v for k, v in tool_input.items() if k != "markdown_content"},
+                "result_chars": len(content_str),
+            })
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tool_id,
@@ -991,6 +1064,7 @@ async def run_agent(
             messages.append({"role": "user", "content": tool_results})
 
     if not beat_book_done:
+        _finish_trace()
         print(f"[agent] loop exited without writing beat book "
               f"(turn count exhausted or stop_reason mismatch). "
               f"listed_topics={listed_topics}, read={len(read_indices)}", flush=True)

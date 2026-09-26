@@ -23,10 +23,12 @@ from a worker thread.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import os
 import queue as _queue
 import re
+import time
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -41,8 +43,15 @@ from citation_matcher import (
     markdown_to_beatbook_entries,
     build_sources_file,
 )
-from embed_client import get_embed_client
+from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
+from egress import egress_summary
+import research_agent as _research_mod
+
+MANIFEST_VERSION = 1
+# Cap on the stored draft-to-final diff, so a runaway revision can't bloat
+# the manifest.
+MAX_DIFF_CHARS = 200_000
 
 OUTPUT_DIR = Path("output")
 SANDBOX_ROOT = OUTPUT_DIR / "sandboxes"
@@ -98,6 +107,49 @@ def make_emit(job: BookJob) -> Callable[[dict], Awaitable[None]]:
     return emit
 
 
+def _write_json(path: Path, data: Any) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _corpus_record(pipeline_result: Any) -> dict:
+    """Topic assignments from the pipeline, by story index. Story text itself
+    lives in <stem>_sources.json; indices here match its `story-N` ids."""
+    if pipeline_result is None:
+        return {}
+    stories = pipeline_result.stories
+    return {
+        "num_stories": len(stories),
+        "broad_topics": {k: list(v) for k, v in pipeline_result.broad_topics.items()},
+        "specific_topics": {k: list(v) for k, v in pipeline_result.specific_topics.items()},
+        "stories": [
+            {"index": i, "title": s.get("title", ""), "date": s.get("date", ""),
+             "author": s.get("author", ""), "organization": s.get("organization", ""),
+             "content_type": s.get("content_type", "article"),
+             "chars": len(s.get("content", "") or "")}
+            for i, s in enumerate(stories)
+        ],
+    }
+
+
+def _draft_diff(draft: str, final: str) -> dict:
+    """Line-level summary of what the research agent changed."""
+    draft_lines = draft.splitlines()
+    final_lines = final.splitlines()
+    diff = "\n".join(difflib.unified_diff(
+        draft_lines, final_lines, fromfile="draft.md", tofile="final.md", lineterm="", n=1))
+    added = sum(1 for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in diff.splitlines() if l.startswith("-") and not l.startswith("---"))
+    return {
+        "changed": draft != final,
+        "lines_added": added,
+        "lines_removed": removed,
+        "unified_diff": diff[:MAX_DIFF_CHARS],
+        "truncated": len(diff) > MAX_DIFF_CHARS,
+    }
+
+
 def _title_from_markdown(md: str) -> Optional[str]:
     """The real document title is the first H1 of the generated markdown."""
     for line in md.splitlines():
@@ -132,8 +184,61 @@ async def run_generation(
         await emit({"type": "status", "status": "failed"})
         return
 
-    store.update_book(book_id, status="generating")
+    store.update_book(book_id, status="generating", target_words=target_words)
     await emit({"type": "status", "status": "generating"})
+
+    # ── Build manifest: a durable record of how this book was made ──────────
+    if chat_provider is None:
+        chat_provider = get_chat_provider(api_key=anthropic_key)
+    t_start = time.time()
+    agent_trace: dict = {}
+    research_trace: dict = {}
+    manifest: dict = {
+        "manifest_version": MANIFEST_VERSION,
+        "book_id": book_id,
+        "stem": stem,
+        "started_at": t_start,
+        "style": style,
+        "target_words": target_words,
+        "selected_topics": list(selected_topics),
+        "providers": {
+            "chat": {
+                "provider": type(chat_provider).__name__,
+                "explore_model": getattr(chat_provider, "explore_model", ""),
+                "write_model": getattr(chat_provider, "agent_model", ""),
+                "label_model": getattr(chat_provider, "label_model", ""),
+                "normalize_model": getattr(chat_provider, "normalize_model", ""),
+            },
+            "embeddings": {
+                "provider": get_embed_provider(),
+                "model": getattr(embed_client, "model_name", None) if embed_client else None,
+            },
+            "research": {"provider": "anthropic", "model": _research_mod.MODEL},
+        },
+        "egress": egress_summary(),
+        "corpus": _corpus_record(pipeline_result),
+        "stages": {},
+        "agent": agent_trace,
+        "research": research_trace,
+        "citations": {},
+        "research_changes": {},
+        "errors": [],
+    }
+    manifest_path = OUTPUT_DIR / f"{stem}.manifest.json"
+
+    def _stage(name: str, started: float) -> None:
+        manifest["stages"][name] = {"started_at": started, "seconds": round(time.time() - started, 1)}
+
+    def _save_manifest(status: str) -> None:
+        manifest["status"] = status
+        manifest["finished_at"] = time.time()
+        manifest["seconds"] = round(manifest["finished_at"] - t_start, 1)
+        try:
+            _write_json(manifest_path, manifest)
+        except Exception:
+            traceback.print_exc()
+
+    t_agent = time.time()
 
     loop = asyncio.get_event_loop()
     sandbox_dir = SANDBOX_ROOT / book_id
@@ -165,7 +270,9 @@ async def run_generation(
         nonlocal book_written
 
         # 1. Persist the raw draft.
+        _stage("write", t_agent)
         (OUTPUT_DIR / f"{stem}.draft.md").write_text(markdown, encoding="utf-8")
+        t_research = time.time()
 
         # 2. Run research sequentially on the real draft.
         await emit({"type": "research_started", "filename": filename})
@@ -189,9 +296,11 @@ async def run_generation(
                 on_progress=on_research_progress,
                 on_tool_status=on_research_tool_status,
                 on_text=on_research_text,
+                trace=research_trace,
             )
         except Exception as e:
             traceback.print_exc()
+            manifest["errors"].append(f"research: {type(e).__name__}: {e}")
             await emit({"type": "error",
                         "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft."})
 
@@ -205,6 +314,8 @@ async def run_generation(
             revised_markdown = markdown
 
         await emit({"type": "research_complete"})
+        _stage("research", t_research)
+        manifest["research_changes"] = _draft_diff(markdown, revised_markdown)
 
         # 4. Canonical markdown.
         (OUTPUT_DIR / filename).write_text(revised_markdown, encoding="utf-8")
@@ -221,13 +332,14 @@ async def run_generation(
             await emit({
                 "type": "beat_book",
                 "filename": filename,
-                "markdown_path": f"/output/{quote(filename)}",
+                "markdown_path": f"/books/{quote(book_id)}/files/markdown",
                 "stem": stem,
             })
 
         # 5. Citation matching (OpenAI embeddings). If unavailable, the book is
         #    still usable as raw markdown — mark ready and deliver it.
         if embed_client is None:
+            manifest["errors"].append("citations: embedding provider not configured")
             print("[jobs] embed_client is None — skipping citation matching "
                   "(see the traceback near job start, if any, for why construction failed)", flush=True)
             await emit({"type": "error",
@@ -239,13 +351,17 @@ async def run_generation(
 
         stories = pipeline_result.stories
         cpq: _queue.Queue = _queue.Queue()
+        t_cite = time.time()
 
         def on_matcher_progress(stage, fraction, detail):
             cpq.put({"stage": stage, "fraction": fraction, "detail": detail})
 
         def run_matcher():
             source_embeddings = embed_source_stories(stories, embed_client, on_matcher_progress)
-            entries = markdown_to_beatbook_entries(revised_markdown, source_embeddings, embed_client, on_matcher_progress)
+            entries = markdown_to_beatbook_entries(
+                revised_markdown, source_embeddings, embed_client, on_matcher_progress,
+                draft_markdown=markdown,
+            )
             sources = build_sources_file(stories, source_embeddings)
             return entries, sources
 
@@ -275,6 +391,7 @@ async def run_generation(
             entries, sources = future.result()
         except Exception as e:
             traceback.print_exc()
+            manifest["errors"].append(f"citations: {type(e).__name__}: {e}")
             await emit({"type": "error",
                         "text": f"Citation matching failed: {e}. The raw Markdown is still available."})
             _finish_ready()
@@ -286,14 +403,17 @@ async def run_generation(
             json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
         (OUTPUT_DIR / f"{stem}_sources.json").write_text(
             json.dumps(sources, indent=2, ensure_ascii=False), encoding="utf-8")
+        _stage("citations", t_cite)
+        manifest["citations"] = {
+            "calibration": entries.get("calibration", {}),
+            "stats": entries.get("stats", {}),
+        }
 
         _finish_ready()
         await _emit_beat_book()
         book_written = True
 
     # ── Run the agent loop ───────────────────────────────────────────────────
-    if chat_provider is None:
-        chat_provider = get_chat_provider(api_key=anthropic_key)
     try:
         await run_agent(
             pipeline_result=pipeline_result,
@@ -307,9 +427,12 @@ async def run_generation(
             selected_topics=selected_topics,
             style=style,
             target_words=target_words,
+            trace=agent_trace,
         )
     except Exception as e:
         traceback.print_exc()
+        manifest["errors"].append(f"agent: {type(e).__name__}: {e}")
+        _save_manifest("failed")
         store.update_book(book_id, status="failed", error=f"{type(e).__name__}: {e}")
         await emit({"type": "error", "text": f"Agent error ({type(e).__name__}): {e}"})
         await emit({"type": "status", "status": "failed"})
@@ -317,6 +440,7 @@ async def run_generation(
 
     # The agent can exit without producing a beat book (e.g. persistent rate
     # limits). Treat that as a failure so the dot doesn't hang on "generating".
+    _save_manifest("ready" if book_written else "failed")
     if not book_written:
         store.update_book(book_id, status="failed",
                           error="agent finished without producing a beat book")

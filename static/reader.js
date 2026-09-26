@@ -3,7 +3,8 @@
 // SPA's #view-reader column (not a full window). Parameterized by stem, resets
 // its citation state on every open, and binds scroll to #reader-main.
 //
-// Exposes window.Reader = { open, openCitation, showPreview, hidePreview }.
+// Exposes window.Reader = { open, openCitation, openSupport, openManifest,
+// toggleSourcing, showPreview, hidePreview }.
 // Only these are referenced from generated HTML (citation chips / footnotes);
 // everything else is wired with addEventListener.
 (function () {
@@ -20,6 +21,10 @@
   let scrollBound = false;
   let ticking = false;
   let isNavTicking = false;
+  let currentBookId = null;
+  let calibration = null;       // per-corpus similarity threshold block
+  let sourcingStats = null;     // counts of cited / web / unsourced claims
+  let manifestCache = null;     // lazily loaded <stem>.manifest.json
 
   function resetState() {
     storiesData = [];
@@ -27,7 +32,31 @@
     citationsByNumber = {};
     sourcesByKey = {};
     sectionHeaders = [];
+    calibration = null;
+    sourcingStats = null;
+    manifestCache = null;
   }
+
+  function bookFile(kind) {
+    return `/books/${encodeURIComponent(currentBookId)}/files/${kind}`;
+  }
+
+  // Similarity bands for the citation chip, measured as distance above the
+  // book's own calibrated cutoff, so "weak" means "barely above this
+  // corpus's noise". Across the sample books the median citation sits about
+  // 0.07 above the cutoff; these margins put roughly the bottom quarter in
+  // "weak" and the top quarter in "strong".
+  const SIM_MARGIN_MEDIUM = 0.04;
+  const SIM_MARGIN_STRONG = 0.12;
+  function simBand(sim) {
+    if (typeof sim !== 'number') return 'sim-unknown';
+    const t = calibration && typeof calibration.threshold === 'number' ? calibration.threshold : 0.5;
+    if (sim >= t + SIM_MARGIN_STRONG) return 'sim-strong';
+    if (sim >= t + SIM_MARGIN_MEDIUM) return 'sim-medium';
+    return 'sim-weak';
+  }
+  const SIM_BAND_LABEL = { 'sim-strong': 'strong match', 'sim-medium': 'moderate match', 'sim-weak': 'weak match', 'sim-unknown': 'match' };
+  function fmtSim(sim) { return typeof sim === 'number' ? sim.toFixed(2) : '—'; }
 
   // ── Pure helpers (verbatim from the viewer) ─────────────────────────────
   function escapeHtml(s) {
@@ -125,23 +154,25 @@
     return ranges;
   }
 
-  function renderWithHighlights(content, ranges) {
-    if (!ranges || !ranges.length) return escapeHtml(content);
-    const sorted = [...ranges].sort((a, b) => a.offset - b.offset);
-    const merged = [{ ...sorted[0] }];
-    for (let i = 1; i < sorted.length; i++) {
-      const last = merged[merged.length - 1], cur = sorted[i];
-      if (cur.offset <= last.offset + last.length) last.length = Math.max(last.length, cur.offset + cur.length - last.offset);
-      else merged.push({ ...cur });
+  // Two layers: the whole matched passage (light) and the sub-spans the
+  // leave-one-out pass found carry the claim (strong).
+  function renderLayered(content, bandRanges, keyRanges) {
+    if ((!bandRanges || !bandRanges.length) && (!keyRanges || !keyRanges.length)) return escapeHtml(content);
+    const cuts = new Set([0, content.length]);
+    const all = [...(bandRanges || []), ...(keyRanges || [])];
+    all.forEach(r => { cuts.add(Math.max(0, r.offset)); cuts.add(Math.min(content.length, r.offset + r.length)); });
+    const points = [...cuts].sort((a, b) => a - b);
+    const inside = (ranges, a, b) => (ranges || []).some(r => r.offset <= a && r.offset + r.length >= b);
+    let out = '';
+    for (let i = 0; i < points.length - 1; i++) {
+      const a = points[i], b = points[i + 1];
+      if (b <= a) continue;
+      const text = escapeHtml(content.slice(a, b));
+      if (inside(keyRanges, a, b)) out += `<mark class="passage-match passage-key">${text}</mark>`;
+      else if (inside(bandRanges, a, b)) out += `<mark class="passage-match">${text}</mark>`;
+      else out += text;
     }
-    let result = '', pos = 0;
-    for (const r of merged) {
-      if (r.offset > pos) result += escapeHtml(content.slice(pos, r.offset));
-      result += `<mark class="passage-match">${escapeHtml(content.slice(r.offset, r.offset + r.length))}</mark>`;
-      pos = r.offset + r.length;
-    }
-    if (pos < content.length) result += escapeHtml(content.slice(pos));
-    return result;
+    return out;
   }
 
   // ── Hover preview tooltip ───────────────────────────────────────────────
@@ -202,6 +233,19 @@
     if (c) openArticle(c.articleId, c);
   }
 
+  // Show the k-th supporting passage for a citation (the matcher keeps up
+  // to five per claim; the inline chip only shows the best one).
+  function openSupport(number, k) {
+    const c = citationsByNumber[number];
+    if (!c || !c.supports || !c.supports[k]) return;
+    const s = c.supports[k];
+    openArticle(s.article_id, {
+      ...c, supportIndex: k, articleId: s.article_id,
+      passageOffset: s.passage_offset, passageLength: s.passage_length,
+      similarity: s.similarity, highlights: s.highlights || [],
+    });
+  }
+
   function openArticle(articleId, matchInfo) {
     hidePreview();
     const split = $('reader-split');
@@ -218,13 +262,14 @@
     const articleContent = useRaw ? story.content : extractArticleContent(story.content);
     const passage = useRaw ? { offset: matchInfo.passageOffset, length: matchInfo.passageLength } : null;
     const tidiedRanges = passage ? tidyPassageRanges(articleContent, passage) : [];
+    const keyRanges = useRaw ? (matchInfo.highlights || []).map(h => ({ offset: h.char_offset, length: h.char_length })) : [];
 
     const authorName = formatAuthorName(story.author);
     const bylineHtml = authorName !== 'Unknown' ? `<span><strong>By:</strong> ${authorName}</span>` : '';
 
     let bodyHtml;
     if (useRaw && articleContent) {
-      const annotated = renderWithHighlights(articleContent, tidiedRanges);
+      const annotated = renderLayered(articleContent, tidiedRanges, keyRanges);
       bodyHtml = `<div class="article-body fade-in" style="animation-delay: 0.15s">${annotated.replace(/\n{2,}/g, '<br><br>').replace(/\n/g, ' ')}</div>`;
     } else {
       const splitter = /\n\s*\n/.test(articleContent) ? /\n\s*\n+/ : /\n+/;
@@ -240,11 +285,30 @@
     let claimCardHtml = '';
     if (matchInfo && matchInfo.claimText) {
       const numberLabel = (typeof matchInfo.number === 'number') ? `Source [${matchInfo.number}] cites:` : 'Cited for:';
+      const band = simBand(matchInfo.similarity);
+      const thresholdNote = calibration && typeof calibration.threshold === 'number'
+        ? ` The cutoff for this book is ${fmtSim(calibration.threshold)}.` : '';
+      const strengthHtml = typeof matchInfo.similarity === 'number'
+        ? `<div class="match-strength"><span class="sim-dot ${band}" aria-hidden="true"></span>Match strength ${fmtSim(matchInfo.similarity)}, ${SIM_BAND_LABEL[band]}.${thresholdNote} This is text similarity, not a fact check.</div>` : '';
+      const webNote = matchInfo.provenance === 'web'
+        ? '<div class="match-web-note">Web research added this claim. The passage below from your stories is similar, but it is not where the claim came from. Check the attribution in the sentence.</div>' : '';
+      const keyNote = keyRanges.length ? ' Darker highlight marks the words that matter most to the match.' : '';
+      const supports = matchInfo.supports || [];
+      const current = matchInfo.supportIndex || 0;
+      const altHtml = supports.length > 1 ? `
+          <div class="match-alternates">
+            <div class="match-alternates-label">${supports.length} matching passages</div>
+            ${supports.map((s, k) => `<button type="button" class="match-alt${k === current ? ' current' : ''}" onclick="Reader.openSupport(${matchInfo.number}, ${k})">
+                <span class="sim-dot ${simBand(s.similarity)}" aria-hidden="true"></span>
+                <span class="match-alt-title">${escapeHtml(s.article_title || 'Untitled')}</span>
+                <span class="match-alt-sim">${fmtSim(s.similarity)}</span></button>`).join('')}
+          </div>` : '';
       claimCardHtml = `
         <div class="cited-claim-card fade-in" style="animation-delay: 0.08s">
           <div class="cited-claim-label">${numberLabel}</div>
           <div class="cited-claim-text">${escapeHtml(matchInfo.claimText)}</div>
-          <div class="cited-claim-arrow" aria-hidden="true">↓ matched passage highlighted below</div>
+          ${strengthHtml}${webNote}${altHtml}
+          <div class="cited-claim-arrow" aria-hidden="true">↓ matched passage highlighted below.${keyNote}</div>
         </div>`;
     }
 
@@ -268,7 +332,7 @@
 
     if (useRaw) {
       requestAnimationFrame(() => {
-        const target = el.querySelector('.passage-match');
+        const target = el.querySelector('.passage-key') || el.querySelector('.passage-match');
         if (target) {
           const rect = target.getBoundingClientRect();
           const containerRect = el.getBoundingClientRect();
@@ -276,6 +340,126 @@
         }
       });
     }
+  }
+
+  // ── "How this book was made" panel (from <stem>.manifest.json) ──────────
+  function fmtSeconds(sec) {
+    if (typeof sec !== 'number') return '';
+    if (sec < 90) return `${Math.round(sec)} s`;
+    return `${Math.floor(sec / 60)} min ${Math.round(sec % 60)} s`;
+  }
+  function fmtNum(n) { return typeof n === 'number' ? n.toLocaleString() : '—'; }
+  function sumUsage(calls) {
+    const t = { input: 0, output: 0, cacheRead: 0 };
+    (calls || []).forEach(c => {
+      const u = c.usage || {};
+      t.input += (u.input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+      t.cacheRead += u.cache_read_input_tokens || 0;
+      t.output += u.output_tokens || 0;
+    });
+    return t;
+  }
+  function hostLink(url) {
+    try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return url; }
+  }
+  function safeHref(url) { return /^https?:\/\//i.test(url || '') ? escapeHtml(url) : '#'; }
+
+  function manifestSection(title, body, open) {
+    return `<details class="mf-section"${open ? ' open' : ''}><summary>${escapeHtml(title)}</summary><div class="mf-body">${body}</div></details>`;
+  }
+
+  function renderManifest(m) {
+    const prov = m.providers || {};
+    const chat = prov.chat || {}, emb = prov.embeddings || {}, res = prov.research || {};
+    const agent = m.agent || {}, research = m.research || {};
+    const corpus = m.corpus || {}, cites = m.citations || {}, stats = cites.stats || {};
+    const cal = cites.calibration || {};
+    const stages = m.stages || {};
+    const agentTok = sumUsage(agent.model_calls), resTok = sumUsage(research.model_calls);
+
+    const overview = `<dl class="mf-dl">
+        <dt>Built</dt><dd>${m.started_at ? escapeHtml(new Date(m.started_at * 1000).toLocaleString()) : '—'} · ${escapeHtml(fmtSeconds(m.seconds))}</dd>
+        <dt>Style</dt><dd>${escapeHtml(m.style || '')}, about ${fmtNum(m.target_words)} words</dd>
+        <dt>Topics used</dt><dd>${(m.selected_topics || []).map(escapeHtml).join(', ') || '—'}</dd>
+        <dt>Stories</dt><dd>${fmtNum(agent.stories_in_scope)} in the selected topics, of ${fmtNum(corpus.num_stories)} uploaded</dd>
+      </dl>
+      ${(m.errors || []).length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${m.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}`;
+
+    const stageRows = [['write', 'Explore stories and write the draft'], ['research', 'Web research'], ['citations', 'Match citations']]
+      .filter(([k]) => stages[k]).map(([k, label]) => `<tr><td>${label}</td><td>${escapeHtml(fmtSeconds(stages[k].seconds))}</td></tr>`).join('');
+    const models = `<table class="mf-table"><thead><tr><th>Step</th><th>Model</th><th>Tokens in / out</th></tr></thead><tbody>
+        <tr><td>Explore the stories</td><td>${escapeHtml(agent.explore_model || chat.explore_model || '')}</td><td rowspan="2">${fmtNum(agentTok.input + agentTok.cacheRead)} / ${fmtNum(agentTok.output)}</td></tr>
+        <tr><td>Write the draft</td><td>${escapeHtml(agent.write_model || chat.write_model || '')}</td></tr>
+        <tr><td>Web research</td><td>${escapeHtml(research.model || res.model || '')}</td><td>${fmtNum(resTok.input + resTok.cacheRead)} / ${fmtNum(resTok.output)}</td></tr>
+        <tr><td>Embeddings</td><td>${escapeHtml([emb.provider, emb.model].filter(Boolean).join(' · '))}</td><td>—</td></tr>
+      </tbody></table>
+      ${stageRows ? `<table class="mf-table"><thead><tr><th>Stage</th><th>Time</th></tr></thead><tbody>${stageRows}</tbody></table>` : ''}`;
+
+    const egressRows = ((m.egress || {}).rows || []).map(r => `<tr>
+        <td>${escapeHtml(r.stage)}</td><td>${escapeHtml(r.sends)}</td>
+        <td>${r.to && r.to.local ? '<span class="mf-local">This machine</span>' : escapeHtml((r.to && (r.to.service + ' · ' + r.to.host)) || '')}</td></tr>`).join('');
+    const egress = egressRows ? `<table class="mf-table"><thead><tr><th>Stage</th><th>What is sent</th><th>Where</th></tr></thead><tbody>${egressRows}</tbody></table>
+      <p class="mf-note">From the configuration when this book was built. Upload stages ran before this book was queued.</p>` : '<p class="mf-note">Not recorded.</p>';
+
+    const read = agent.stories_read || [];
+    const readList = read.length ? `<ol class="mf-list">${read.map(r => `<li>${escapeHtml(r.title || `Story ${r.index}`)}</li>`).join('')}</ol>` : '<p class="mf-note">Not recorded.</p>';
+    const toolCounts = {};
+    (agent.tool_calls || []).forEach(t => { toolCounts[t.tool] = (toolCounts[t.tool] || 0) + 1; });
+    const searches = (agent.tool_calls || []).filter(t => t.tool === 'search_stories').map(t => (t.input || {}).query).filter(Boolean);
+    const agentBody = `<p>The writing agent read or scanned <strong>${fmtNum(read.length)}</strong> stories in ${fmtNum(agent.turns)} turns before it wrote the draft.
+        ${agent.final_write && agent.final_write.truncated ? ' <strong>The draft hit the output limit and may be cut off.</strong>' : ''}</p>
+      <p class="mf-note">Tool use: ${Object.entries(toolCounts).map(([k, v]) => `${escapeHtml(k)} ×${v}`).join(', ') || 'none'}.
+      ${searches.length ? `Searches: ${searches.map(q => `“${escapeHtml(q)}”`).join(', ')}.` : ''}</p>
+      ${readList}
+      ${agent.write_system_prompt ? `<details class="mf-prompt"><summary>Instructions given to the writing model</summary><pre>${escapeHtml(agent.write_system_prompt)}</pre></details>` : ''}`;
+
+    const cited = research.cited_sources || [];
+    const results = research.web_results || [];
+    const changes = m.research_changes || {};
+    const researchBody = (research.model_calls || []).length ? `
+      ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary of its changes.</p>` : ''}
+      <p>${fmtNum((research.web_searches || []).length)} web searches, ${fmtNum((research.web_fetches || []).length)} pages read, ${fmtNum((research.bash_commands || []).length)} shell commands.
+        ${changes.changed ? `It added ${fmtNum(changes.lines_added)} lines and removed ${fmtNum(changes.lines_removed)}.` : 'It made no changes to the draft.'}
+        ${research.finalized ? '' : ' It did not formally finish, so its last file state was used.'}</p>
+      ${(research.web_searches || []).length ? `<p class="mf-note">Searches: ${research.web_searches.map(q => `“${escapeHtml(q)}”`).join(', ')}</p>` : ''}
+      ${cited.length ? `<h4>Pages the model cited</h4><ul class="mf-list">${cited.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
+      ${results.length ? `<details><summary>All ${results.length} search results it saw</summary><ul class="mf-list">${results.map(r => `<li><a href="${safeHref(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || hostLink(r.url))}</a> <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
+      ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
+    ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
+
+    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} had no match above the cutoff.
+        ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
+      <p class="mf-note">The cutoff is ${fmtSim(cal.threshold)}: the typical similarity of random, unrelated pairs in this corpus (${fmtSim(cal.noise_median)}) plus ${escapeHtml(String(cal.sigma || 3))} spreads, kept between ${fmtSim(0.40)} and ${fmtSim(cal.ceiling)}.${typeof cal.raw_threshold === 'number' && cal.raw_threshold > cal.threshold ? ' The upper limit clamped it, which happens with narrow single-topic corpora.' : ''}</p>`;
+
+    return manifestSection('Overview', overview, true)
+      + manifestSection('Models, tokens and time', models, false)
+      + manifestSection('Where your material went', egress, true)
+      + manifestSection('What the writing agent read', agentBody, false)
+      + manifestSection('What web research added', researchBody, false)
+      + manifestSection('How citations were matched', citeBody, false);
+  }
+
+  async function openManifest() {
+    hidePreview();
+    if (!currentBookId) return;
+    $('articlePanelTitle').textContent = 'How this book was made';
+    const el = $('articleContent');
+    el.innerHTML = '<p class="reader-loading">Loading…</p>';
+    $('reader-split').classList.add('split-view');
+    currentArticleId = '__manifest__';
+    try {
+      if (!manifestCache) {
+        const r = await fetch(bookFile('manifest'));
+        if (!r.ok) throw new Error(r.status === 404 ? 'missing' : `HTTP ${r.status}`);
+        manifestCache = await r.json();
+      }
+      el.innerHTML = `<div class="manifest fade-in">${renderManifest(manifestCache)}</div>`;
+    } catch (e) {
+      el.innerHTML = e.message === 'missing'
+        ? '<p class="mf-note">This book was made before build records were kept, so there is no record of how it was made.</p>'
+        : `<p class="reader-error">Couldn't load the build record: ${escapeHtml(e.message)}</p>`;
+    }
+    el.scrollTop = 0;
   }
 
   // ── Footnotes ───────────────────────────────────────────────────────────
@@ -378,6 +562,74 @@
     scrollBound = true;
   }
 
+  // ── Provenance decoration ───────────────────────────────────────────────
+  const LIST_MARKER_RE = /^(\s*(?:[-*+]|\d+[.)])\s+)([\s\S]*)$/;
+
+  function plainClaim(entry) {
+    const c = entry.content || '';
+    if (entry.kind === 'table_row') return c.trim().replace(/^\||\|$/g, '').split('|').map(x => x.trim()).filter(Boolean).join(' — ');
+    const m = entry.kind === 'list_item' ? c.match(LIST_MARKER_RE) : null;
+    return (m ? m[2] : c).replace(/[*_`]+/g, '');
+  }
+
+  // Add the citation sentinel and provenance markers to one entry without
+  // breaking its Markdown: list markers stay at the start of the line, and a
+  // table row's markers go inside its last cell.
+  function decorateEntry(entry, number, prov) {
+    const content = entry.content;
+    const cite = number != null ? `[[CITE:${number}]]` : '';
+    if (entry.passthrough || !prov) return cite ? `${content}${cite}` : content;
+    const badge = prov === 'web' ? '[[WEB]]' : '';
+    if (entry.kind === 'table_row') {
+      const trimmed = content.replace(/\s+$/, '');
+      const cut = trimmed.lastIndexOf('|');
+      if (cut <= 0) return content + badge + cite;
+      return `${trimmed.slice(0, cut).replace(/\s+$/, '')} ${badge}${cite} |`;
+    }
+    if (entry.kind === 'list_item') {
+      const m = content.match(LIST_MARKER_RE);
+      if (m) return `${m[1]}[[PV:${prov}]]${m[2]}[[/PV]]${badge}${cite}`;
+    }
+    const quote = content.match(/^(\s*(?:>\s?)+)([\s\S]*)$/);
+    if (quote) return `${quote[1]}[[PV:${prov}]]${quote[2]}[[/PV]]${badge}${cite}`;
+    return `[[PV:${prov}]]${content}[[/PV]]${badge}${cite}`;
+  }
+
+  function insertAfterFirstH1(html, extra) {
+    if (!extra) return html;
+    const i = html.indexOf('</h1>');
+    return i === -1 ? extra + html : html.slice(0, i + 5) + extra + html.slice(i + 5);
+  }
+
+  function renderSourcingSummary() {
+    const st = sourcingStats;
+    if (!st || !st.claims) return '';
+    const pct = (n) => st.claims ? Math.round((n / st.claims) * 100) : 0;
+    const bits = [
+      `<span class="sourcing-stat"><span class="sourcing-swatch sw-corpus"></span><strong>${st.corpus}</strong> of ${st.claims} claims matched to your stories (${pct(st.corpus)}%)</span>`,
+    ];
+    if (st.hasOrigin || st.web) bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong> added by web research</span>`);
+    bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-unsupported"></span><strong>${st.unsupported}</strong> with no matching source</span>`);
+    const threshold = calibration && typeof calibration.threshold === 'number'
+      ? `<span class="sourcing-threshold" title="Similarity cutoff computed for this corpus from random sentence and passage pairs. Matches below it are not shown.">Match cutoff ${fmtSim(calibration.threshold)}</span>` : '';
+    return `<div class="sourcing-summary" role="note">
+      <div class="sourcing-stats">${bits.join('')}</div>
+      <div class="sourcing-actions">
+        ${threshold}
+        <button type="button" class="btn-link" id="sourcing-toggle" onclick="Reader.toggleSourcing()">Highlight unsourced claims</button>
+        <button type="button" class="btn-link" onclick="Reader.openManifest()">How this book was made</button>
+      </div>
+      <p class="sourcing-note">A match means the sentence is similar to a passage in your stories. It does not confirm the claim. Check unsourced and web-added claims before you rely on them.</p>
+    </div>`;
+  }
+
+  function toggleSourcing() {
+    const el = $('reader-content');
+    const on = el.classList.toggle('show-sourcing');
+    const btn = $('sourcing-toggle');
+    if (btn) btn.textContent = on ? 'Hide highlighting' : 'Highlight unsourced claims';
+  }
+
   // ── Build the rendered document (4-pass citation pipeline) ───────────────
   function renderBeatbook(beatbookData) {
     const oldShapeThreshold = 0.65;
@@ -385,13 +637,16 @@
     if (Array.isArray(beatbookData)) entries = beatbookData;
     else if (beatbookData && Array.isArray(beatbookData.entries)) { entries = beatbookData.entries; isNewShape = true; }
     else throw new Error('Unrecognized beat-book JSON shape');
+    calibration = (beatbookData && beatbookData.calibration) || null;
 
     const sourceKey = (p) => `${p.article_id}::${p.passage_offset ?? 'x'}::${p.passage_length ?? 'x'}`;
 
     // Pass 1: primary support per entry (or null).
     const primaryByIdx = entries.map(entry => {
+      // Books made before table rows were citable have no `kind`; keep
+      // skipping their rows so the chip never lands inside table syntax.
       const isTableRow = entry.content.trimStart().startsWith('|');
-      if (isTableRow) return null;
+      if (isTableRow && entry.kind !== 'table_row') return null;
       let primary = null;
       if (isNewShape) {
         if (!entry.passthrough && entry.supports && entry.supports.length) primary = entry.supports[0];
@@ -432,15 +687,30 @@
         articleTitle: primary.article_title || '', articleAuthor: primary.article_author || '',
         articleDate: primary.article_date || '', passageText: primary.passage_text || '',
         passageOffset: primary.passage_offset, passageLength: primary.passage_length,
-        similarity: primary.similarity, claimText: entries[i].content || '',
+        similarity: primary.similarity, claimText: plainClaim(entries[i]),
+        highlights: primary.highlights || [], supports: entries[i].supports || [primary],
+        provenance: entries[i].provenance || 'corpus',
       };
       if (!sourcesByKey[key]) sourcesByKey[key] = { key, primary, numbers: [], firstSeen: number, claimText: entries[i].content || '' };
       sourcesByKey[key].numbers.push(number);
     }
 
-    // Pass 4: markdown with [[CITE:N]] sentinels.
-    const markdown = entries.map((entry, i) =>
-      numByIdx[i] != null ? `${entry.content}[[CITE:${numByIdx[i]}]]` : entry.content).join('\n');
+    // Sourcing counts. Older books have no provenance field; derive it.
+    const claims = entries.filter(e => !e.passthrough);
+    const provOf = (e) => e.provenance || ((e.supports && e.supports.length) ? 'corpus' : 'unsupported');
+    sourcingStats = {
+      claims: claims.length,
+      corpus: claims.filter(e => provOf(e) === 'corpus').length,
+      web: claims.filter(e => provOf(e) === 'web').length,
+      unsupported: claims.filter(e => provOf(e) === 'unsupported').length,
+      hasOrigin: claims.some(e => e.origin),
+    };
+
+    // Pass 4: markdown with sentinels. [[CITE:N]] becomes the chip; [[PV:x]]
+    // and [[/PV]] wrap a claim so its provenance can be styled; [[WEB]] is
+    // the "web" badge. Sentinels are plain text to marked, and are swapped
+    // for HTML after parsing.
+    const markdown = entries.map((entry, i) => decorateEntry(entry, numByIdx[i], isNewShape ? provOf(entry) : null)).join('\n');
 
     if (typeof marked === 'undefined') {
       $('reader-content').innerHTML = '<p class="reader-error">The markdown renderer failed to load. Check your connection and reload.</p>';
@@ -451,11 +721,19 @@
     html = html.replace(/\[\[CITE:(\d+)\]\]/g, (_, n) => {
       const num = parseInt(n, 10);
       const c = citationsByNumber[num];
-      const titleAttr = (c ? (c.articleTitle ? `Source: ${c.articleTitle}` : `Source [${num}]`) : `Source [${num}]`).replace(/"/g, '&quot;');
+      const band = c ? simBand(c.similarity) : 'sim-unknown';
+      const strength = c && typeof c.similarity === 'number' ? ` · ${SIM_BAND_LABEL[band]} (${fmtSim(c.similarity)})` : '';
+      const alts = c && c.supports && c.supports.length > 1 ? ` · ${c.supports.length} matching passages` : '';
+      const titleAttr = ((c ? (c.articleTitle ? `Source: ${c.articleTitle}` : `Source [${num}]`) : `Source [${num}]`) + strength + alts).replace(/"/g, '&quot;');
       const safeId = c ? c.articleId.replace(/'/g, "\\'") : '';
-      return `<sup class="footnote-ref" onclick="Reader.openCitation(${num})" onmouseenter="Reader.showPreview('${safeId}', event)" onmouseleave="Reader.hidePreview()" title="${titleAttr}">${num}</sup>`;
+      return `<sup class="footnote-ref ${band}" onclick="Reader.openCitation(${num})" onmouseenter="Reader.showPreview('${safeId}', event)" onmouseleave="Reader.hidePreview()" title="${titleAttr}">${num}</sup>`;
     });
+    html = html
+      .replace(/\[\[PV:(corpus|web|unsupported)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
+      .replace(/\[\[\/PV\]\]/g, '</span>')
+      .replace(/\[\[WEB\]\]/g, '<span class="web-badge" title="Added by the web-research step. Check the attribution in the sentence; it is not matched to your stories.">web</span>');
 
+    html = insertAfterFirstH1(html, renderSourcingSummary());
     if (Object.keys(sourcesByKey).length > 0) html += renderFootnotesSection(sourcesByKey);
 
     const contentEl = $('reader-content');
@@ -505,14 +783,22 @@
         dl.hidden = true;
       }
     }
+    currentBookId = opts.id || null;
     $('reader-content').innerHTML = '<p class="reader-loading">Loading…</p>';
+    $('reader-content').classList.remove('show-sourcing');
+    const howBtn = $('reader-howmade');
+    if (howBtn) howBtn.hidden = !currentBookId;
     const rm = $('reader-main'); if (rm) rm.scrollTop = 0;
     const bar = $('readingProgress'); if (bar) bar.style.transform = 'scaleX(0)';
     $('currentSectionText').textContent = 'Introduction';
 
-    const beatbookFile = `/output/${encodeURIComponent(stem)}.json`;
-    const storiesFile = `/output/${encodeURIComponent(stem)}_sources.json`;
-    const markdownFile = `/output/${encodeURIComponent(stem)}.md`;
+    if (!currentBookId) {
+      $('reader-content').innerHTML = '<div class="reader-error"><p>Couldn\'t load this beat book.</p></div>';
+      return;
+    }
+    const beatbookFile = bookFile('entries');
+    const storiesFile = bookFile('sources');
+    const markdownFile = bookFile('markdown');
     try {
       try {
         const sr = await fetch(storiesFile);
@@ -525,7 +811,7 @@
         // generated before citation matching existed) — the plain Markdown
         // still exists and is still worth showing, just without citations.
         const mdResponse = await fetch(markdownFile);
-        if (!mdResponse.ok) throw new Error(`couldn't load ${stem}.json or ${stem}.md`);
+        if (!mdResponse.ok) throw new Error(`couldn't load the citations or the Markdown for ${stem}`);
         renderPlainMarkdown(await mdResponse.text());
         bindScroll();
         return;
@@ -542,6 +828,8 @@
   function initStaticBindings() {
     const closeBtn = $('article-close-btn');
     if (closeBtn) closeBtn.addEventListener('click', closeArticle);
+    const howBtn = $('reader-howmade');
+    if (howBtn) howBtn.addEventListener('click', (e) => { e.stopPropagation(); openManifest(); });
     const secBtn = $('currentSectionBtn');
     if (secBtn) secBtn.addEventListener('click', toggleSectionMenu);
 
@@ -554,7 +842,7 @@
     document.addEventListener('click', (e) => {
       const split = $('reader-split'), panel = $('articlePanel');
       if (split && split.classList.contains('split-view') && panel && !panel.contains(e.target)
-        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel')) {
+        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade')) {
         closeArticle();
       }
       const nav = $('sectionNavigator');
@@ -568,6 +856,6 @@
     });
   }
 
-  window.Reader = { open, openCitation, showPreview, hidePreview };
+  window.Reader = { open, openCitation, openSupport, openManifest, toggleSourcing, showPreview, hidePreview };
   initStaticBindings();
 })();

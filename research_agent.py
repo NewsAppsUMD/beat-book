@@ -27,7 +27,9 @@ returned to the caller, which hands it to the citation matcher.
 from __future__ import annotations
 
 import asyncio
+import os
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -44,6 +46,14 @@ BASH_TIMEOUT_SECONDS = 30
 WEB_SEARCH_MAX_USES = 6
 WEB_FETCH_MAX_USES = 6
 WEB_FETCH_MAX_CONTENT_TOKENS = 15_000
+
+# Set RESEARCH_BASH=off to withhold the shell tool entirely. The agent then
+# researches with web search/fetch and edits the file with the text editor,
+# but cannot run scrapers.
+BASH_ENABLED = os.environ.get("RESEARCH_BASH", "on").strip().lower() not in ("0", "off", "false", "no")
+# Resource ceilings applied to every shell command (POSIX only).
+BASH_MAX_FILE_BYTES = 50 * 1024 * 1024
+BASH_MAX_CPU_SECONDS = 30
 
 def _add_cache_breakpoints(messages: List[Dict]) -> List[Dict]:
     """Stamp cache_control on the last user message's final content block."""
@@ -89,11 +99,10 @@ def build_tools() -> List[Dict[str, Any]]:
     Anthropic's side, and including our own would create two conflicting
     execution environments (per the server-tools docs).
     """
-    return [
-        {
-            "type": "bash_20250124",
-            "name": "bash",
-        },
+    tools: List[Dict[str, Any]] = []
+    if BASH_ENABLED:
+        tools.append({"type": "bash_20250124", "name": "bash"})
+    return tools + [
         {
             "type": "text_editor_20250728",
             "name": "str_replace_based_edit_tool",
@@ -418,6 +427,41 @@ def _resolve_inside_sandbox(sandbox_dir: Path, raw_path: str) -> Optional[Path]:
     return resolved
 
 
+def _bash_env(sandbox_dir: Path) -> Dict[str, str]:
+    """A minimal environment for the research agent's shell.
+
+    The model reads untrusted web pages, so a prompt injection could ask it to
+    run a command that prints or sends environment variables. Passing the
+    app's full environment would hand it ANTHROPIC_API_KEY, OPENAI_API_KEY and
+    the rest. Only what a Python scraper needs goes through.
+
+    This is not a filesystem sandbox: a command can still read files the app
+    user can read. Set RESEARCH_BASH=off, or run the app in a container, when
+    that matters."""
+    home = str(sandbox_dir.resolve())
+    env = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": home,
+        "TMPDIR": home,
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+    for k in ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "VIRTUAL_ENV"):
+        if os.environ.get(k):
+            env[k] = os.environ[k]
+    return env
+
+
+def _bash_limits() -> None:
+    """Runs in the child before exec: cap CPU time and file size."""
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_CPU, (BASH_MAX_CPU_SECONDS, BASH_MAX_CPU_SECONDS))
+        resource.setrlimit(resource.RLIMIT_FSIZE, (BASH_MAX_FILE_BYTES, BASH_MAX_FILE_BYTES))
+    except Exception:
+        pass
+
+
 def _run_bash(command: Optional[str], restart: bool, sandbox_dir: Path) -> str:
     """Execute a bash command inside the sandbox. Returns combined
     stdout/stderr (possibly prefixed with an error note)."""
@@ -436,6 +480,8 @@ def _run_bash(command: Optional[str], restart: bool, sandbox_dir: Path) -> str:
             capture_output=True,
             text=True,
             timeout=BASH_TIMEOUT_SECONDS,
+            env=_bash_env(sandbox_dir),
+            preexec_fn=_bash_limits if sys.platform != "win32" else None,
         )
     except subprocess.TimeoutExpired:
         return f"Error: command timed out after {BASH_TIMEOUT_SECONDS}s."
@@ -559,6 +605,58 @@ def _short_detail_for(tool_name: str, tool_input: Dict[str, Any]) -> str:
     return ""
 
 
+def _block_get(obj: Any, key: str, default: Any = None) -> Any:
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
+
+
+def _record_web_activity(content: Any, trace: Dict[str, Any]) -> List[tuple]:
+    """Pull web searches, results, fetches and citations out of one assistant
+    turn into `trace`. Returns (tool_name, description, detail) tuples for the
+    progress feed. Tolerant of missing fields: the block shapes differ across
+    tool versions and error results carry no URLs."""
+    statuses: List[tuple] = []
+    seen_results = {r["url"] for r in trace["web_results"]}
+    seen_cited = {c["url"] for c in trace["cited_sources"]}
+    for block in content or []:
+        btype = _block_get(block, "type")
+        if btype == "server_tool_use":
+            name = _block_get(block, "name", "")
+            tinput = _block_get(block, "input", {}) or {}
+            if name == "web_search":
+                q = str(_block_get(tinput, "query", "") or "")
+                trace["web_searches"].append(q)
+                statuses.append((name, "Searching the web", q[:80]))
+            elif name == "web_fetch":
+                url = str(_block_get(tinput, "url", "") or "")
+                trace["web_fetches"].append(url)
+                statuses.append((name, "Reading a web page", url[:80]))
+        elif btype == "web_search_tool_result":
+            results = _block_get(block, "content", []) or []
+            if isinstance(results, list):
+                for r in results:
+                    url = _block_get(r, "url")
+                    if url and url not in seen_results:
+                        seen_results.add(url)
+                        trace["web_results"].append({
+                            "url": url,
+                            "title": _block_get(r, "title", "") or "",
+                            "page_age": _block_get(r, "page_age", "") or "",
+                        })
+        elif btype == "text":
+            for c in _block_get(block, "citations", None) or []:
+                url = _block_get(c, "url")
+                if url and url not in seen_cited:
+                    seen_cited.add(url)
+                    trace["cited_sources"].append({
+                        "url": url,
+                        "title": _block_get(c, "title", "") or "",
+                        "cited_text": (_block_get(c, "cited_text", "") or "")[:400],
+                    })
+    return statuses
+
+
 async def _emit(cb: Optional[Callable], *args) -> None:
     if cb is None:
         return
@@ -580,6 +678,7 @@ async def run_research_agent(
     on_tool_status: Optional[ToolStatusCallback] = None,
     on_text: Optional[TextCallback] = None,
     initial_content: Optional[str] = None,
+    trace: Optional[Dict[str, Any]] = None,
 ) -> str:
     """Run the research agent and return the final Markdown content.
 
@@ -588,7 +687,28 @@ async def run_research_agent(
     before the full draft is ready (concurrent mode).
 
     The caller is responsible for creating `sandbox_dir` before calling.
+
+    If `trace` is given it is filled with a record of the run: model, turns,
+    token usage, every web search query, every page fetched, every source the
+    model cited, shell commands, file edits and the finalize summary.
     """
+    if trace is None:
+        trace = {}
+    trace.update({
+        "model": MODEL,
+        "bash_enabled": BASH_ENABLED,
+        "turns": 0,
+        "model_calls": [],
+        "web_searches": [],
+        "web_results": [],
+        "web_fetches": [],
+        "cited_sources": [],
+        "bash_commands": [],
+        "file_edits": [],
+        "finalized": False,
+        "summary": "",
+        "stop": "",
+    })
     sandbox_dir = Path(sandbox_dir)
     if not sandbox_dir.is_dir():
         raise FileNotFoundError(f"Sandbox directory does not exist: {sandbox_dir}")
@@ -605,6 +725,12 @@ async def run_research_agent(
         suggested_sources=SUGGESTED_SOURCES,
         max_turns=MAX_TURNS,
     )
+    if not BASH_ENABLED:
+        system_prompt += (
+            "\n\n# Shell disabled\n\nThe `bash` tool is not available in this "
+            "run, so skip the scraper step and ignore the Python instructions "
+            "above. Use web search, web fetch and the text editor only."
+        )
 
     messages: List[Dict[str, Any]] = [
         {
@@ -625,6 +751,7 @@ async def run_research_agent(
     await _emit(on_progress, "starting", f"Research agent initializing in sandbox {sandbox_dir.name}")
 
     for turn in range(MAX_TURNS):
+        trace["turns"] = turn + 1
         await _emit(on_progress, "thinking", f"Turn {turn + 1}/{MAX_TURNS}")
 
         # Server-executed tools (web_search / web_fetch with dynamic filtering)
@@ -718,6 +845,21 @@ async def run_research_agent(
                 flush=True,
             )
 
+        u = getattr(response, "usage", None)
+        trace["model_calls"].append({
+            "turn": turn + 1,
+            "stop_reason": response.stop_reason,
+            "usage": {
+                k: getattr(u, k, None) or 0
+                for k in ("input_tokens", "output_tokens",
+                          "cache_creation_input_tokens", "cache_read_input_tokens")
+            } if u is not None else {},
+        })
+        for server_tool in _record_web_activity(response.content, trace):
+            # Server-side web tools never pass through our tool loop, so they
+            # were invisible on the progress screen. Report them after the fact.
+            await _emit(on_tool_status, *server_tool)
+
         # Preserve the full assistant content (including any thinking blocks)
         # in the running transcript so interleaved thinking stays coherent.
         messages.append({"role": "assistant", "content": response.content})
@@ -731,6 +873,7 @@ async def run_research_agent(
 
         stop_reason = response.stop_reason
 
+        trace["stop"] = stop_reason or ""
         if stop_reason == "end_turn":
             break
 
@@ -772,16 +915,23 @@ async def run_research_agent(
                 )
 
                 if tool_name == "bash":
+                    trace["bash_commands"].append(str(tool_input.get("command") or "")[:2000])
                     result = _run_bash(
                         tool_input.get("command"),
                         bool(tool_input.get("restart")),
                         sandbox_dir,
                     )
                 elif tool_name == "str_replace_based_edit_tool":
+                    if tool_input.get("command") != "view":
+                        trace["file_edits"].append({
+                            "command": tool_input.get("command"),
+                            "path": tool_input.get("path"),
+                        })
                     result = _run_text_editor(tool_input, sandbox_dir)
                 elif tool_name == FINALIZE_TOOL_NAME:
                     final_filename = tool_input.get("filename") or markdown_filename
                     summary = tool_input.get("summary", "").strip()
+                    trace["summary"] = summary
                     await _emit(on_progress, "finalizing", summary or "Finalized.")
                     # Verify the claimed final file exists inside the sandbox
                     # and update the path we'll read back at the end.
@@ -794,6 +944,7 @@ async def run_research_agent(
                             f"citation-matching step."
                         )
                         finalized = True
+                        trace["finalized"] = True
                     else:
                         result = (
                             f"Error: the file '{final_filename}' you named was "

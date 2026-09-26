@@ -1,5 +1,37 @@
 # Beat Book Builder — Changelog
 
+## Session: September 26, 2026 — Sourcing transparency (Phase 1)
+
+### Reader
+- **Sourcing summary** under the title: claims matched to the corpus, added by web research, and unsourced, plus the match cutoff and a toggle that highlights unsourced and web-added claims.
+- **Match strength** on every citation chip, banded against the book's own cutoff, and stated in the source panel with a reminder that similarity is not a fact check.
+- **Alternate passages**: the source panel lists all (up to five) supporting passages per claim.
+- **Key-phrase highlights**: the leave-one-out sub-spans, computed since the embeddings rewrite but never shown, are now painted darker inside the passage.
+- **"Web" badge** on claims the research agent added.
+- **"How this book was made" panel** reading the new build record.
+
+### Citations
+- Bullets and body table rows with at least six words are now citable, one claim each, and are kept out of neighbor context blending. Headings, table headers and short labels still pass through.
+- Each claim carries `kind`, `origin` (draft or research, from comparing against the draft) and `provenance` (corpus, web or unsupported). The entries file gains a `stats` block.
+- The Word export renders cited bullets and rows as bullets and rows, with their markers.
+- `_sources.json` keeps organization, language, content type and metadata.
+
+### Build record
+- New `<stem>.manifest.json` per book: models and providers per stage, token usage, stage timings, the egress table, corpus topic assignments, every writing-agent tool call, the stories it read, its system prompts, the research agent's searches, results, fetched pages, cited pages, shell commands, edits and summary, the draft-to-final diff, citation calibration and stats, and any errors.
+- `library.json` records `target_words`.
+
+### Fixes
+- The writing agent no longer sees deselected topics. `view_topics` used the unfiltered topic list, and `read_story` and `search_stories` reached the whole corpus.
+- The read-target text shown to the model now matches the rule the code enforces.
+- `output/` is no longer mounted as a static directory; book files are served by id from `/books/{id}/files/{kind}`.
+- The research agent's shell runs with a minimal environment (no API keys), a sandbox home directory, and CPU and file-size limits. `RESEARCH_BASH=off` removes it. Server-side web searches and fetches now appear in the progress feed.
+- Numeric WordPress author ids are no longer used as bylines. RSS and JSON tag names are kept in story metadata. The detected language is now sent to the pipeline.
+- New `GET /api/egress-plan` and a "Where your material goes" table on the topic screen.
+- Static assets carry a version query so browsers pick up the new reader.
+- Added a pytest suite in `tests/`.
+
+---
+
 ## Session: June 5, 2026 — App shell + background library
 
 ### From a linear wizard to a persistent app

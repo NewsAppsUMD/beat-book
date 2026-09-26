@@ -88,7 +88,7 @@ A popup should appear saying a port was forwarded — click **Open in Browser**.
 
 **Do this at the end of every session.** Generated beat books live in the `output/` folder inside your Codespace, but they are *not* saved to git and Codespaces get automatically deleted after about 30 days of inactivity.
 
-To download a finished book: in the file explorer, find `output/<your-book-name>.md`, right-click it, and choose **Download**. If you want the citation data too, download the matching `.json` and `_sources.json` files alongside it.
+To download a finished book: in the file explorer, find `output/<your-book-name>.md`, right-click it, and choose **Download**. If you want the citation data too, download the matching `.json` and `_sources.json` files alongside it. The `.manifest.json` file records how the book was made.
 
 ## 7. Ground rules (you're sharing API keys)
 
