@@ -438,7 +438,7 @@
     const replacedHtml = replacedList.length ? `<h4>Claims from your stories that research changed or removed</h4><ul class="mf-list">${replacedList.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
     const acceptedHtml = accepted.length ? `<h4>Facts added, with their quotes</h4><ol class="mf-list mf-facts">${accepted.map(f => `<li>
         <div>${escapeHtml(f.fact)}</div>
-        <blockquote class="mf-quote">“${escapeHtml(f.quote)}”</blockquote>
+        <blockquote class="mf-quote">“${quoteHtml(f)}”</blockquote>
         <div class="mf-host">${link(f.final_url || f.url, f.title)} · ${escapeHtml(f.attribution || '')} · in “${escapeHtml(f.section || '')}”</div></li>`).join('')}</ol>` : '';
     const rejectedHtml = rejected.length ? `<details><summary>${rejected.length} submissions rejected</summary><ul class="mf-list">${rejected.map(r => `<li>${escapeHtml(r.fact || '')}<br><span class="mf-host">${escapeHtml(r.reason || '')}${r.url ? ' · ' + escapeHtml(hostLink(r.url)) : ''}</span></li>`).join('')}</ul></details>` : '';
     const finishNote = research.finalized
@@ -621,6 +621,12 @@
     return String(webSupports.length - 1);
   }
 
+  // A quote made of several verbatim passages is shown joined with "…".
+  function quoteHtml(f) {
+    const parts = (f.quote_parts && f.quote_parts.length) ? f.quote_parts : [f.quote || ''];
+    return parts.map(escapeHtml).join(' … ');
+  }
+
   // Side panel for a quoted web fact: the claim, the verbatim quote the app
   // checked, and the page it came from.
   function openWebFact(i) {
@@ -635,7 +641,8 @@
         <div class="cited-claim-text">${escapeHtml(sup.claimText || '')}</div>
         <div class="match-strength">The app checked that this quote appears on the page and that every figure in the claim is in the quote. It did not check that the page is right.</div>
       </div>
-      <blockquote class="mf-quote web-fact-quote fade-in">“${escapeHtml(sup.quote)}”</blockquote>
+      <blockquote class="mf-quote web-fact-quote fade-in">“${quoteHtml(sup)}”</blockquote>
+      ${(sup.quote_parts || []).length > 1 ? '<p class="mf-note fade-in">The quote joins separate passages from the page; each was checked on its own.</p>' : ''}
       <p class="fade-in">${escapeHtml(sup.source_name || '')}${sup.source_name ? ' · ' : ''}<a href="${safeHref(url)}" target="_blank" rel="noopener">Open the page →</a></p>`;
     $('reader-split').classList.add('split-view');
     currentArticleId = '__web__' + i;

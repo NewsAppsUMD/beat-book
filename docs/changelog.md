@@ -74,6 +74,14 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - Rejections now record the submitted quote.
 - The evaluation reuses the first run's draft for later runs of the same corpus, or an earlier evaluation's drafts with `--drafts-from`.
 
+### After the full evaluation
+- All six runs, three corpora twice each, met every hard target, adding 28 checked facts. But 71 submissions were rejected, and every run used all its turns. All 19 "quote not on the page" rejections turned out to be text that was on the page.
+- Quotes may now join several verbatim passages, split on ellipses and then on sentences, as long as each passage is at least 20 characters and appears on the page. Edge punctuation and quote marks are trimmed. Accepted facts store `quote_parts`, and the reader joins them with "…".
+- Spaces that page extraction leaves before closing punctuation, as in "the Bears ' board", are ignored.
+- Facts can be placed under ### subsections. The first message and placement errors list them.
+- A date in the page's URL, such as /2026/03/17/, counts as a date on the page.
+- Replaying the evaluation's 71 rejections: 15 are now accepted, 5 now place correctly but fail a content check, and 39 are content failures the checks should catch.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library

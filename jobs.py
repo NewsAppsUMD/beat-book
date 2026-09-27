@@ -183,6 +183,7 @@ def tag_web_facts(entries: dict, research_trace: dict) -> Dict[str, int]:
         e["web_basis"] = "quoted"
         e["web_fact_id"] = fact["id"]
         e["web_support"] = {k: fact.get(k, "") for k in ("url", "final_url", "title", "source_name", "quote")}
+        e["web_support"]["quote_parts"] = fact.get("quote_parts") or [fact.get("quote", "")]
         counts["quoted"] += 1
     return counts
 

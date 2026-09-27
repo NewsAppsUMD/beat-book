@@ -116,7 +116,7 @@ def test_insertion_never_changes_existing_lines():
 
 
 def test_placement_errors_are_explained():
-    assert "no section named" in rf.find_placement(DRAFT, "Budget", "")
+    assert "no section or subsection named" in rf.find_placement(DRAFT, "Budget", "")
     assert "does not match" in rf.find_placement(DRAFT, "Beat Overview", "Nothing like this line")
     assert rf.find_placement(DRAFT, "beat overview", "") is None      # case-insensitive heading
 
@@ -283,3 +283,67 @@ def test_dates_may_come_from_elsewhere_on_the_page():
     assert "not on the page: apr 2" in rf.check_fact(bad, quote, RESULTS_PAGE)
     assert "not on the page: 2025" in rf.check_fact(
         "In 2025, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%).", quote, RESULTS_PAGE)
+
+
+# ── Excerpted quotes, extraction spacing, subsections, URL dates ───────────
+
+ARTICLE = ("Nicholson had won 62% of the vote to Steele's 38%, with 96% of precincts reporting. "
+           "Steele did not reply to messages seeking comment. Nicholson was a longtime adviser to "
+           "former Illinois Senate President John Cullerton who successfully capitalized on "
+           "Steele's notoriety. The Bears ' board of directors met Thursday and decided to move "
+           "forward. The ruling will affect 1.3 million people who rely on TPS to live and work in "
+           "the United States legally, and advocates said they fear it.")
+
+
+@pytest.mark.parametrize("quote", [
+    # Two passages joined by an ellipsis, then by nothing at all.
+    "Nicholson had won 62% of the vote to Steele's 38%, with 96% of precincts reporting. ... "
+    "Nicholson was a longtime adviser to former Illinois Senate President John Cullerton.",
+    "Nicholson had won 62% of the vote to Steele's 38%, with 96% of precincts reporting. "
+    "Nicholson was a longtime adviser to former Illinois Senate President John Cullerton.",
+    # A four-dot ellipsis and quote marks the page doesn't have.
+    '"Nicholson had won 62% of the vote to Steele\'s 38%, with 96% of precincts reporting.... '
+    'Nicholson was a longtime adviser to former Illinois Senate President John Cullerton."',
+])
+def test_excerpted_quotes_are_accepted(quote):
+    parts, why = rf.locate_quote(quote, ARTICLE)
+    assert parts is not None and len(parts) == 2, why
+    fact = "Nicholson won 62% to Steele's 38% and was a longtime adviser to Senate President John Cullerton."
+    assert rf.check_fact(fact, quote, ARTICLE) is None
+
+
+def test_excerpts_still_need_every_word_on_the_page():
+    quote = ("Nicholson had won 62% of the vote to Steele's 38%. ... "
+             "Nicholson was a longtime adviser to Mayor Richard M. Daley.")
+    parts, why = rf.locate_quote(quote, ARTICLE)
+    assert parts is None and "Mayor Richard M" in why
+    parts, why = rf.locate_quote("Nicholson had won 62%. ... Steele did not.", ARTICLE)
+    assert parts is None and "at least" in why
+
+
+def test_truncated_sentence_and_extraction_spacing_match():
+    assert rf.locate_quote("The ruling will affect 1.3 million people who rely on TPS to live and "
+                           "work in the United States legally.", ARTICLE)[0]
+    assert rf.locate_quote("The Bears' board of directors met Thursday and decided to move forward.", ARTICLE)[0]
+
+
+def test_facts_can_go_under_a_subsection():
+    draft = ("# Book\n\n## Key Topics & Themes\n\n### Board of Review Elections\n\n"
+             "Steele lost her primary.\n\n### Stadium Fight\n\nThe Bears want a new stadium.\n\n"
+             "## Calendar\n\n- Monthly meetings of the county board.\n")
+    assert rf.find_placement(draft, "Board of Review Elections", "") is None
+    out = rf.insert_facts(draft, [{"text": "Nicholson won 62% (WBEZ, Mar 17, 2026).",
+                                   "section": "Board of Review Elections", "after_line": ""}])
+    lines = out.split("\n")
+    assert lines.index("Nicholson won 62% (WBEZ, Mar 17, 2026).") < lines.index("### Stadium Fight")
+    assert lines.index("Nicholson won 62% (WBEZ, Mar 17, 2026).") > lines.index("Steele lost her primary.")
+    why = rf.find_placement(draft, "Budget", "")
+    assert "Subsections: Board of Review Elections; Stadium Fight" in why
+
+
+def test_a_date_in_the_url_counts_as_on_the_page():
+    quote = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
+    page = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
+    fact = "In the March 17 primary, Preckwinkle received 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
+    assert "mar 17" in rf.check_fact(fact, quote, page)
+    assert rf.check_fact(fact, quote, page, "https://chicago.suntimes.com/elections/2026/03/17/cook-county") is None

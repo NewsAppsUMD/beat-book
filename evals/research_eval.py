@@ -84,7 +84,8 @@ def recheck_fact(fact: Dict[str, Any]) -> str:
     page = page_fetcher._cache_get(page_fetcher.normalize_url(fact["url"]))
     if page is None:
         return "page not in cache"
-    why = research_facts.check_fact(fact["fact"], fact["quote"], page.get("text", ""))
+    why = research_facts.check_fact(fact["fact"], fact["quote"], page.get("text", ""),
+                                    fact.get("final_url") or fact["url"])
     return why or ""
 
 

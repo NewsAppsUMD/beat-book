@@ -42,7 +42,9 @@ from research_facts import (
     check_fact,
     find_placement,
     insert_facts,
+    locate_quote,
     sections,
+    subsections,
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -137,7 +139,9 @@ def build_tools() -> List[Dict[str, Any]]:
                         "the quote supports. No attribution in parentheses; it is added for you.")},
                     "quote": {"type": "string", "description": (
                         "The exact passage from the fetched page that states the fact, copied "
-                        "character for character: one to three sentences.")},
+                        "character for character: one to three sentences. Passages from "
+                        "different parts of the same page may be joined with '...'; each must "
+                        "be verbatim and at least 20 characters.")},
                     "url": {"type": "string", "description": "The fetched page the quote is from."},
                     "source_name": {"type": "string", "description": (
                         "Name of the publication or organization that published the page, "
@@ -145,7 +149,9 @@ def build_tools() -> List[Dict[str, Any]]:
                     "published": {"type": "string", "description": (
                         "The page's publication date if the page states one, as 'Mon YYYY' "
                         "or 'Mon D, YYYY'. Leave empty if unknown.")},
-                    "section": {"type": "string", "description": "The exact heading of the section it belongs in."},
+                    "section": {"type": "string", "description": (
+                        "The exact heading of the section or subsection it belongs in, "
+                        "from the lists in the first message.")},
                     "after_line": {"type": "string", "description": (
                         "Optional. The first words (at least 12 characters) of the existing "
                         "paragraph or bullet the fact adds to, copied exactly. The fact is "
@@ -366,9 +372,11 @@ Keep running text brief; your work is in the tools.\
 
 
 def _first_message(markdown: str) -> str:
+    subs = subsections(markdown)
     return (
         "Here is the beat book to research. Its sections are:\n"
         + "\n".join(f"- {s}" for s in sections(markdown))
+        + (("\n\nSubsections (facts can go under these too):\n" + "\n".join(f"- {s}" for s in subs)) if subs else "")
         + "\n\n----- BEGIN BEAT BOOK -----\n" + markdown + "\n----- END BEAT BOOK -----\n\n"
         "Find the gaps, research them, submit facts with `submit_fact`, then call "
         "`finalize_research`."
@@ -559,7 +567,7 @@ class FactDesk:
         where = find_placement(self.draft, section, after_line)
         if where:
             return reject(where)
-        why = check_fact(fact, quote, page["text"])
+        why = check_fact(fact, quote, page["text"], page.get("final_url") or url)
         if why:
             return reject(why)
         key = (normalize_for_quote(fact), url)
@@ -568,9 +576,10 @@ class FactDesk:
         attribution, name = attribution_for(str(inp.get("source_name") or ""),
                                             str(inp.get("published") or ""),
                                             page.get("final_url") or url, page.get("title", ""))
+        parts, _ = locate_quote(quote, page["text"])
         record = {
             "id": len(self.accepted) + 1,
-            "fact": fact, "quote": quote, "url": url,
+            "fact": fact, "quote": quote, "quote_parts": parts or [quote], "url": url,
             "final_url": page.get("final_url") or url, "title": page.get("title", ""),
             "source_name": name, "attribution": attribution,
             "section": section, "after_line": after_line,

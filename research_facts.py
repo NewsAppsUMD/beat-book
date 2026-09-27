@@ -31,6 +31,11 @@ from urllib.parse import urlparse
 from citation_matcher import _is_markdown_list_item, _is_markdown_table_row, _plain_text
 
 MIN_QUOTE_CHARS = 25
+# A quote may be several verbatim passages from the same page, joined with
+# an ellipsis or simply as separate sentences, the way a reporter excerpts.
+# Each passage must be at least this long and appear on the page.
+MIN_QUOTE_PART_CHARS = 20
+MAX_QUOTE_PARTS = 5
 MAX_QUOTE_CHARS = 700
 MIN_FACT_WORDS = 6
 MAX_FACT_WORDS = 70
@@ -67,7 +72,59 @@ def normalize_for_quote(text: str) -> str:
     t = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", t)      # [text](url) → text
     t = re.sub(r"[*_`#>|]+", " ", t)
     t = re.sub(r"\s+", " ", t)
+    # Page extraction leaves spaces around inline markup: "the Bears ' board",
+    # "( 2026 )". Drop spaces before closing punctuation and after opening.
+    t = re.sub(r"\s+([,.;:!?')\]])", r"\1", t)
+    t = re.sub(r"([(\[])\s+", r"\1", t)
     return t.strip().lower()
+
+
+_ELLIPSIS_RE = re.compile(r"\s*(?:(?:\.\s*){3,}|\u2026|\[\s*(?:\.\s*){3,}\])\s*")
+_SENTENCE_SPLIT_RE = re.compile(
+    r"(?:(?<=[.!?])|(?<=[.!?][\"'\u201d\u2019]))\s+(?=[\"'\u201c\u2018]?[A-Z])")
+_EDGE_RE = re.compile(r"^[\s\"'\u201c\u201d\u2018\u2019.,;:\-\u2014]+|[\s\"'\u201c\u201d\u2018\u2019.,;:\-\u2014]+$")
+
+
+def _trim(passage: str) -> str:
+    """Drop quote marks and punctuation at a passage's edges. Reporters
+    close a truncated sentence with a period, or add quote marks the page
+    places elsewhere; neither changes the words being quoted."""
+    return _EDGE_RE.sub("", passage or "")
+
+
+def locate_quote(quote: str, page_text: str) -> Tuple[Optional[List[str]], str]:
+    """Find a quote on the page. Returns (passages, "") if every passage is
+    on the page, else (None, reason).
+
+    A quote that isn't one continuous passage is split on ellipses; any
+    piece still not found is split into sentences. Each resulting passage,
+    with edge punctuation and quote marks trimmed, must appear on the page
+    and be at least MIN_QUOTE_PART_CHARS long. Every word is still checked
+    against the page; only the joins between passages are free."""
+    page = normalize_for_quote(page_text)
+    found = lambda x: normalize_for_quote(_trim(x)) in page
+    whole = (quote or "").strip()
+    if found(whole):
+        return [_trim(whole)], ""
+    parts: List[str] = []
+    for piece in [x for x in _ELLIPSIS_RE.split(whole) if _trim(x)]:
+        if found(piece):
+            parts.append(_trim(piece))
+        else:
+            parts.extend(_trim(x) for x in _SENTENCE_SPLIT_RE.split(piece) if _trim(x))
+    if len(parts) < 2:
+        return None, ("the quote does not appear on that page. Copy it exactly from the "
+                      "page text you fetched, without rewording.")
+    if len(parts) > MAX_QUOTE_PARTS:
+        return None, f"the quote has more than {MAX_QUOTE_PARTS} separate passages; quote fewer."
+    missing = [x for x in parts if not found(x)]
+    if missing:
+        return None, ("this part of the quote does not appear on that page: “"
+                      + missing[0][:120] + "”. Copy each passage exactly from the page text you fetched.")
+    if any(len(x) < MIN_QUOTE_PART_CHARS for x in parts):
+        return None, (f"each passage of a quote must be at least {MIN_QUOTE_PART_CHARS} characters "
+                      "so it can be checked; lengthen or drop the short one.")
+    return parts, ""
 
 
 def figures_in(text: str) -> List[str]:
@@ -186,9 +243,22 @@ def attribution_for(source_name: str, published: str, url: str, title: str,
 
 # ── Verification ─────────────────────────────────────────────────────────────
 
-def check_fact(fact: str, quote: str, page_text: str) -> Optional[str]:
+_URL_DATE_RE = re.compile(r"/((?:19|20)\d{2})[/-](\d{1,2})[/-](\d{1,2})(?:/|$|-)")
+
+
+def _url_dates(url: str) -> Tuple[set, set]:
+    """Dates in a URL path like /2026/03/17/, which news sites use for the
+    publication date. Returns ({("mar", "17")}, {"2026"})."""
+    m = _URL_DATE_RE.search(urlparse(url or "").path)
+    if not m or not 1 <= int(m.group(2)) <= 12:
+        return set(), set()
+    return {(_MONTHS[int(m.group(2)) - 1], str(int(m.group(3))))}, {m.group(1)}
+
+
+def check_fact(fact: str, quote: str, page_text: str, url: str = "") -> Optional[str]:
     """Return None if the fact is backed by the quote and the quote is on the
-    page, else a reason the model can act on."""
+    page, else a reason the model can act on. `url` lets a date in the page's
+    URL count as a date on the page."""
     fact = (fact or "").strip()
     quote = (quote or "").strip()
     n_words = len(fact.split())
@@ -204,13 +274,15 @@ def check_fact(fact: str, quote: str, page_text: str) -> Optional[str]:
         return f"the quote is too short; copy at least {MIN_QUOTE_CHARS} characters from the page."
     if len(quote) > MAX_QUOTE_CHARS:
         return f"the quote is too long; copy the one to three sentences that state the fact (at most {MAX_QUOTE_CHARS} characters)."
-    if normalize_for_quote(quote) not in normalize_for_quote(page_text):
-        return ("the quote does not appear on that page. Copy it exactly from the "
-                "page text you fetched, without rewording or joining separate passages.")
+    parts, why = locate_quote(quote, page_text)
+    if parts is None:
+        return why
     # Dates and years may come from anywhere on the page (its dateline, say);
     # every other figure must be in the quote itself.
     rest, dates, years = _split_dates(fact)
-    page_dates, page_years = _dates_on(page_text), set(_YEAR_RE.findall(page_text or ""))
+    url_dates, url_years = _url_dates(url)
+    page_dates = _dates_on(page_text) | url_dates
+    page_years = set(_YEAR_RE.findall(page_text or "")) | url_years
     missing = [f"{m} {d}" for m, d in dates if (m, d) not in page_dates]
     missing += [y for y in years if y not in page_years]
     if missing:
@@ -242,22 +314,39 @@ def _norm_heading(h: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (h or "").lower()).strip()
 
 
+def _heading(line: str) -> Tuple[int, str]:
+    m = re.match(r"^(#{2,3})\s+(.*)$", line.strip())
+    return (len(m.group(1)), m.group(2).strip()) if m else (0, "")
+
+
 def sections(markdown: str) -> List[str]:
-    return [re.sub(r"^##\s+", "", l.strip()).strip()
-            for l in markdown.split("\n") if re.match(r"^##\s+", l.strip())]
+    """Section (##) headings."""
+    return [h for lvl, h in map(_heading, markdown.split("\n")) if lvl == 2]
+
+
+def subsections(markdown: str) -> List[str]:
+    """Subsection (###) headings; facts can be placed under these too."""
+    return [h for lvl, h in map(_heading, markdown.split("\n")) if lvl == 3]
 
 
 def _section_bounds(lines: List[str], section: str) -> Optional[Tuple[int, int]]:
-    """(index of the H2 line, index one past the section's last line)."""
+    """(index of the heading line, index one past its last line) for a ##
+    section or, if no section has that name, a ### subsection. A section
+    ends at the next ##; a subsection at the next ## or ###."""
     want = _norm_heading(section)
-    start = None
-    for i, l in enumerate(lines):
-        if re.match(r"^##\s+", l.strip()):
-            if start is not None:
+    for level in (2, 3):
+        start = None
+        for i, l in enumerate(lines):
+            lvl, text = _heading(l)
+            if not lvl:
+                continue
+            if start is not None and lvl <= level:
                 return start, i
-            if _norm_heading(re.sub(r"^##\s+", "", l.strip())) == want:
+            if start is None and lvl == level and _norm_heading(text) == want:
                 start = i
-    return (start, len(lines)) if start is not None else None
+        if start is not None:
+            return start, len(lines)
+    return None
 
 
 def find_placement(markdown: str, section: str, after_line: str) -> Optional[str]:
@@ -265,7 +354,10 @@ def find_placement(markdown: str, section: str, after_line: str) -> Optional[str
     lines = markdown.split("\n")
     bounds = _section_bounds(lines, section)
     if bounds is None:
-        return f"there is no section named “{section}”. Use one of: " + "; ".join(sections(markdown))
+        subs = subsections(markdown)
+        return (f"there is no section or subsection named “{section}”. Sections: "
+                + "; ".join(sections(markdown))
+                + (". Subsections: " + "; ".join(subs) if subs else "") + ".")
     if after_line and _target_line(lines, bounds, after_line) is None:
         return ("`after_line` does not match the start of any line in that section. "
                 "Copy the first words of an existing paragraph or bullet exactly, or leave it empty.")
