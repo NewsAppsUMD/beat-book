@@ -2074,3 +2074,11 @@ button.web-badge:hover { border-color: var(--prov-web); }
 .web-fact-quote { font-size: 0.95rem; line-height: 1.55; margin: 0 0 0.75rem; font-style: normal; }
 .mf-facts li { margin-bottom: 0.8rem; }
 .mf-facts .mf-quote { margin: 0.3rem 0; font-size: 0.84rem; }
+
+/* Analysis and name-and-figure matches */
+.sw-analysis { background: var(--surface); border: 1px dotted var(--text-faint); }
+#reader-content.show-sourcing .claim-analysis {
+  text-decoration: underline dotted var(--text-faint); text-decoration-thickness: 1px; text-underline-offset: 3px;
+}
+.footnote-ref.sim-anchor { border-style: dotted; border-color: var(--citation); }
+.sim-dot.sim-anchor { background: transparent; border: 1.5px dotted var(--citation); }

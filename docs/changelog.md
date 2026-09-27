@@ -82,6 +82,13 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - A date in the page's URL, such as /2026/03/17/, counts as a date on the page.
 - Replaying the evaluation's 71 rejections: 15 are now accepted, 5 now place correctly but fail a content check, and 39 are content failures the checks should catch.
 
+### Facts versus analysis
+- A Bears book had 63 unsourced claims. About 10 were interpretive ("one of the most consequential … disputes in Illinois in a generation"), 5 were story ideas, and about 48 were factual claims the embedding match missed.
+- New `claim_evidence.py`, run after citation matching:
+  - **Anchor evidence.** An unsupported claim is cited when all its names, figures and dates appear in one stretch of a story, about two 100-word passages. At least two anchors must be distinctive: a figure, a date, or a name in no more than 30% of the stories. The stretch must share at least 30% of the claim's other key words, and the best stretch across all stories wins. Supports carry `match_type: anchors` and highlight each anchor. On the Bears book this cites 11 more claims, and each points to a story on the same subject. A first version without the distinctiveness and context rules cited 22, including the wrong "board voted June 5" and matches found in related-link blocks.
+  - **Claim sorting.** The remaining unsupported claims go in one batch to the label model, which sorts each into fact, analysis or suggestion. Analysis becomes `provenance: analysis` and suggestions become `guidance`. Facts stay `unsupported`. On any failure, claims stay flagged.
+- The reader counts analysis separately and gives it a dotted underline. Anchor citations have a dotted chip, and the panel explains what matched. The build record reports the sorting model and counts. The egress table lists the sorting step.
+
 ### Dates tied to the quote
 - The next evaluation doubled output (58 facts, 44 rejections), but three facts said the Bears board voted June 5. It voted Thursday, June 4. The pages were published Friday, June 5, and the earlier "date anywhere on the page" rule let the dateline stand in for the event date.
 - A date in a fact must now be in the quote, or follow from a weekday, "today" or "yesterday" in the quote, counted from the publication date. The publication date comes from the URL, a "Published" line, or a date right after the byline, never the site header. When a quote names several days, the one whose nearby words best match the fact is used. A fact about two events with one date is refused as ambiguous. "As of" the publication date is allowed. A year must be in the quote, belong to a date the quote pins down, or be the publication year for a pinned date.

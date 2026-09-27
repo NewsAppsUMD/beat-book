@@ -48,6 +48,7 @@ from citation_matcher import (
 from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
 from egress import egress_summary
+from claim_evidence import add_anchor_evidence, classify_claims, recount
 import research_agent as _research_mod
 
 MANIFEST_VERSION = 1
@@ -401,6 +402,16 @@ async def run_generation(
                 draft_markdown=markdown,
             )
             entries.setdefault("stats", {})["web_basis"] = tag_web_facts(entries, research_trace)
+            # Facts the embedding match missed: cite a story stretch that
+            # states the same names, figures and dates.
+            on_matcher_progress("anchors", 0.9, "Looking for names, figures and dates in the stories…")
+            anchored = add_anchor_evidence(entries, source_embeddings)
+            # Sort what is still unsourced into facts, analysis and suggestions.
+            on_matcher_progress("sorting", 0.95, "Separating facts from analysis…")
+            sorting = classify_claims(entries, chat_provider)
+            recount(entries)
+            entries["stats"]["claim_sorting"] = sorting
+            entries["stats"]["cited_by_anchors"] = anchored
             sources = build_sources_file(stories, source_embeddings)
             return entries, sources
 

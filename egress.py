@@ -110,6 +110,14 @@ def egress_plan() -> List[Dict[str, Any]]:
             "to": anthropic,
         },
         {
+            "stage": "Sort unsourced claims",
+            "phase": "generate",
+            "sends": "Beat-book sentences with no matching story passage, to be labeled "
+                     "fact, analysis or suggestion",
+            "content": "derived",
+            "to": chat,
+        },
+        {
             "stage": "Match citations",
             "phase": "generate",
             "sends": "Every 100-word passage of every story and every beat-book sentence, "

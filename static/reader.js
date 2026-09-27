@@ -285,10 +285,13 @@
     let claimCardHtml = '';
     if (matchInfo && matchInfo.claimText) {
       const numberLabel = (typeof matchInfo.number === 'number') ? `Source [${matchInfo.number}] cites:` : 'Cited for:';
-      const band = simBand(matchInfo.similarity);
+      const isAnchor = matchInfo.matchType === 'anchors';
+      const band = isAnchor ? 'sim-anchor' : simBand(matchInfo.similarity);
       const thresholdNote = calibration && typeof calibration.threshold === 'number'
         ? ` The cutoff for this book is ${fmtSim(calibration.threshold)}.` : '';
-      const strengthHtml = typeof matchInfo.similarity === 'number'
+      const strengthHtml = isAnchor
+        ? `<div class="match-strength"><span class="sim-dot sim-anchor" aria-hidden="true"></span>Matched on the names, figures and dates it states: ${escapeHtml((matchInfo.anchors || []).join(', '))}. They appear together in this story, highlighted below. That is weaker evidence than a close match of meaning, and it is not a fact check.</div>`
+        : typeof matchInfo.similarity === 'number'
         ? `<div class="match-strength"><span class="sim-dot ${band}" aria-hidden="true"></span>Match strength ${fmtSim(matchInfo.similarity)}, ${SIM_BAND_LABEL[band]}.${thresholdNote} This is text similarity, not a fact check.</div>` : '';
       const webNote = matchInfo.provenance === 'web'
         ? '<div class="match-web-note">Web research added this claim. The passage below from your stories is similar, but it is not where the claim came from. Check the attribution in the sentence.</div>' : '';
@@ -465,7 +468,10 @@
       ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
     ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
 
-    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} had no match above the cutoff.${stats.guidance ? ` ${fmtNum(stats.guidance)} lines of reporting tips had no match; they are advice, so they are not counted as unsourced.` : ''}
+    const sorting = stats.claim_sorting || null;
+    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} factual claims had no match.${stats.analysis ? ` ${fmtNum(stats.analysis)} were labeled analysis or interpretation.` : ''}${stats.guidance ? ` ${fmtNum(stats.guidance)} were tips or story ideas.` : ''}</p>
+      ${sorting ? `<p class="mf-note">Unmatched claims were sorted into facts, analysis and suggestions by ${escapeHtml(sorting.model || 'a small model')}: ${fmtNum(sorting.fact)} facts, ${fmtNum(sorting.analysis)} analysis, ${fmtNum(sorting.suggestion)} suggestions.${(sorting.errors || []).length ? ' Some could not be sorted and are counted as facts.' : ''}</p>` : ''}
+      <p>
         ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
       <p class="mf-note">The cutoff is ${fmtSim(cal.threshold)}: the typical similarity of random, unrelated pairs in this corpus (${fmtSim(cal.noise_median)}) plus ${escapeHtml(String(cal.sigma || 3))} spreads, kept between ${fmtSim(0.40)} and ${fmtSim(cal.ceiling)}.${typeof cal.raw_threshold === 'number' && cal.raw_threshold > cal.threshold ? ' The upper limit clamped it, which happens with narrow single-topic corpora.' : ''}</p>`;
 
@@ -706,8 +712,9 @@
       bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong>&nbsp;added by web research${detail}</span>`);
     }
     if (st.replaced) bits.push(`<span class="sourcing-stat" title="Claims from the draft, which was written from your stories, that web research rewrote or removed. See the changes in How this book was made."><span class="sourcing-swatch sw-replaced"></span><strong>${st.replaced}</strong>&nbsp;claims from your stories changed by web research</span>`);
-    bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-unsupported"></span><strong>${st.unsupported}</strong> with no matching source</span>`);
-    if (st.guidance) bits.push(`<span class="sourcing-stat" title="Lines in Reporting Tips with no matching passage. Advice to the reporter has no source to match, so it is not counted as unsourced."><span class="sourcing-swatch sw-guidance"></span><strong>${st.guidance}</strong> reporting tips (advice, not matched)</span>`);
+    bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-unsupported"></span><strong>${st.unsupported}</strong>&nbsp;${st.sorted ? 'factual claims' : ''} with no matching source</span>`);
+    if (st.analysis) bits.push(`<span class="sourcing-stat" title="Interpretation, significance or characterization: statements no record could confirm. They are labeled, not counted as unsourced facts."><span class="sourcing-swatch sw-analysis"></span><strong>${st.analysis}</strong>&nbsp;analysis or interpretation (labeled, not checked)</span>`);
+    if (st.guidance) bits.push(`<span class="sourcing-stat" title="Reporting tips, story ideas and questions. Advice to the reporter has no source to match, so it is not counted as unsourced."><span class="sourcing-swatch sw-guidance"></span><strong>${st.guidance}</strong>&nbsp;tips and story ideas (advice, not matched)</span>`);
     const threshold = calibration && typeof calibration.threshold === 'number'
       ? `<span class="sourcing-threshold" title="Similarity cutoff computed for this corpus from random sentence and passage pairs. Matches below it are not shown.">Match cutoff ${fmtSim(calibration.threshold)}</span>` : '';
     return `<div class="sourcing-summary" role="note">
@@ -789,6 +796,7 @@
         similarity: primary.similarity, claimText: plainClaim(entries[i]),
         highlights: primary.highlights || [], supports: entries[i].supports || [primary],
         provenance: entries[i].provenance || 'corpus',
+        matchType: primary.match_type || 'embedding', anchors: primary.anchors || [],
       };
       if (!sourcesByKey[key]) sourcesByKey[key] = { key, primary, numbers: [], firstSeen: number, claimText: entries[i].content || '' };
       sourcesByKey[key].numbers.push(number);
@@ -803,6 +811,8 @@
       web: claims.filter(e => provOf(e) === 'web').length,
       unsupported: claims.filter(e => provOf(e) === 'unsupported').length,
       guidance: claims.filter(e => provOf(e) === 'guidance').length,
+      analysis: claims.filter(e => provOf(e) === 'analysis').length,
+      sorted: !!(beatbookData && beatbookData.stats && beatbookData.stats.claim_sorting),
       webBasis: (beatbookData && beatbookData.stats && beatbookData.stats.web_basis) || {},
       replaced: (beatbookData && beatbookData.stats && beatbookData.stats.research_replaced) || 0,
       hasOrigin: claims.some(e => e.origin),
@@ -823,15 +833,17 @@
     html = html.replace(/\[\[CITE:(\d+)\]\]/g, (_, n) => {
       const num = parseInt(n, 10);
       const c = citationsByNumber[num];
-      const band = c ? simBand(c.similarity) : 'sim-unknown';
-      const strength = c && typeof c.similarity === 'number' ? ` · ${SIM_BAND_LABEL[band]} (${fmtSim(c.similarity)})` : '';
+      const isAnchor = c && c.matchType === 'anchors';
+      const band = isAnchor ? 'sim-anchor' : (c ? simBand(c.similarity) : 'sim-unknown');
+      const strength = isAnchor ? ' · matched on names, figures and dates'
+        : (c && typeof c.similarity === 'number' ? ` · ${SIM_BAND_LABEL[band]} (${fmtSim(c.similarity)})` : '');
       const alts = c && c.supports && c.supports.length > 1 ? ` · ${c.supports.length} matching passages` : '';
       const titleAttr = ((c ? (c.articleTitle ? `Source: ${c.articleTitle}` : `Source [${num}]`) : `Source [${num}]`) + strength + alts).replace(/"/g, '&quot;');
       const safeId = c ? c.articleId.replace(/'/g, "\\'") : '';
       return `<sup class="footnote-ref ${band}" onclick="Reader.openCitation(${num})" onmouseenter="Reader.showPreview('${safeId}', event)" onmouseleave="Reader.hidePreview()" title="${titleAttr}">${num}</sup>`;
     });
     html = html
-      .replace(/\[\[PV:(corpus|web|unsupported|guidance)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
+      .replace(/\[\[PV:(corpus|web|unsupported|guidance|analysis)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
       .replace(/\[\[\/PV\]\]/g, '</span>')
       .replace(/\[\[WEB:(\w+):(\d*)\]\]/g, (_, basis, sid) => {
         const b = WEB_BASIS[basis] || WEB_BASIS.unknown;
