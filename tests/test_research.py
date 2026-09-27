@@ -234,3 +234,17 @@ def test_every_web_claim_maps_to_its_quote_and_no_story_claim_is_lost():
     web = [e for e in entries["entries"] if e.get("provenance") == "web"]
     assert web[0]["web_support"]["quote"] == GOOD_QUOTE
     assert entries["stats"]["research_replaced"] == 0
+
+
+def test_multi_sentence_fact_placed_as_a_bullet_maps_to_its_quote():
+    import citation_matcher as cm
+    import jobs
+    fact = {"id": 1, "url": "https://chicago.suntimes.com/x", "final_url": "https://chicago.suntimes.com/x",
+            "title": "t", "source_name": "Chicago Sun-Times", "quote": "q" * 30,
+            "text": "No Republican filed for Cook County Board President this year. She has said it will be her last term (Chicago Sun-Times, Mar 17, 2026).",
+            "section": "Key Sources & Players", "after_line": "**Keith Pettigrew** — CEO"}
+    final = rf.insert_facts(DRAFT, [fact])
+    client = HashEmbed()
+    index = cm.embed_source_stories([{"title": "t", "content": "The housing authority board met. " * 40}], client)
+    entries = cm.markdown_to_beatbook_entries(final, index, client, draft_markdown=DRAFT)
+    assert jobs.tag_web_facts(entries, {"facts_accepted": [fact]}) == {"quoted": 1, "unverified": 0}

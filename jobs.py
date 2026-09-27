@@ -164,6 +164,10 @@ def tag_web_facts(entries: dict, research_trace: dict) -> Dict[str, int]:
     facts = research_trace.get("facts_accepted") or []
     by_key: Dict[str, dict] = {}
     for f in facts:
+        # A fact inserted as a bullet is one claim however many sentences it
+        # has; inserted into a paragraph, each sentence is its own claim.
+        # Index both forms.
+        by_key[_claim_key(f.get("text", ""))] = f
         for seg in _segment_markdown(f.get("text", "")):
             if seg["needs_embedding"]:
                 by_key[_claim_key(seg["content"])] = f
