@@ -57,6 +57,8 @@ _NOT_NAMES = {
     "october", "november", "december", "monday", "tuesday", "wednesday", "thursday",
     "friday", "saturday", "sunday", "jan", "feb", "mar", "apr", "jun", "jul", "aug",
     "sep", "sept", "oct", "nov", "dec",
+    "daily", "weekly", "monthly", "quarterly", "annual", "annually", "yearly", "biweekly",
+    "ongoing", "recurring", "watch", "track", "note", "key", "background", "context",
 }
 
 
@@ -308,3 +310,55 @@ def recount(entries: dict) -> None:
         and (e.get("supports") or [{}])[0].get("match_type") == "anchors")
     st["list_items_cited"] = sum(1 for e in claims if e.get("provenance") == "corpus" and e.get("kind") == "list_item")
     st["table_rows_cited"] = sum(1 for e in claims if e.get("provenance") == "corpus" and e.get("kind") == "table_row")
+
+
+# ── Why a factual claim has no source ────────────────────────────────────────
+# The one strong signal is absence: a name, figure or date that appears in
+# none of the reporter's stories didn't come from them. Presence proves
+# little (in a corpus about one subject nearly every name turns up
+# somewhere), so that case is worded as "check it", never as "supported".
+
+UNSOURCED_REASONS = {
+    "outside_stories": ("Some of its details appear in none of your stories, so they most "
+                        "likely came from the writing model's own general knowledge."),
+    "in_stories": ("Its names, figures and dates appear in your stories, but no passage says "
+                   "what this sentence says. It may combine details from several stories or "
+                   "restate them too loosely to match."),
+    "no_details": ("It names no people, figures or dates that could be looked up in your "
+                   "stories."),
+}
+
+
+def _as_written(claim: str, label: str) -> str:
+    """The claim's own spelling of a detail ("Giants-Jets", "$750")."""
+    m = re.search(re.escape(label), re.sub(r"[*_`]+", "", claim), re.I)
+    return m.group(0) if m else label
+
+
+def explain_unsourced(entries: dict, source_index: Dict[str, Any]) -> Dict[str, int]:
+    """Give each factual claim still unsupported an `unsourced_reason`
+    ("outside_stories", "in_stories" or "no_details") and, for
+    "outside_stories", the details found in no story (`details_not_in_stories`).
+    Returns counts per reason."""
+    corpus = "\n".join(normalize_for_quote(a.get("content", "")) for a in source_index.get("articles", []))
+    digits = corpus.replace(",", "")
+    counts = {k: 0 for k in UNSOURCED_REASONS}
+    for e in entries.get("entries", []):
+        if e.get("passthrough") or e.get("provenance") != "unsupported":
+            continue
+        anchors = anchors_in(e.get("content", ""))
+        checks = ([(n, _has_word(corpus, n)) for n in anchors["names"]]
+                  + [(f, _has_word(digits, f)) for f in anchors["figures"] + anchors["years"]]
+                  + [(f"{_MONTH_FULL.get(m, m).title()} {int(d)}", _date_in(corpus, m, d))
+                     for m, d in anchors["dates"]])
+        missing = [_as_written(e.get("content", ""), label) for label, found in checks if not found]
+        if not checks:
+            reason = "no_details"
+        elif missing:
+            reason = "outside_stories"
+            e["details_not_in_stories"] = missing
+        else:
+            reason = "in_stories"
+        e["unsourced_reason"] = reason
+        counts[reason] += 1
+    return counts

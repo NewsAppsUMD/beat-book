@@ -105,3 +105,40 @@ def test_only_unsupported_claims_are_sent_and_failures_keep_them_flagged():
     info = ce.classify_claims(e, p)
     assert "cited claim" not in p.calls[0]["messages"][0]["content"]
     assert e["entries"][0]["provenance"] == "unsupported" and info["errors"]
+
+
+def test_unsourced_reasons_separate_outside_details_from_scattered_ones():
+    e = _entries(
+        "The Bears have played in Chicago since 1920 and moved in the Giants-Jets fashion.",
+        "Joe Mansueto and the Bears met in Hammond about the stadium.",
+        "Dozens of states have such laws.",
+    )
+    counts = ce.explain_unsourced(e, _index())
+    reasons = [x["unsourced_reason"] for x in e["entries"]]
+    assert reasons == ["outside_stories", "in_stories", "no_details"]
+    assert e["entries"][0]["details_not_in_stories"] == ["Giants-Jets", "1920"]
+    assert counts == {"outside_stories": 1, "in_stories": 1, "no_details": 1}
+
+
+def test_word_export_explains_unsourced_facts():
+    import io
+    from docx import Document
+    from app import _markdown_to_docx
+    entries = [
+        {"content": "## Beat Overview", "passthrough": True, "kind": "other", "supports": []},
+        {"content": "The Bears have played in Chicago since 1920.", "passthrough": False, "kind": "sentence",
+         "provenance": "unsupported", "supports": [], "unsourced_reason": "outside_stories",
+         "details_not_in_stories": ["1920"]},
+        {"content": "It is one of the most consequential disputes in a generation.", "passthrough": False,
+         "kind": "sentence", "provenance": "analysis", "supports": []},
+    ]
+    stats = {"unsourced_reasons": {"outside_stories": 1, "in_stories": 0, "no_details": 0}}
+    doc = Document(io.BytesIO(_markdown_to_docx("", entries, stats)))
+    text = "\n".join(p.text for p in doc.paragraphs)
+    assert "About the sourcing" in text and "Claims to check" in text
+    assert "1 are analysis or interpretation" in text
+    assert "Not in any story: 1920." in text
+    assert "writing model's own general knowledge" in text
+    # Without stats (older books), no sourcing section is added.
+    doc = Document(io.BytesIO(_markdown_to_docx("", entries)))
+    assert "About the sourcing" not in "\n".join(p.text for p in doc.paragraphs)

@@ -2082,3 +2082,6 @@ button.web-badge:hover { border-color: var(--prov-web); }
 }
 .footnote-ref.sim-anchor { border-style: dotted; border-color: var(--citation); }
 .sim-dot.sim-anchor { background: transparent; border: 1.5px dotted var(--citation); }
+.sourcing-explain { margin: 0.6rem 0 0 !important; font-size: 0.84rem; line-height: 1.5; color: var(--text-muted); }
+.sourcing-explain strong { color: var(--text); }
+#reader-content.show-sourcing .claim-unsupported { cursor: help; }

@@ -570,7 +570,53 @@ def _docx_add_sources_section(doc, sources_by_key: Dict[str, Dict[str, Any]]) ->
             doc.add_paragraph(primary["passage_text"], style="Intense Quote")
 
 
-def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]] = None) -> bytes:
+def _docx_add_sourcing_section(doc, entries: List[Dict[str, Any]], stats: Dict[str, Any]) -> None:
+    """"About the sourcing": the book's counts, why some facts have no
+    source, and each unsourced factual claim with its reason. A printed or
+    shared copy can't show the reader's hover notes, so it says it here."""
+    from claim_evidence import UNSOURCED_REASONS
+    claims = [e for e in entries if not e.get("passthrough")]
+    if not claims:
+        return
+    unsourced = [e for e in claims if e.get("provenance") == "unsupported"]
+    count = lambda prov: sum(1 for e in claims if e.get("provenance") == prov)
+    doc.add_heading("About the sourcing", level=1)
+    doc.add_paragraph(
+        f"{count('corpus')} of {len(claims)} claims match a passage in the stories this book was "
+        f"built from; the superscript numbers point to them. {count('web')} were added from web "
+        f"pages and quote those pages. {count('analysis')} are analysis or interpretation, which no "
+        f"record could confirm. {count('guidance')} are tips and story ideas. {len(unsourced)} "
+        "factual claims have no matching source.")
+    if not unsourced:
+        return
+    doc.add_paragraph(
+        "Why some facts have no source: the writing model drafted this book from the stories, and "
+        "along the way it sometimes joins details from different stories, rewords them, or adds "
+        "background from its own training, which isn't tied to any source. Treat the claims below "
+        "as leads to verify, not as reported facts.")
+    reasons = stats.get("unsourced_reasons") or {}
+    if reasons:
+        bits = []
+        if reasons.get("outside_stories"):
+            bits.append(f"{reasons['outside_stories']} mention details found in none of the stories")
+        if reasons.get("in_stories"):
+            bits.append(f"{reasons['in_stories']} use details from the stories that no single passage states together")
+        if reasons.get("no_details"):
+            bits.append(f"{reasons['no_details']} name nothing specific to look up")
+        doc.add_paragraph("Of these, " + "; ".join(bits) + ".")
+    doc.add_heading("Claims to check", level=2)
+    for e in unsourced:
+        p = doc.add_paragraph(style="List Bullet")
+        _docx_add_inline(p, re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", e.get("content", "")).strip())
+        why = UNSOURCED_REASONS.get(e.get("unsourced_reason", ""), "No passage in the stories matches it.")
+        missing = e.get("details_not_in_stories") or []
+        note = why.replace("your stories", "the stories") + (f" Not in any story: {', '.join(missing)}." if missing else "")
+        run = p.add_run(f" — {note}")
+        run.italic = True
+
+
+def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]] = None,
+                      stats: Optional[Dict[str, Any]] = None) -> bytes:
     """Render beat-book Markdown to .docx bytes. When `entries` (the
     citation-matcher's per-sentence entry list, from `{stem}.json`) is given,
     cited sentences get a superscript marker and a "Sources" section is
@@ -660,6 +706,8 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
         p = doc.add_paragraph()
         _docx_add_inline(p, stripped)
 
+    if stats is not None:
+        _docx_add_sourcing_section(doc, entries, stats)
     _docx_add_sources_section(doc, sources_by_key)
 
     buf = io.BytesIO()
@@ -743,14 +791,16 @@ async def download_book_docx(book_id: str):
         return JSONResponse(
             {"error": "This beat book isn't ready to download yet."}, status_code=409)
     entries = None
+    stats = None
     citations_path = OUTPUT_DIR / f"{stem}.json"
     if citations_path.exists():
         try:
-            entries = json.loads(citations_path.read_text(encoding="utf-8")).get("entries")
+            payload = json.loads(citations_path.read_text(encoding="utf-8"))
+            entries, stats = payload.get("entries"), payload.get("stats") or {}
         except Exception:
-            entries = None
+            entries, stats = None, None
     try:
-        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"), entries)
+        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"), entries, stats)
     except Exception as e:
         return JSONResponse(
             {"error": f"Could not build the Word document: {type(e).__name__}: {e}"},

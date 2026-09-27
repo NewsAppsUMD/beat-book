@@ -48,7 +48,7 @@ from citation_matcher import (
 from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
 from egress import egress_summary
-from claim_evidence import add_anchor_evidence, classify_claims, recount
+from claim_evidence import add_anchor_evidence, classify_claims, explain_unsourced, recount
 import research_agent as _research_mod
 
 MANIFEST_VERSION = 1
@@ -411,6 +411,7 @@ async def run_generation(
             sorting = classify_claims(entries, chat_provider)
             recount(entries)
             entries["stats"]["claim_sorting"] = sorting
+            entries["stats"]["unsourced_reasons"] = explain_unsourced(entries, source_embeddings)
             entries["stats"]["cited_by_anchors"] = anchored
             sources = build_sources_file(stories, source_embeddings)
             return entries, sources

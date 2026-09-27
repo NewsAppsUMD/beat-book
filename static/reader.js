@@ -667,8 +667,28 @@
   // Add the citation sentinel and provenance markers to one entry without
   // breaking its Markdown: list markers stay at the start of the line, and a
   // table row's markers go inside its last cell.
+  // Why each factual claim has no source, keyed by an index the provenance
+  // sentinel carries ("[[PV:unsupported#3]]").
+  let unsourcedNotes = [];
+  const UNSOURCED_TEXT = {
+    outside_stories: 'Some of its details appear in none of your stories, so they most likely came from the writing model\'s own general knowledge.',
+    in_stories: 'Its names, figures and dates appear in your stories, but no passage says what this sentence says. It may combine details from several stories or restate them too loosely to match.',
+    no_details: 'It names no people, figures or dates that could be looked up in your stories.',
+  };
+  function unsourcedNote(entry) {
+    const base = UNSOURCED_TEXT[entry.unsourced_reason];
+    if (!base) return 'No passage in your stories matches this claim. Check it before relying on it.';
+    const missing = entry.details_not_in_stories || [];
+    const detail = missing.length ? ` Not in any story: ${missing.join(', ')}.` : '';
+    return `No source found. ${base}${detail} Check it before relying on it.`;
+  }
+
   function decorateEntry(entry, number, prov) {
     const content = entry.content;
+    if (prov === 'unsupported') {
+      unsourcedNotes.push(unsourcedNote(entry));
+      prov = `unsupported#${unsourcedNotes.length - 1}`;
+    }
     const cite = number != null ? `[[CITE:${number}]]` : '';
     if (entry.passthrough || !prov) return cite ? `${content}${cite}` : content;
     const badge = prov === 'web' ? `[[WEB:${entry.web_basis || 'unknown'}:${webSupportId(entry)}]]` : '';
@@ -724,8 +744,25 @@
         <button type="button" class="btn-link" id="sourcing-toggle" onclick="Reader.toggleSourcing()">Highlight unsourced claims</button>
         <button type="button" class="btn-link" onclick="Reader.openManifest()">How this book was made</button>
       </div>
+      ${renderUnsourcedExplanation(st)}
       <p class="sourcing-note">A match means the sentence is similar to a passage in your stories. It does not confirm the claim. Check unsourced and web-added claims before you rely on them.</p>
     </div>`;
+  }
+
+  // Why a beat book written from your stories contains facts they don't
+  // support, with this book's own counts.
+  function renderUnsourcedExplanation(st) {
+    if (!st.unsupported) return '';
+    const r = st.reasons;
+    let counts = '';
+    if (r) {
+      const parts = [];
+      if (r.outside_stories) parts.push(`<strong>${r.outside_stories}</strong> mention details that appear in none of your stories, so those details most likely came from the writing model's own general knowledge`);
+      if (r.in_stories) parts.push(`<strong>${r.in_stories}</strong> use names, figures and dates found in your stories, but no single passage says what the sentence says. They may combine several stories, or restate them too loosely to match`);
+      if (r.no_details) parts.push(`<strong>${r.no_details}</strong> name nothing specific that could be looked up`);
+      counts = parts.length ? ` Of the ${st.unsupported}: ${parts.join('; ')}.` : '';
+    }
+    return `<p class="sourcing-explain"><strong>Why some facts have no source.</strong> The writing model drafted this book from your stories. Along the way it sometimes joins details from different stories, rewords them, or adds background from its own training, which isn't tied to any source.${counts} Hover over an underlined claim to see why it has no source. Treat these as leads to verify, not as reported facts.</p>`;
   }
 
   function toggleSourcing() {
@@ -744,6 +781,7 @@
     else throw new Error('Unrecognized beat-book JSON shape');
     calibration = (beatbookData && beatbookData.calibration) || null;
     webSupports = [];
+    unsourcedNotes = [];
 
     const sourceKey = (p) => `${p.article_id}::${p.passage_offset ?? 'x'}::${p.passage_length ?? 'x'}`;
 
@@ -813,6 +851,7 @@
       guidance: claims.filter(e => provOf(e) === 'guidance').length,
       analysis: claims.filter(e => provOf(e) === 'analysis').length,
       sorted: !!(beatbookData && beatbookData.stats && beatbookData.stats.claim_sorting),
+      reasons: (beatbookData && beatbookData.stats && beatbookData.stats.unsourced_reasons) || null,
       webBasis: (beatbookData && beatbookData.stats && beatbookData.stats.web_basis) || {},
       replaced: (beatbookData && beatbookData.stats && beatbookData.stats.research_replaced) || 0,
       hasOrigin: claims.some(e => e.origin),
@@ -843,7 +882,9 @@
       return `<sup class="footnote-ref ${band}" onclick="Reader.openCitation(${num})" onmouseenter="Reader.showPreview('${safeId}', event)" onmouseleave="Reader.hidePreview()" title="${titleAttr}">${num}</sup>`;
     });
     html = html
-      .replace(/\[\[PV:(corpus|web|unsupported|guidance|analysis)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
+      .replace(/\[\[PV:unsupported#(\d+)\]\]/g, (_, i) => `<span class="claim claim-unsupported" title="${escapeHtml(unsourcedNotes[+i] || '')}">`)
+      .replace(/\[\[PV:analysis\]\]/g, '<span class="claim claim-analysis" title="Analysis or interpretation: a characterization no record could confirm. Labeled, not fact-checked.">')
+      .replace(/\[\[PV:(corpus|web|unsupported|guidance)\]\]/g, (_, p) => `<span class="claim claim-${p}">`)
       .replace(/\[\[\/PV\]\]/g, '</span>')
       .replace(/\[\[WEB:(\w+):(\d*)\]\]/g, (_, basis, sid) => {
         const b = WEB_BASIS[basis] || WEB_BASIS.unknown;
