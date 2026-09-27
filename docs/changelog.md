@@ -57,6 +57,16 @@
 - Date fragments like "Apr. 20" are no longer read as source names.
 - Draft-versus-final comparison ignores inline attributions, so sourcing a draft sentence doesn't make it a research claim or a replaced one.
 
+### Research rebuilt around quoted facts
+Six runs showed the same pattern: prompts reduced problems but never ended them. The agent dropped story details, cited pages it never opened, and skipped attributions. So the design changed from asking the model to behave to making those outcomes impossible:
+- The research agent no longer edits the beat book and has no shell or text editor. Its tools are `web_search` (at Anthropic), `fetch_page`, `submit_fact` and `finalize_research`.
+- `submit_fact` takes a fact, a verbatim quote, the page URL and a placement. `research_facts.check_fact` checks three things: the quote is on the fetched page after normalization, every figure in the fact is in the quote, and most of its key words are. Rejections go back to the model with the reason.
+- The app writes each attribution from the page. It keeps the model's source name only if it matches the page, and it uses a stated publication date or labels the retrieval month.
+- `insert_facts` adds sub-bullets, paragraphs or section-end lines, and never changes an existing line.
+- Web lines map back to their facts (`web_basis: quoted` with the quote). The reader's web badge opens the quote and page. Accepted facts and rejections are in the build record, and `facts.json` sits in the book's sandbox.
+- Removed: the shell sandbox (`shell_sandbox.py`), `RESEARCH_BASH`, attribution warnings, and similarity matching of web claims against pages.
+- New `evals/research_eval.py` builds fixed corpora several times and checks hard targets. Every book must finish, every web line must be quoted, no draft claims may be lost, every quote must re-verify against the cached page, and research must finalize. It also checks a soft target of at least 2 facts per book. `--dry-run` uses scripted models. A negative control, which slipped an unchecked line into the book and dropped a draft line, failed both targets as intended.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library

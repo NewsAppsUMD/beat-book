@@ -16,7 +16,7 @@ Originally built around [Chicago Public Media](https://chicago.suntimes.com/) st
 
 - **Python 3.11–3.13.** (3.14 is not yet recommended — `umap-learn`'s `numba`/`llvmlite` dependency has no prebuilt wheels for it and must compile from source, which often fails.)
 - An [OpenAI API key](https://platform.openai.com/api-keys) — used for embeddings (`text-embedding-3-small`) unless you switch to Ollama embeddings. (Anthropic has no embedding API.)
-- An [Anthropic API key](https://console.anthropic.com/) — used for the web-research agent (`claude-opus-4-7`) and OCR. Also used for story normalization, cluster labeling, and the beat-book writing agent when running the default Anthropic chat provider.
+- An [Anthropic API key](https://console.anthropic.com/) — used for the web-research step (`claude-sonnet-4-6`) and OCR. Also used for story normalization, cluster labeling, and the beat-book writing agent when running the default Anthropic chat provider.
 - *(Optional)* A [Firecrawl API key](https://firecrawl.dev) — when set, PDFs and pasted URLs are parsed/scraped via Firecrawl (native + scanned PDFs and JS-rendered pages handled uniformly). Without it, the app falls back to local PyMuPDF + Haiku-vision OCR for PDFs and an SSRF-protected `httpx` fetch for URLs, so a Firecrawl account is not required.
 
 Both API providers can be partially or fully replaced by [Ollama](#using-ollama) for local/private inference.
@@ -184,19 +184,29 @@ ANTHROPIC_API_KEY=sk-ant-...
 Even with `CHAT_PROVIDER=ollama`, two features still use the Anthropic API:
 
 - **Scanned-PDF OCR** — uses Haiku vision to transcribe page images. Only triggered when a PDF has no extractable text. If you don't upload scanned PDFs, this never runs.
-- **Research agent** — uses Claude Opus to browse the web and enrich the beat book with public context. This runs after the writing agent finishes.
+- **Research step** — uses Claude Sonnet to add quoted, checked facts from the web. This runs after the writing agent finishes.
 
 If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely.
 
-### How the research agent reads web pages
+### How web research works
 
-Searches run on Anthropic's servers. Pages are fetched by the app itself (`page_fetcher.py`), from your machine, or through Firecrawl when `FIRECRAWL_API_KEY` is set. The agent can only fetch URLs that have already appeared in the run: search results, pages it has read, or the beat book. Each redirect is checked against private and loopback addresses. A page it has already read comes back as a short note, not the page again. Pages are also cached in `.cache/web_pages/` for seven days, so the same page isn't fetched again for the next book. At most 8 new pages are fetched per run. The app keeps the exact text the agent read and uses it to check each web-added claim.
+The research step (`research_agent.py`, Claude Sonnet 4.6) adds current context from the web, but it cannot edit the beat book. It reads the draft, searches the web, and fetches pages. For each fact it wants to add, it submits the fact with a verbatim quote from a page it fetched. The app then checks each submission (`research_facts.py`):
 
-### The research agent's shell
+- The quote must appear on that page. Whitespace, quote marks, dashes and Markdown formatting are ignored.
+- Every figure in the fact, including dollar amounts, percentages and years, must be in the quote.
+- Most of the fact's key words must be in the quote, so the fact can't say more than its source.
 
-The research agent can run shell commands on the server to write scrapers. Every command runs under an operating-system sandbox that blocks file writes outside the book's sandbox folder, including `/tmp`: `sandbox-exec` on macOS, and bubblewrap (`bwrap`) on Linux. Network access and file reads stay allowed. Commands also get a minimal environment with no API keys, a home directory inside the sandbox folder, and CPU-time and file-size limits.
+The app inserts accepted facts itself and writes the attribution from the page. A fact goes under the bullet it adds to, after the paragraph it extends, or at the end of its section. No existing line changes, so nothing from your stories can be lost. Rejected submissions go back to the model with the reason, so it can fix them. The build record lists every accepted fact with its quote, and every rejection with its reason. The agent has no shell and no file access.
 
-The app checks the sandbox once at startup by trying a write inside and outside a test folder. If no sandbox tool is installed, or the check fails, the agent gets no shell for that run. It never runs unconfined. The book's build record says which sandbox ran or why the shell was off. On Linux, install bubblewrap (`sudo apt-get install bubblewrap`); the Codespaces setup tries to. Set `RESEARCH_BASH=off` to remove the shell regardless.
+Searches run on Anthropic's servers. Pages are fetched by the app (`page_fetcher.py`), from your machine, or through Firecrawl when `FIRECRAWL_API_KEY` is set. The agent can only fetch URLs already seen in the run, plus pages on the vetted data portals in its prompt. Each redirect is checked against private and loopback addresses. Repeat requests return a note, not the page again, and pages are cached in `.cache/web_pages/` for seven days. At most 8 new pages are fetched per run, and at most 25 facts are added per book.
+
+To test the research step, run the evaluation. It builds each fixed corpus several times and checks every run against stated targets: every web line quoted, no story claims lost, and every quote re-verified.
+
+```bash
+.venv/bin/python evals/research_eval.py --dry-run
+```
+
+`--dry-run` uses scripted models and makes no API calls. Without it, the script calls the real models (three corpora, two runs each by default) and writes a report to `evals/results/`.
 
 ### Selecting the embedding model in the UI
 
@@ -210,7 +220,7 @@ When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the 
 2. **Review stories** — The server extracts text from each source and asks Claude Haiku 4.5 to identify the distinct news stories, splitting multi-story documents and inferring missing metadata. You review the detected stories on the preview screen and can edit titles/dates/authors/type or deselect anything.
 3. **Analyze** — Each confirmed story runs through an NLP pipeline: embed (OpenAI `text-embedding-3-small`), reduce dimensions (UMAP), cluster into topics at two granularities (HDBSCAN), and label each cluster with an LLM.
 4. **Choose topics** — Pick the topics to cover. The writing agent focuses only on what you select.
-5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft while a second research agent (Claude Sonnet 4.6) enriches it with public-web research; the two are merged and every claim is matched back to a source sentence. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
+5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft, a research step (Claude Sonnet 4.6) adds facts it quoted from web pages and the app checked, and every claim is matched back to a source passage. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
 6. **Read** — When it's ready, the book opens in an inline reader with academic-style inline citations; clicking a citation opens the matched source passage in a side panel.
 
 ---
@@ -356,7 +366,7 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 3. It calls `generate_beat_book` with a complete Markdown document — which is gated until the read targets are met, pushing the agent to actually ground itself in the corpus.
 
 - **Models:** `claude-sonnet-4-6` for writing; `claude-haiku-4-5` for the lightweight coverage-exploration pass.
-- After the draft, the **research agent** (`research_agent.py`, Claude Sonnet 4.6) runs in a sandbox with bash + text-editor tools to enrich the draft with public-web research; its additions are merged onto the draft.
+- After the draft, the **research step** (`research_agent.py`, Claude Sonnet 4.6) submits web facts with verbatim quotes; the app checks and inserts them. See [How web research works](#how-web-research-works).
 - Finally `citation_matcher.py` embeds source passages and beat-book claims (OpenAI) and matches each claim back to its source, producing the `<stem>.json` + `<stem>_sources.json` the reader uses. Each claim is tagged with where it came from: matched to the corpus, added by web research, or unsupported.
 - `jobs.py` writes `<stem>.manifest.json`, the book's build record. See [The Reader](#sourcing-and-transparency).
 - The writing agent only sees stories in the topics the reporter selected. `view_topics`, `read_story` and `search_stories` are all scoped to them.
@@ -377,8 +387,7 @@ The reader shows how well each part of the book is sourced, so a reporter knows 
 - **Match strength.** Each citation chip's border shows how far its similarity sits above the book's cutoff: solid green for strong, blue for moderate, dashed amber for weak. The source panel states the score, the cutoff, and that a match is text similarity, not a fact check.
 - **Alternate passages.** The matcher keeps up to five passages per claim. The source panel lists them all, and clicking one opens it.
 - **Key phrases.** Inside the highlighted passage, a darker highlight marks the words that matter most to the match.
-- **Web-added claims.** Sentences the research step added carry a "web" badge. They are found by comparing against the draft, not guessed. The badge also says what backs the claim. Plain "web" means a page the agent read supports it: the passage is similar, above the book's cutoff, and every figure in the claim appears on the page. Clicking the badge opens that page. "Snippet" means no page it read supports the claim, and the source it names appears only in search results. "Unconfirmed" means it names a source that nothing in the record supports. "No source" means it names none.
-- **Research overrides.** The summary counts claims from the draft, which was written from your stories, that web research rewrote or removed. The build record lists them.
+- **Web-added facts.** Facts the research step added carry a "web" badge. Clicking it opens the verbatim quote the app checked and a link to the page. Books built before the quoted-facts design show their older labels, such as "snippet" and "unconfirmed". The summary also counts any claims from your stories that research changed. With the current design that count is always zero.
 - **Advice and labels.** Unmatched lines under Reporting Tips count as guidance, not as unsourced claims, because advice has no source to match. All-bold subheads and short "Label:" lines are not counted as claims at all.
 - **Cited bullets and table rows.** Bullets and table rows with at least six words are cited as one claim each. Key Sources, Story Ideas and the Calendar are usually lists, so these sections now get citations.
 - **How this book was made.** A panel, opened from the reader header, reads the book's build record. It shows the models and token counts, time per stage, where each stage sent material, the stories the writing agent read, the instructions it was given, the research agent's searches, cited pages and summary, a diff of what research changed, and how the citation cutoff was set.
@@ -402,7 +411,7 @@ The topic screen also shows, before generation, which provider each stage sends 
 | **Dimensionality reduction** | [UMAP](https://umap-learn.readthedocs.io/) | Project embeddings for clustering |
 | **Clustering** | [HDBSCAN](https://hdbscan.readthedocs.io/) | Density-based topic discovery at two granularities |
 | **Writing agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Tool-using agent that writes the beat book |
-| **Research agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Sandboxed public-web research over the draft |
+| **Research step** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Web search plus quoted facts the app checks and inserts |
 | **Numerical** | [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [scikit-learn](https://scikit-learn.org/) | Vector math, distances, preprocessing |
 | **Frontend** | Vanilla HTML/CSS/JS | No-framework single-page app |
 
@@ -418,7 +427,10 @@ beat-book/
 ├── store.py                # Library index (output/library.json) — CRUD + unique stems
 ├── jobs.py                 # Background generation queue — BookJob, run_generation, worker
 ├── agent.py                # Writing agent — tool definitions, system prompt, agent loop
-├── research_agent.py       # Sandboxed research agent that enriches the draft
+├── research_agent.py       # Research step: search, fetch, submit quoted facts
+├── research_facts.py       # Checks quotes against pages; inserts accepted facts
+├── page_fetcher.py         # App-side page fetching: allowlist, redirects, cache
+├── evals/research_eval.py  # Evaluation: fixed corpora, repeated runs, targets
 ├── citation_matcher.py     # Matches beat-book claims back to source sentences
 ├── claude_client.py        # Shared Anthropic config — models, timeouts, rate-limit backoff
 ├── requirements.txt        # Python dependencies

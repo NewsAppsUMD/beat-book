@@ -1,5 +1,7 @@
 # The research agent: turning a draft beat book into a living one
 
+> **Superseded (September 2026).** This describes the first research design, in which the agent edited the beat book with a shell and a text editor. It was replaced by a quoted-facts design: the agent submits each fact with a verbatim quote from a page it fetched, and the app checks the quote and inserts the fact. See "How web research works" in the README, `research_facts.py`, and `evals/research_eval.py`.
+
 The first agent builds a beat book using only the reporter's own coverage. That's comprehensive, but nothing in it is newer than the latest story in the corpus. If the most recent piece on Chicago immigration enforcement is from December and the reporter is reading the book in May, the agency has new leadership, the lawsuit has progressed, the funding picture has shifted, and the document is stale.
 
 The research agent is the second pass. It takes the draft markdown the first agent produced, drops it into a private working directory, and rewrites it in place using a mix of web search, web fetch, ad-hoc Python, and at least one custom-written scraper. The output is a richer document with current-state context, named officials, recent legal developments, demographic numbers, and primary-source URLs the reporter should bookmark. The original draft is preserved alongside the revision in case the agent's revision goes off the rails.

@@ -2067,3 +2067,10 @@ mark.passage-key {
   .reader-howmade span { display: none; }
   .egress-plan .mf-table td:first-child { white-space: normal; }
 }
+
+/* Quoted web facts */
+button.web-badge { font-family: var(--sans); cursor: pointer; }
+button.web-badge:hover { border-color: var(--prov-web); }
+.web-fact-quote { font-size: 0.95rem; line-height: 1.55; margin: 0 0 0.75rem; font-style: normal; }
+.mf-facts li { margin-bottom: 0.8rem; }
+.mf-facts .mf-quote { margin: 0.3rem 0; font-size: 0.84rem; }

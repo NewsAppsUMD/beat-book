@@ -418,41 +418,50 @@
       ${readList}${scannedList}
       ${agent.write_system_prompt ? `<details class="mf-prompt"><summary>Instructions given to the writing model</summary><pre>${escapeHtml(agent.write_system_prompt)}</pre></details>` : ''}`;
 
-    const cited = research.cited_sources || [];
     const pagesRead = research.pages_read || (research.web_fetches || []).map(u => ({ url: u, title: '' }));
-    const wb = stats.web_basis || null;
-    const basisHtml = !wb ? '' : wb.method === 'page_text'
-      ? `<p>Of the ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read)} are supported by the text of a page the agent read. That means the passage is similar, above this book's cutoff, and every figure in the claim appears on the page. Of the rest, ${fmtNum(wb.snippet)} name a source it only saw as a search snippet, ${fmtNum(wb.unconfirmed)} name a source that nothing in its record supports, and ${fmtNum(wb.unattributed)} name no source.</p>${research.attribution_warnings ? `<p class="mf-note">The agent was warned ${fmtNum(research.attribution_warnings)} times about added lines with no source named.</p>` : ''}`
-      : `<p>Of the ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read)} name a source the agent read, ${fmtNum(wb.snippet)} name a source it only saw as a search snippet, ${fmtNum((wb.unmatched || 0) + (wb.unconfirmed || 0))} name a source not in its research record, and ${fmtNum(wb.unattributed)} name no source. This older record matched source names, not page text.</p>`;
-    const replacedList = ((m.research_changes || {}).replaced_claims || []);
-    const replacedHtml = replacedList.length ? `<h4>Claims from your stories that research changed or removed</h4><ul class="mf-list">${replacedList.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
-    const shellNote = research.bash_enabled === false && research.shell_unavailable_reason
-      ? `<p class="mf-note">The shell was off for this run: ${escapeHtml(research.shell_unavailable_reason)}.</p>`
-      : (research.shell_sandbox ? `<p class="mf-note">Shell commands ran under ${escapeHtml(research.shell_sandbox)}, which blocks writes outside the book's folder.</p>` : '');
     const results = research.web_results || [];
     const changes = m.research_changes || {};
+    const wb = stats.web_basis || null;
+    const accepted = research.facts_accepted || [];
+    const rejected = research.facts_rejected || [];
+    const isQuoted = research.design === 'quoted_facts';
+    const link = (url, title) => `<a href="${safeHref(url)}" target="_blank" rel="noopener">${escapeHtml(title || hostLink(url))}</a>`;
+
+    let basisHtml = '';
+    if (isQuoted) {
+      basisHtml = `<p>Web research added <strong>${fmtNum(accepted.length)}</strong> facts. Each one quotes a page the agent fetched, and the app checked that the quote is on the page and that every figure in the fact is in the quote. The app wrote each attribution from the page. ${fmtNum(rejected.length)} submissions failed the check and were left out. The agent could not edit the beat book, so no text from your stories was changed.</p>`
+        + (wb && wb.unverified ? `<p class="mf-errors">${fmtNum(wb.unverified)} web-added lines could not be matched to a checked fact. That should not happen; treat them as unverified.</p>` : '');
+    } else if (wb) {
+      basisHtml = `<p class="mf-note">This book was built with an earlier research design that let the agent edit the book directly. Of its ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read || 0)} were matched to a page it read.</p>`;
+    }
+    const replacedList = changes.replaced_claims || [];
+    const replacedHtml = replacedList.length ? `<h4>Claims from your stories that research changed or removed</h4><ul class="mf-list">${replacedList.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
+    const acceptedHtml = accepted.length ? `<h4>Facts added, with their quotes</h4><ol class="mf-list mf-facts">${accepted.map(f => `<li>
+        <div>${escapeHtml(f.fact)}</div>
+        <blockquote class="mf-quote">“${escapeHtml(f.quote)}”</blockquote>
+        <div class="mf-host">${link(f.final_url || f.url, f.title)} · ${escapeHtml(f.attribution || '')} · in “${escapeHtml(f.section || '')}”</div></li>`).join('')}</ol>` : '';
+    const rejectedHtml = rejected.length ? `<details><summary>${rejected.length} submissions rejected</summary><ul class="mf-list">${rejected.map(r => `<li>${escapeHtml(r.fact || '')}<br><span class="mf-host">${escapeHtml(r.reason || '')}${r.url ? ' · ' + escapeHtml(hostLink(r.url)) : ''}</span></li>`).join('')}</ul></details>` : '';
     const finishNote = research.finalized
       ? (research.finalize_turn ? ' It finished on an extra turn reserved for recording its summary.' : '')
-      : ' It did not formally finish, so its last file state was used.';
+      : ' It did not formally finish.';
+
     const researchBody = (research.model_calls || []).length ? `
-      ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary of its changes.</p>` : ''}
+      ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary.</p>` : ''}
       ${basisHtml}
+      ${acceptedHtml}
+      ${rejectedHtml}
       ${replacedHtml}
-      <p>${fmtNum((research.web_searches || []).length)} web searches, ${fmtNum(pagesRead.length)} pages read, ${fmtNum((research.bash_commands || []).length)} shell commands.
-        ${changes.changed ? `It added ${fmtNum(changes.lines_added)} lines and removed ${fmtNum(changes.lines_removed)}.` : 'It made no changes to the draft.'}
-        ${finishNote}</p>
+      <p>${fmtNum((research.web_searches || []).length)} web searches and ${fmtNum(pagesRead.length)} pages read over ${fmtNum(research.turns)} turns.${finishNote}</p>
       ${(research.web_searches || []).length ? `<p class="mf-note">Searches: ${research.web_searches.map(q => `“${escapeHtml(q)}”`).join(', ')}</p>` : ''}
-      ${shellNote}
       ${pagesRead.length ? `<h4>Pages it read</h4><ul class="mf-list">${pagesRead.map(c => {
           const bits = [hostLink(c.url)];
           if (typeof c.chars === 'number') bits.push(c.chars ? `${fmtNum(c.chars)} characters${c.truncated ? ', shown in part' : ''}` : 'no readable text');
           if (c.cached) bits.push('cached copy');
-          return `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(bits.join(' · '))}</span></li>`;
+          return `<li>${link(c.url, c.title)} <span class="mf-host">${escapeHtml(bits.join(' · '))}</span></li>`;
         }).join('')}</ul>` : ''}
       ${research.repeat_fetches ? `<p class="mf-note">It asked for ${fmtNum(research.repeat_fetches)} pages it had already read; the app answered from its copy.</p>` : ''}
       ${(research.fetch_errors || []).length ? `<details><summary>${research.fetch_errors.length} fetches refused or failed</summary><ul class="mf-list">${research.fetch_errors.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></details>` : ''}
-      ${cited.length ? `<h4>Pages the model cited</h4><ul class="mf-list">${cited.map(c => `<li><a href="${safeHref(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || hostLink(c.url))}</a> <span class="mf-host">${escapeHtml(hostLink(c.url))}</span></li>`).join('')}</ul>` : ''}
-      ${results.length ? `<details><summary>${results.length} search results it saw as snippets</summary><ul class="mf-list">${results.map(r => `<li><a href="${safeHref(r.url)}" target="_blank" rel="noopener">${escapeHtml(r.title || hostLink(r.url))}</a> <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
+      ${results.length ? `<details><summary>${results.length} search results it saw</summary><ul class="mf-list">${results.map(r => `<li>${link(r.url, r.title)} <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
       ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
     ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
 
@@ -594,6 +603,8 @@
   // What backs a web-added claim, judged from the research record: did the
   // agent read a page from the source it names, or only see a search snippet?
   const WEB_BASIS = {
+    quoted: { label: 'web', title: 'Added by web research, quoted from a page the agent read. Click to see the quote.' },
+    unverified: { label: 'web · unverified', title: 'Added by web research, but not matched to a checked quote. Verify before use.' },
     read: { label: 'web', title: 'Added by web research. A page the agent read supports this.' },
     snippet: { label: 'web · snippet', title: 'Added by web research. No page the agent read supports this; the source it names appears only in search-result snippets. Verify before use.' },
     unconfirmed: { label: 'web · unconfirmed', title: 'Added by web research. It names a source, but no page the agent read supports it: the closest passage was not similar enough, or a figure in the claim is not on the page. Verify before use.' },
@@ -606,8 +617,28 @@
   let webSupports = [];
   function webSupportId(entry) {
     if (!entry.web_support) return '';
-    webSupports.push(entry.web_support);
+    webSupports.push({ ...entry.web_support, claimText: plainClaim(entry) });
     return String(webSupports.length - 1);
+  }
+
+  // Side panel for a quoted web fact: the claim, the verbatim quote the app
+  // checked, and the page it came from.
+  function openWebFact(i) {
+    const sup = webSupports[i];
+    if (!sup) return;
+    hidePreview();
+    $('articlePanelTitle').textContent = sup.title || hostLink(sup.final_url || sup.url);
+    const url = sup.final_url || sup.url;
+    $('articleContent').innerHTML = `
+      <div class="cited-claim-card web-fact-card fade-in">
+        <div class="cited-claim-label">Web research added:</div>
+        <div class="cited-claim-text">${escapeHtml(sup.claimText || '')}</div>
+        <div class="match-strength">The app checked that this quote appears on the page and that every figure in the claim is in the quote. It did not check that the page is right.</div>
+      </div>
+      <blockquote class="mf-quote web-fact-quote fade-in">“${escapeHtml(sup.quote)}”</blockquote>
+      <p class="fade-in">${escapeHtml(sup.source_name || '')}${sup.source_name ? ' · ' : ''}<a href="${safeHref(url)}" target="_blank" rel="noopener">Open the page →</a></p>`;
+    $('reader-split').classList.add('split-view');
+    currentArticleId = '__web__' + i;
   }
 
   // ── Provenance decoration ───────────────────────────────────────────────
@@ -658,9 +689,13 @@
     ];
     if (st.hasOrigin || st.web) {
       const wb = st.webBasis || {};
-      const weak = (wb.snippet || 0) + (wb.unmatched || 0) + (wb.unconfirmed || 0) + (wb.unattributed || 0);
-      const detail = st.web && Object.keys(wb).length
-        ? ` (${wb.read || 0} supported by a page it read, ${weak} not)` : '';
+      let detail = '';
+      if (st.web && 'quoted' in wb) {
+        detail = wb.unverified ? ` (${wb.quoted} quoted from pages it read, ${wb.unverified} unverified)` : ' (each quoted from a page it read)';
+      } else if (st.web && Object.keys(wb).length) {
+        const weak = (wb.snippet || 0) + (wb.unmatched || 0) + (wb.unconfirmed || 0) + (wb.unattributed || 0);
+        detail = ` (${wb.read || 0} supported by a page it read, ${weak} not)`;
+      }
       bits.push(`<span class="sourcing-stat"><span class="sourcing-swatch sw-web"></span><strong>${st.web}</strong>&nbsp;added by web research${detail}</span>`);
     }
     if (st.replaced) bits.push(`<span class="sourcing-stat" title="Claims from the draft, which was written from your stories, that web research rewrote or removed. See the changes in How this book was made."><span class="sourcing-swatch sw-replaced"></span><strong>${st.replaced}</strong>&nbsp;claims from your stories changed by web research</span>`);
@@ -797,6 +832,9 @@
         const title = sup
           ? `${b.title} Page: ${sup.title || sup.url} (${sup.test === 'words' ? `${Math.round((sup.lexical || 0) * 100)}% of its key words appear there` : `similarity ${fmtSim(sup.similarity)}`}; every figure appears on the page).`
           : b.title;
+        if (sup && sup.quote) {
+          return `<button type="button" class="web-badge web-${basis}" onclick="Reader.openWebFact(${+sid})" title="${escapeHtml(b.title)}">${b.label}</button>`;
+        }
         const tag = sup && /^https?:\/\//i.test(sup.url) ? 'a' : 'span';
         const href = tag === 'a' ? ` href="${escapeHtml(sup.url)}" target="_blank" rel="noopener"` : '';
         return `<${tag} class="web-badge web-${basis}"${href} title="${escapeHtml(title)}">${b.label}</${tag}>`;
@@ -911,7 +949,7 @@
     document.addEventListener('click', (e) => {
       const split = $('reader-split'), panel = $('articlePanel');
       if (split && split.classList.contains('split-view') && panel && !panel.contains(e.target)
-        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade')) {
+        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade, .web-badge')) {
         closeArticle();
       }
       const nav = $('sectionNavigator');
@@ -925,6 +963,6 @@
     });
   }
 
-  window.Reader = { open, openCitation, openSupport, openManifest, toggleSourcing, showPreview, hidePreview };
+  window.Reader = { open, openCitation, openSupport, openManifest, openWebFact, toggleSourcing, showPreview, hidePreview };
   initStaticBindings();
 })();

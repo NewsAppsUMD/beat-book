@@ -161,13 +161,20 @@ class PageFetcher:
     """One research run's fetcher: tracks which URLs are allowed, what was
     fetched, and the text of every page read."""
 
-    def __init__(self, max_fetches: int, seed_text: Iterable[str] = ()):
+    def __init__(self, max_fetches: int, seed_text: Iterable[str] = (),
+                 allow_hosts_from: Iterable[str] = ()):
+        """`seed_text`: text whose URLs may be fetched (the beat book).
+        `allow_hosts_from`: text whose URLs' hosts may be fetched at any
+        path (the vetted data portals in the research prompt)."""
         self.max_fetches = max_fetches
         self.network_fetches = 0
         self.allowed: Set[str] = set()
+        self.allowed_hosts: Set[str] = set()
         self.read: Dict[str, Dict[str, Any]] = {}     # url → page record
         for t in seed_text:
             self.allow_from(t)
+        for t in allow_hosts_from:
+            self.allowed_hosts |= {(urlparse(u).hostname or "").lower() for u in urls_in(t)} - {""}
 
     def allow(self, url: str) -> None:
         if url:
@@ -187,7 +194,7 @@ class PageFetcher:
                     "text": (f"You already fetched {url} earlier in this run "
                              f"(“{rec.get('title') or 'untitled'}”). Its text is in "
                              "that earlier result; it is not repeated here.")}
-        if url not in self.allowed:
+        if url not in self.allowed and (urlparse(url).hostname or "").lower() not in self.allowed_hosts:
             return {"ok": False, "text": (
                 f"Error: {url} has not appeared in this run. Only URLs from search "
                 "results, pages you have read, or the beat book can be fetched. "

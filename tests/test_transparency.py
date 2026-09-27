@@ -5,7 +5,6 @@ the Word export, and the per-book file routes."""
 import hashlib
 import json
 import re
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -249,36 +248,6 @@ def test_book_files_served_by_id_and_output_dir_not_mounted(tmp_path, monkeypatc
 
 # ── Research agent trace and shell ─────────────────────────────────────────
 
-def test_research_web_activity_is_recorded():
-    import research_agent as ra
-    trace = {"web_searches": [], "web_results": [], "web_fetches": [], "cited_sources": []}
-    content = [
-        {"type": "server_tool_use", "name": "web_search", "input": {"query": "cps budget 2026"}},
-        {"type": "web_search_tool_result", "content": [
-            {"url": "https://cps.edu/budget", "title": "CPS Budget", "page_age": "2 days"},
-            {"url": "https://cps.edu/budget", "title": "dupe"}]},
-        {"type": "server_tool_use", "name": "web_fetch", "input": {"url": "https://cps.edu/budget"}},
-        {"type": "text", "text": "x", "citations": [
-            {"url": "https://cps.edu/budget", "title": "CPS Budget", "cited_text": "$9.9 billion"}]},
-        {"type": "web_search_tool_result", "content": {"type": "web_search_tool_result_error"}},
-    ]
-    statuses = ra._record_web_activity(content, trace)
-    assert trace["web_searches"] == ["cps budget 2026"]
-    assert [r["url"] for r in trace["web_results"]] == ["https://cps.edu/budget"]
-    assert trace["web_fetches"] == ["https://cps.edu/budget"]
-    assert trace["cited_sources"][0]["cited_text"] == "$9.9 billion"
-    assert [s[0] for s in statuses] == ["web_search", "web_fetch"]
-
-
-def test_research_shell_does_not_inherit_api_keys(tmp_path, monkeypatch):
-    import research_agent as ra
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-secret")
-    out = ra._run_bash("env", False, tmp_path)
-    assert "secret" not in out
-    assert f"HOME={tmp_path.resolve()}" in out
-
-
 def test_draft_diff_counts_added_lines():
     from jobs import _draft_diff
     d = _draft_diff("# T\n\nA.\n", "# T\n\nA.\n\nB from the web.\n")
@@ -289,18 +258,6 @@ def test_draft_diff_counts_added_lines():
 def test_alderman_abbreviation_does_not_split_sentences():
     assert cm.split_into_sentences("Retired Ald. Walter Burnett will lead the agency. He starts Monday.") == [
         "Retired Ald. Walter Burnett will lead the agency.", "He starts Monday."]
-
-
-def test_wrap_up_note_goes_on_trailing_user_message_only():
-    import research_agent as ra
-    msgs = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}]
-    assert ra._append_user_note(msgs, "note")
-    assert msgs[-1]["content"][-1] == {"type": "text", "text": "note"}
-    assert msgs[-1]["content"][0]["type"] == "tool_result"
-    paused = [{"role": "assistant", "content": []}]
-    assert not ra._append_user_note(paused, "note")
-    assert "LAST turn" in ra._wrap_up_note(1)
-    assert ra.MAX_TURNS > ra.WRAP_UP_TURNS_LEFT
 
 
 # ── Labels, guidance, and the finalize-only turn ───────────────────────────
@@ -352,161 +309,13 @@ class _FakeClient:
         self.messages = Messages()
 
 
-def test_finalize_only_turn_records_summary(tmp_path):
-    import asyncio
-    import research_agent as ra
-    (tmp_path / "book.md").write_text("# Book\n")
-    msg = _FakeBlock(stop_reason="tool_use", usage=None, content=[
-        _FakeBlock(type="tool_use", name=ra.FINALIZE_TOOL_NAME,
-                   input={"filename": "book.md", "summary": "Added the 2026 CHA budget."})])
-    client = _FakeClient(msg)
-    trace = {"model_calls": []}
-    messages = [{"role": "user", "content": "start"}, {"role": "assistant", "content": []}]
-    path, summary = asyncio.run(ra._finalize_only_turn(
-        client, "system", [], messages, "cont-1", tmp_path, "book.md", trace))
-    assert path == (tmp_path / "book.md").resolve() and summary == "Added the 2026 CHA budget."
-    assert trace["finalized"] and trace["finalize_turn"]
-    req = client.requests[0]
-    assert req["tool_choice"] == {"type": "tool", "name": ra.FINALIZE_TOOL_NAME}
-    assert req["container"] == "cont-1"
-    assert req["messages"][-1]["role"] == "user"      # note added after the assistant turn
-    assert len(messages) == 2                          # caller's transcript untouched
-
-
-def test_finalize_only_turn_failure_is_harmless(tmp_path):
-    import asyncio
-    import research_agent as ra
-
-    class Boom:
-        class messages:
-            @staticmethod
-            def stream(**kw): raise RuntimeError("api down")
-    trace = {"model_calls": []}
-    path, summary = asyncio.run(ra._finalize_only_turn(
-        Boom(), "system", [], [{"role": "user", "content": "x"}], None, tmp_path, "book.md", trace))
-    assert path is None and summary == "" and "api down" in trace["finalize_turn_error"]
-
-
 # ── Shell confinement, dedupe, reads, web basis ────────────────────────────
-
-def test_research_shell_cannot_write_outside_its_folder(tmp_path):
-    import research_agent as ra
-    import shell_sandbox
-    if shell_sandbox.detect()["kind"] is None:
-        pytest.skip("no OS sandbox on this machine; the shell is disabled instead")
-    box = tmp_path / "box"
-    box.mkdir()
-    outside = tmp_path / "escaped.txt"
-    out = ra._run_bash(f"echo hi > inside.txt; echo x > {outside}; echo y > /tmp/beatbook_escape_probe; "
-                       f"python3 -c \"open('{outside}.py','w')\"", False, box)
-    assert (box / "inside.txt").read_text().strip() == "hi"
-    assert not outside.exists() and not (tmp_path / "escaped.txt.py").exists()
-    assert not Path("/tmp/beatbook_escape_probe").exists()
-    assert "Operation not permitted" in out or "Read-only" in out or "Permission denied" in out
-
-
-def test_shell_fails_closed_without_a_sandbox(tmp_path, monkeypatch):
-    import research_agent as ra
-    import shell_sandbox
-    monkeypatch.setattr(shell_sandbox, "_cached", {"kind": None, "reason": "test"})
-    assert ra._run_bash("echo hi > x.txt", False, tmp_path).startswith("Error: the shell is unavailable")
-    assert not (tmp_path / "x.txt").exists()
-    assert not ra.shell_status()["enabled"]
-    assert all(t.get("name") != "bash" for t in ra.build_tools())
-
-
-
-def test_repeated_blocks_are_counted_once():
-    import research_agent as ra
-    trace = {"web_searches": [], "web_results": [], "web_fetches": [], "cited_sources": []}
-    turn = [
-        {"type": "server_tool_use", "id": "s1", "name": "web_search", "input": {"query": "q"}},
-        {"type": "server_tool_use", "id": "f1", "name": "web_fetch", "input": {"url": "https://a.org/x"}},
-        {"type": "web_fetch_tool_result", "tool_use_id": "f1",
-         "content": {"url": "https://a.org/x", "content": {"title": "A page"}}},
-    ]
-    ra._record_web_activity(turn, trace)
-    ra._record_web_activity(turn, trace)          # resumed response repeats blocks
-    assert trace["web_searches"] == ["q"] and trace["web_fetches"] == ["https://a.org/x"]
-    assert trace["pages_read"] == [{"url": "https://a.org/x", "title": "A page"}]
-
 
 def test_topic_scans_do_not_count_as_reads():
     from agent import _progress_report
     pr = _pipeline_result()
     text, met = _progress_report(pr, {"Parks", "Schools"}, set())
     assert not met and "does not count" in text
-
-
-def test_web_basis_distinguishes_read_pages_from_snippets():
-    import jobs
-    trace = {"pages_read": [{"url": "https://www.thecha.org/x", "title": "Keith Pettigrew | CHA"}],
-             "web_results": [{"url": "https://washingtoncitypaper.com/a", "title": "DCHA audit"}]}
-    entries = {"entries": [
-        {"provenance": "web", "content": "He began April 20 (CHA press release, Apr. 2026)."},
-        {"provenance": "web", "content": "The audit found 19 weaknesses (Washington City Paper, 2024)."},
-        {"provenance": "web", "content": "The budget is $1.4 billion (The Real Deal, Apr. 2026)."},
-        {"provenance": "web", "content": "The agency is large (and old)."},
-    ]}
-    counts = jobs.tag_web_basis(entries, trace)   # no page text: falls back to names
-    assert [e["web_basis"] for e in entries["entries"]] == ["read", "snippet", "unconfirmed", "unattributed"]
-    assert counts == {"read": 1, "snippet": 1, "unconfirmed": 1, "unattributed": 1, "method": "names"}
-
-
-def test_web_claims_checked_against_page_text():
-    import jobs
-    page = ("The Cook County Board of Review voted to set the Arlington Park valuation at "
-            "$124.7 million, below the school districts' request, and the Bears said they "
-            "were disappointed with the board's decision on the property. ") * 3
-    trace = {"pages_read": [{"url": "https://chicago.suntimes.com/bears/x", "title": "Bears disappointed"}],
-             "web_results": []}
-    entries = {"calibration": {"threshold": 0.5}, "entries": [
-        # Supported by the page, and names no source: page text still backs it.
-        {"provenance": "web", "kind": "sentence", "passthrough": False,
-         "content": "The Board of Review set the Arlington Park valuation at $124.7 million."},
-        # Same topic, but the figure is not on the page.
-        {"provenance": "web", "kind": "sentence", "passthrough": False,
-         "content": "The Board of Review set the Arlington Park valuation at $138 million."},
-    ]}
-    counts = jobs.tag_web_basis(entries, trace, {"https://chicago.suntimes.com/bears/x": page}, HashEmbed())
-    a, b = entries["entries"]
-    assert a["web_basis"] == "read" and a["web_support"]["url"].endswith("/bears/x")
-    assert b["web_basis"] == "unattributed"
-    assert counts["method"] == "page_text" and counts["read"] == 1
-
-
-def test_paragraph_attribution_covers_its_sentences():
-    import jobs
-    items = [
-        {"kind": "sentence", "passthrough": False, "content": "Steele dissented."},
-        {"kind": "sentence", "passthrough": False, "content": "The Bears were disappointed (Chicago Sun-Times, Feb 2024)."},
-        {"kind": "other", "passthrough": True, "content": ""},
-        {"kind": "sentence", "passthrough": False, "content": "Unrelated next paragraph."},
-    ]
-    names = jobs._paragraph_names(items)
-    assert names[0] == ["Chicago Sun-Times"] and names[3] == []
-
-
-def test_research_is_warned_about_unattributed_additions():
-    import research_agent as ra
-    before = "## Key Sources\n\n- **Jane Doe** — director of the housing agency since 2020.\n"
-    after = before + ("- **Jawanza Malone** — chairman of the housing authority board as of mid-2026.\n"
-                      "- **Matt Topic** — lawyer for the plaintiffs in the open meetings case (Loevy press release, Apr 2026).\n")
-    missing = ra._unattributed_additions(before, after)
-    assert missing == ["- **Jawanza Malone** — chairman of the housing authority board as of mid-2026."]
-    trace = {}
-    note = ra._attribution_note(before, after, trace)
-    assert "name no source" in note and trace["attribution_warnings"] == 1
-    tips = "## Reporting Tips\n\nFile records requests early and expect long delays from the agency.\n"
-    assert ra._unattributed_additions("", tips) == []
-
-
-def test_fetched_page_text_is_kept_in_memory():
-    import research_agent as ra
-    trace = {"web_searches": [], "web_results": [], "web_fetches": [], "cited_sources": []}
-    ra._record_web_activity([{"type": "web_fetch_tool_result", "tool_use_id": "f1", "content": {
-        "url": "https://a.org/x", "content": {"title": "A", "source": {"type": "text", "data": "Board roster text"}}}}], trace)
-    assert trace["_page_texts"] == {"https://a.org/x": "Board roster text"}
 
 
 def test_replaced_draft_claims_are_listed():
@@ -592,75 +401,3 @@ def test_adding_an_attribution_does_not_make_a_new_claim():
     assert claim["origin"] == "draft" and out["stats"]["research_replaced"] == 0
 
 
-def test_word_overlap_supports_a_paraphrase():
-    page = {"url": "https://thecha.org/news/x", "title": "Pettigrew begins",
-            "text": ("Keith Pettigrew previously served as executive director of the District of Columbia "
-                     "Housing Authority, where he developed a three-year recovery plan. ") * 3}
-    claim = "Before CHA, he served as executive director of the Washington D.C. Housing Authority and developed a recovery plan."
-    [res] = cm.match_claims_to_pages([claim], [page], HashEmbed(), threshold=0.99)   # embedding can't pass
-    assert res["supported"] and res["test"] == "words" and res["lexical"] >= cm.LEXICAL_SUPPORT
-
-
-def test_named_page_that_does_not_back_the_claim_is_unconfirmed_not_snippet():
-    import jobs
-    trace = {"pages_read": [{"url": "https://www.thecha.org/news/x", "title": "Pettigrew begins"}],
-             "web_results": [{"url": "https://www.thecha.org/news/x", "title": "Pettigrew begins"}]}
-    entries = {"calibration": {"threshold": 0.5}, "entries": [
-        {"provenance": "web", "kind": "sentence", "passthrough": False,
-         "content": "Pettigrew grew up in public housing and has 30 years of experience (CHA press release, Apr. 20, 2026)."}]}
-    jobs.tag_web_basis(entries, trace, {"https://www.thecha.org/news/x": "Unrelated text about budgets. " * 20}, HashEmbed())
-    e = entries["entries"][0]
-    assert e["web_basis"] == "unconfirmed"
-    assert e["web_best"]["numbers_missing"] == ["30"]
-
-
-def test_research_loop_fetches_through_the_app(tmp_path, monkeypatch):
-    """Drive run_research_agent with a scripted client: search, fetch the same
-    page twice, edit, finalize. No network, no API."""
-    import asyncio
-    import research_agent as ra
-    import page_fetcher as pf
-    monkeypatch.setattr(pf, "CACHE_DIR", tmp_path / "cache")
-    calls = _fake_http(monkeypatch, {"https://thecha.org/board": (200, {"content-type": "text/html"}, HTML)})
-    (tmp_path / "book.md").write_text("# Book\n\n## Key Sources\n\n- **Jane Doe** — director of the agency since 2020.\n")
-
-    B = _FakeBlock
-    script = [
-        B(stop_reason="tool_use", usage=None, content=[
-            B(type="server_tool_use", id="s1", name="web_search", input={"query": "cha board"}),
-            B(type="web_search_tool_result", tool_use_id="s1", content=[
-                B(type="web_search_result", url="https://thecha.org/board", title="Board", page_age="")]),
-            B(type="tool_use", id="t1", name="fetch_page", input={"url": "https://thecha.org/board"}),
-            B(type="tool_use", id="t2", name="fetch_page", input={"url": "https://thecha.org/board"}),
-        ]),
-        B(stop_reason="tool_use", usage=None, content=[
-            B(type="tool_use", id="t3", name="str_replace_based_edit_tool", input={
-                "command": "str_replace", "path": "book.md",
-                "old_str": "- **Jane Doe** — director of the agency since 2020.",
-                "new_str": "- **Jane Doe** — director of the agency since 2020.\n- **Jawanza Malone** — chairs the CHA board as of 2026."}),
-        ]),
-        B(stop_reason="tool_use", usage=None, content=[
-            B(type="tool_use", id="t4", name=ra.FINALIZE_TOOL_NAME, input={"filename": "book.md", "summary": "Added Malone."}),
-        ]),
-    ]
-    sent = []
-
-    class Client:
-        class messages:
-            @staticmethod
-            def stream(**kw):
-                sent.append(kw)
-                return _FakeStream(script[len(sent) - 1])
-    monkeypatch.setattr(ra, "Anthropic", lambda **kw: Client())
-    trace = {}
-    out = asyncio.run(ra.run_research_agent(tmp_path, "book.md", "key", trace=trace))
-    assert "Jawanza Malone" in out and trace["finalized"]
-    assert len(calls) == 1 and trace["repeat_fetches"] == 1
-    assert trace["pages_read"][0]["title"] == "CHA Board" and "text" not in trace["pages_read"][0]
-    assert "Jawanza Malone" in trace["_page_texts"]["https://thecha.org/board"]
-    assert trace["attribution_warnings"] == 1       # the added bullet names no source
-    tool_names = [t["name"] for t in sent[0]["tools"]]
-    assert "fetch_page" in tool_names and "web_fetch" not in tool_names
-    # The second request carries the page text back to the model.
-    results = sent[1]["messages"][-1]["content"]
-    assert any("BEGIN PAGE" in str(r.get("content")) for r in results if isinstance(r, dict))
