@@ -905,8 +905,26 @@
   // ═══════════════════════════════════════════════════════════════════════
   // Boot
   // ═══════════════════════════════════════════════════════════════════════
-  window.addEventListener("focus", () => fetchBooks());
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchBooks(); });
+  // An open tab keeps running the scripts it loaded. When the app has been
+  // updated since, say so, instead of rendering new books with old code.
+  let loadedVersion = null;
+  async function checkVersion() {
+    try {
+      const v = (await (await fetch("/api/version", { cache: "no-store" })).json()).frontend;
+      if (loadedVersion === null) { loadedVersion = v; return; }
+      if (v !== loadedVersion && !document.getElementById("update-banner")) {
+        const bar = document.createElement("div");
+        bar.id = "update-banner";
+        bar.className = "update-banner";
+        bar.innerHTML = 'Beat Book has been updated. <button type="button" class="btn-link">Reload to use the new version</button>';
+        bar.querySelector("button").addEventListener("click", () => location.reload());
+        document.body.prepend(bar);
+      }
+    } catch (e) { /* offline or server restarting: try again on next focus */ }
+  }
+  checkVersion();
+  window.addEventListener("focus", () => { fetchBooks(); checkVersion(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { fetchBooks(); checkVersion(); } });
 
   // Fetch embedding provider config (shows model selector when Ollama is active)
   fetch("/api/embed-config").then(r => r.json()).then(cfg => {

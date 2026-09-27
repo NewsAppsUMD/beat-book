@@ -158,7 +158,27 @@ SANDBOX_ROOT.mkdir(exist_ok=True)
 
 @app.get("/")
 async def root():
-    return FileResponse("static/index.html")
+    # Never cached: the page names the script versions to load, so a reload
+    # must always get the current one.
+    return FileResponse("static/index.html", headers={"Cache-Control": "no-cache"})
+
+
+def _frontend_version() -> str:
+    """A fingerprint of the frontend files. An open tab compares it with the
+    one it loaded, so it can tell the user to reload after an update (a
+    single-page app keeps running its old scripts until it's reloaded)."""
+    import hashlib
+    h = hashlib.sha256()
+    for f in sorted(Path("static").glob("*.*")):
+        if f.suffix in (".js", ".css", ".html"):
+            h.update(f.name.encode())
+            h.update(str(f.stat().st_mtime_ns).encode())
+    return h.hexdigest()[:12]
+
+
+@app.get("/api/version")
+async def frontend_version():
+    return JSONResponse({"frontend": _frontend_version()}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/embed-config")

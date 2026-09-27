@@ -95,6 +95,10 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - The Word export adds "About the sourcing", with counts, the explanation and a "Claims to check" list with reasons, before the Sources section. Books without citation stats are unchanged.
 - On the Bears book: 3 facts have details in no story ("since 1920", "Giants-Jets", "Guaranteed Rate Field"), 43 use details from the stories that no passage states, and 2 name nothing specific.
 
+### Stale browser tabs
+- A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.
+- The reader now removes any marker it doesn't recognize. The app page is served with `Cache-Control: no-cache`. New `GET /api/version` fingerprints the frontend files, and an open tab checks it on focus, showing "Beat Book has been updated. Reload to use the new version" when it changes.
+
 ### Dates tied to the quote
 - The next evaluation doubled output (58 facts, 44 rejections), but three facts said the Bears board voted June 5. It voted Thursday, June 4. The pages were published Friday, June 5, and the earlier "date anywhere on the page" rule let the dateline stand in for the event date.
 - A date in a fact must now be in the quote, or follow from a weekday, "today" or "yesterday" in the quote, counted from the publication date. The publication date comes from the URL, a "Published" line, or a date right after the byline, never the site header. When a quote names several days, the one whose nearby words best match the fact is used. A fact about two events with one date is refused as ambiguous. "As of" the publication date is allowed. A year must be in the quote, belong to a date the quote pins down, or be the publication year for a pinned date.

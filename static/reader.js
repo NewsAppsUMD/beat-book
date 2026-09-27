@@ -900,6 +900,11 @@
         return `<${tag} class="web-badge web-${basis}"${href} title="${escapeHtml(title)}">${b.label}</${tag}>`;
       });
 
+    // Any marker left over (one this version doesn't know, from a newer
+    // book) becomes plain text, never raw "[[PV:...]]" on the page.
+    html = html
+      .replace(/\[\[PV:[^\]]*\]\]/g, '<span class="claim">')
+      .replace(/\[\[(?:WEB|CITE)[^\]]*\]\]/g, '');
     html = insertAfterFirstH1(html, renderSourcingSummary());
     if (Object.keys(sourcesByKey).length > 0) html += renderFootnotesSection(sourcesByKey);
 

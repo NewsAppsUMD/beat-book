@@ -401,3 +401,19 @@ def test_adding_an_attribution_does_not_make_a_new_claim():
     assert claim["origin"] == "draft" and out["stats"]["research_replaced"] == 0
 
 
+
+
+def test_app_page_is_not_cached_and_version_changes_with_the_frontend(tmp_path, monkeypatch):
+    import os, time
+    from fastapi.testclient import TestClient
+    import app as app_mod
+    client = TestClient(app_mod.app)
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    v1 = client.get("/api/version").json()["frontend"]
+    js = app_mod.Path("static/reader.js")
+    st = js.stat()
+    try:
+        os.utime(js, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        assert client.get("/api/version").json()["frontend"] != v1
+    finally:
+        os.utime(js, ns=(st.st_atime_ns, st.st_mtime_ns))

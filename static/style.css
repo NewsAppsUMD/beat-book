@@ -2085,3 +2085,10 @@ button.web-badge:hover { border-color: var(--prov-web); }
 .sourcing-explain { margin: 0.6rem 0 0 !important; font-size: 0.84rem; line-height: 1.5; color: var(--text-muted); }
 .sourcing-explain strong { color: var(--text); }
 #reader-content.show-sourcing .claim-unsupported { cursor: help; }
+
+.update-banner {
+  position: fixed; top: 0; left: 50%; transform: translateX(-50%); z-index: 2000;
+  margin-top: 0.5rem; padding: 0.5rem 0.9rem; border-radius: var(--radius);
+  background: var(--accent-soft); border: 1px solid var(--border-strong); color: var(--text);
+  font-size: 0.88rem; box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+}
