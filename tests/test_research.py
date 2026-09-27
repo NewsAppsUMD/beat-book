@@ -417,3 +417,18 @@ def test_as_of_the_publication_date_is_allowed_and_nothing_else():
         "As of August 10, 2026, Warren said the team's sole focus is Hammond.", quote, page)
     assert "is not in the quote" in rf.check_fact(
         "On August 13, 2026, Warren said the team's sole focus is Hammond.", quote, page)
+
+
+def test_month_and_year_of_publication_are_allowed():
+    page = "Published August 13, 2026. Warren said there is nothing in writing from the state of Illinois."
+    quote = "Warren said there is nothing in writing from the state of Illinois."
+    assert rf.check_fact("In August 2026, Warren said there is nothing in writing from the state of Illinois.", quote, page) is None
+    assert rf.check_fact("By August 2026, Warren said there is nothing in writing from the state of Illinois.", quote, page) is None
+    # Another month, or another year, is still refused.
+    assert "year 2026 is not in the quote" in rf.check_fact(
+        "In July 2026, Warren said there is nothing in writing from the state of Illinois.", quote, page)
+    assert "year 2025 is not in the quote" in rf.check_fact(
+        "In August 2025, Warren said there is nothing in writing from the state of Illinois.", quote, page)
+    # A specific day still needs the quote.
+    assert "aug 12 is not in the quote" in rf.check_fact(
+        "On August 12, 2026, Warren said there is nothing in writing from the state of Illinois.", quote, page)

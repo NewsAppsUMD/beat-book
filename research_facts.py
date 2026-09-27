@@ -385,6 +385,12 @@ def check_fact(fact: str, quote: str, page_text: str, url: str = "") -> Optional
                 if m.group(2):
                     as_of_md.add((pub_m, str(published.day)))
                 as_of_years.add(str(published.year))
+        # A bare month and year matching the publication month ("in August
+        # 2026" in a story published August 13, 2026) dates the fact no more
+        # precisely than the page itself does.
+        for m in re.finditer(rf"\b({_MONTH_RE})\s+((?:19|20)\d{{2}})\b", fact, re.I):
+            if _month_key(m.group(1)) == pub_m and int(m.group(2)) == published.year:
+                as_of_years.add(m.group(2))
     bad = [f"{m} {d}" for m, d in dates
            if (m, d) not in quote_dates and (m, d) not in implied_md and (m, d) not in as_of_md]
     if bad:

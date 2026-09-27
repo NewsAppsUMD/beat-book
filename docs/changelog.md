@@ -87,6 +87,8 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - A date in a fact must now be in the quote, or follow from a weekday, "today" or "yesterday" in the quote, counted from the publication date. The publication date comes from the URL, a "Published" line, or a date right after the byline, never the site header. When a quote names several days, the one whose nearby words best match the fact is used. A fact about two events with one date is refused as ambiguous. "As of" the publication date is allowed. A year must be in the quote, belong to a date the quote pins down, or be the publication year for a pinned date.
 - If `after_line` matches no line, the fact is placed at the end of the section, not rejected.
 - Replaying that evaluation's 58 accepted facts: 47 still pass, and all three wrong Bears dates are rejected. The other eight carry dates or years their quotes don't give. Two of the nine placement rejections are now accepted.
+- The evaluation after that (12:49 run): 6 of 6 runs met every hard target, with 48 facts and 42 rejections. No wrong dates got through; the model resubmitted the Bears vote as "early June 2026". All nine facts with inferred dates were checked by hand, and every one is correct. Of the 19 date and year rejections, 13 were recovered on resubmission. Placement rejections fell from 9 to 0.
+- A bare month and year matching the publication month, as in "in August 2026" in a story published August 13, 2026, is now allowed. Replaying that run recovers one fact, submitted twice. Two other August facts now pass the date check but still fail the key-word check.
 
 ---
 
