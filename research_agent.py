@@ -122,8 +122,9 @@ def build_tools() -> List[Dict[str, Any]]:
             "description": (
                 "Submit one fact to add to the beat book. The application checks that "
                 "`quote` appears verbatim on the page at `url` (which you must have "
-                "fetched), and that every figure and most key words in `fact` appear in "
-                "the quote. It then inserts the fact with an attribution it writes from "
+                "fetched), that every figure and most key words in `fact` appear in the "
+                "quote (dates may come from elsewhere on the page, such as its dateline), "
+                "and it then inserts the fact with an attribution it writes from "
                 "the page. You get back 'accepted' or the reason it was rejected; fix "
                 "and resubmit if you can. Existing text in the beat book cannot be "
                 f"changed. At most {MAX_FACTS_PER_RUN} facts per run."
@@ -543,7 +544,8 @@ class FactDesk:
         after_line = str(inp.get("after_line") or "").strip()
 
         def reject(reason: str) -> str:
-            self.trace["facts_rejected"].append({"fact": fact[:400], "url": url, "reason": reason})
+            self.trace["facts_rejected"].append({"fact": fact[:400], "quote": quote[:700],
+                                                 "url": url, "reason": reason})
             return f"Rejected: {reason}"
 
         if len(self.accepted) >= MAX_FACTS_PER_RUN:

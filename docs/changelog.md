@@ -67,6 +67,13 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - Removed: the shell sandbox (`shell_sandbox.py`), `RESEARCH_BASH`, attribution warnings, and similarity matching of web claims against pages.
 - New `evals/research_eval.py` builds fixed corpora several times and checks hard targets. Every book must finish, every web line must be quoted, no draft claims may be lost, every quote must re-verify against the cached page, and research must finalize. It also checks a soft target of at least 2 facts per book. `--dry-run` uses scripted models. A negative control, which slipped an unchecked line into the book and dropped a draft line, failed both targets as intended.
 
+### After the first real evaluation run
+- One housing run added 6 checked facts, rejected 13 submissions and lost no story claims. It missed one target: a two-sentence fact placed as a sub-bullet was reported as unverified. The mapping now indexes whole facts as well as their sentences, and all 6 map to their quotes.
+- Dates and years in a fact may come from anywhere on the page, not just the quote. Four good facts had been rejected because they took the year from the dateline. Every other figure must still be in the quote.
+- Facts made of figures and names pass at a 25% key-word overlap, down from 50%, when every figure and name is in the quote. Results-table rows had been rejected for lacking verbs.
+- Rejections now record the submitted quote.
+- The evaluation reuses the first run's draft for later runs of the same corpus, or an earlier evaluation's drafts with `--drafts-from`.
+
 ---
 
 ## Session: June 5, 2026 — App shell + background library

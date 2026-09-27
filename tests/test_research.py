@@ -248,3 +248,38 @@ def test_multi_sentence_fact_placed_as_a_bullet_maps_to_its_quote():
     index = cm.embed_source_stories([{"title": "t", "content": "The housing authority board met. " * 40}], client)
     entries = cm.markdown_to_beatbook_entries(final, index, client, draft_markdown=DRAFT)
     assert jobs.tag_web_facts(entries, {"facts_accepted": [fact]}) == {"quoted": 1, "unverified": 0}
+
+
+# ── Relaxed rules: dates from the page, figure-and-name facts ──────────────
+
+RESULTS_PAGE = ("Posted March 18, 2026. Cook County Board President, Democratic primary, certified results. "
+                "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97% Precincts reporting 100%.")
+
+
+def test_table_row_quote_supports_a_figures_and_names_fact():
+    quote = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
+    fact = "In the certified primary results, Preckwinkle received 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
+    assert rf.check_fact(fact, quote, RESULTS_PAGE) is None
+
+
+def test_table_rule_still_needs_every_name_and_figure():
+    quote = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
+    # A name the quote doesn't have: back to the strict bar.
+    assert "says more" in rf.check_fact(
+        "In the certified primary results, Preckwinkle beat Reilly and Kaegi with 470,960 votes (69.03%).", quote, RESULTS_PAGE)
+    # A figure the quote doesn't have.
+    assert "not in the quote: 480960" in rf.check_fact(
+        "Preckwinkle received 480,960 votes (69.03%) to Reilly's 211,278 (30.97%).", quote, RESULTS_PAGE)
+    # Narrative facts without figures keep the strict bar.
+    assert "says more" in rf.check_fact(
+        "Preckwinkle and Reilly traded accusations about property tax delays all spring.", quote, RESULTS_PAGE)
+
+
+def test_dates_may_come_from_elsewhere_on_the_page():
+    quote = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
+    fact = "As of March 18, 2026, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
+    assert rf.check_fact(fact, quote, RESULTS_PAGE) is None
+    bad = "As of April 2, 2026, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
+    assert "not on the page: apr 2" in rf.check_fact(bad, quote, RESULTS_PAGE)
+    assert "not on the page: 2025" in rf.check_fact(
+        "In 2025, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%).", quote, RESULTS_PAGE)

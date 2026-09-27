@@ -21,6 +21,12 @@ Targets (hard: a miss fails the run):
   T5  research records a summary (it finalized)
 Soft target (reported, doesn't fail a run):
   S1  research adds at least 2 facts per book on average for each corpus
+
+Drafts: by default the first run of each corpus writes a draft and later
+runs reuse it, so runs differ only in research and each costs about 3.5
+minutes instead of 5.5. --drafts-from <results dir> reuses the drafts from
+an earlier evaluation for every run; --new-drafts writes a fresh draft for
+every run.
 """
 
 from __future__ import annotations
@@ -145,7 +151,25 @@ def build_pipeline(name: str, stories: List[dict], embed, chat, dry: bool):
     return run_pipeline(stories, embed, chat, None)
 
 
-async def one_run(name: str, pr, run_i: int, args, embed, chat, key: str) -> Dict[str, Any]:
+def replay_agent(draft: str):
+    """Stand-in for agent.run_agent that hands back a saved draft, so a run
+    exercises only research and citation matching."""
+    async def run_agent(pipeline_result, provider, on_message, on_beat_book, *a, trace=None, **kw):
+        if trace is not None:
+            trace.update({"replayed_draft": True, "stories_read": [], "tool_calls": [], "model_calls": []})
+        await on_beat_book("replayed.md", draft)
+    return run_agent
+
+
+def saved_draft(results_dir: Path, name: str) -> str:
+    found = sorted((results_dir / "books").glob(f"eval_{name}_1_*.draft.md"))
+    if not found:
+        sys.exit(f"No saved draft for {name} in {results_dir}/books")
+    return found[0].read_text()
+
+
+async def one_run(name: str, pr, run_i: int, args, embed, chat, key: str,
+                  draft: str | None = None) -> Dict[str, Any]:
     from agent import _derive_filename
     stem_base = f"eval_{name}_{run_i}_" + _derive_filename(pr)[:-3]
     rec = store.create_book(title=f"eval {name} #{run_i}", desired_stem=stem_base,
@@ -160,8 +184,14 @@ async def one_run(name: str, pr, run_i: int, args, embed, chat, key: str) -> Dic
             print(f"    research: {ev.get('detail', '')[:120]}", flush=True)
 
     t0 = time.time()
-    await jobs.run_generation(rec["id"], pr, list(pr.topics), emit, key, embed,
-                              style=args.style, target_words=LENGTHS[args.length], chat_provider=chat)
+    real_agent = jobs.run_agent
+    if draft is not None:
+        jobs.run_agent = replay_agent(draft)
+    try:
+        await jobs.run_generation(rec["id"], pr, list(pr.topics), emit, key, embed,
+                                  style=args.style, target_words=LENGTHS[args.length], chat_provider=chat)
+    finally:
+        jobs.run_agent = real_agent
     book = store.get_book(rec["id"])
     if book["status"] != "ready":
         return {"status": book["status"], "errors": errors + [book.get("error", "")], "passed": False,
@@ -169,6 +199,7 @@ async def one_run(name: str, pr, run_i: int, args, embed, chat, key: str) -> Dic
     res = measure(jobs.OUTPUT_DIR, book["stem"], time.time() - t0)
     res["errors"] = res["errors"] + errors
     res["stem"] = book["stem"]
+    res["draft"] = "reused" if draft is not None else "written"
     return res
 
 
@@ -179,12 +210,12 @@ def report(results: Dict[str, List[Dict[str, Any]]], args, out_dir: Path) -> str
     all_runs = [r for rs in results.values() for r in rs]
     passed = sum(1 for r in all_runs if r.get("passed"))
     lines += [f"**{passed} of {len(all_runs)} runs met every hard target.**", ""]
-    lines += ["| Corpus | Run | Pass | Facts added | Rejected | Web lines unverified | Draft claims lost | Pages read | Minutes |",
-              "|---|---|---|---|---|---|---|---|---|"]
+    lines += ["| Corpus | Run | Draft | Pass | Facts added | Rejected | Web lines unverified | Draft claims lost | Pages read | Minutes |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
     for name, rs in results.items():
         for i, r in enumerate(rs, 1):
             lost = (r.get("draft_claims_replaced", 0) or 0) + (0 if r.get("draft_lines_preserved", True) else 1)
-            lines.append(f"| {name} | {i} | {'yes' if r.get('passed') else 'NO'} | {r.get('facts_accepted', '—')} | "
+            lines.append(f"| {name} | {i} | {r.get('draft', '—')} | {'yes' if r.get('passed') else 'NO'} | {r.get('facts_accepted', '—')} | "
                          f"{r.get('facts_rejected', '—')} | {r.get('web_unverified', '—')} | {lost} | "
                          f"{r.get('pages_read', '—')} | {round((r.get('seconds') or 0) / 60, 1)} |")
     lines += ["", "## Targets", ""]
@@ -311,6 +342,8 @@ def main() -> None:
     ap.add_argument("--style", default="scannable", choices=["narrative", "scannable", "briefing"])
     ap.add_argument("--dry-run", action="store_true", help="scripted models, no API calls")
     ap.add_argument("--out", default="")
+    ap.add_argument("--new-drafts", action="store_true", help="write a fresh draft for every run")
+    ap.add_argument("--drafts-from", default="", help="reuse drafts from an earlier results directory")
     args = ap.parse_args()
 
     out_dir = Path(args.out or f"evals/results/{time.strftime('%Y%m%d-%H%M%S')}{'-dry' if args.dry_run else ''}")
@@ -334,10 +367,13 @@ def main() -> None:
         print(f"{name}: {len(stories)} stories; building topics…", flush=True)
         pr = build_pipeline(name, stories, embed, chat, args.dry_run)
         results[name] = []
+        draft = saved_draft(Path(args.drafts_from), name) if args.drafts_from else None
         for i in range(1, args.runs + 1):
-            print(f"  run {i}/{args.runs}…", flush=True)
+            print(f"  run {i}/{args.runs}{' (reusing draft)' if draft else ''}…", flush=True)
             try:
-                res = asyncio.run(one_run(name, pr, i, args, embed, chat, key))
+                res = asyncio.run(one_run(name, pr, i, args, embed, chat, key, draft))
+                if draft is None and not args.new_drafts and res.get("stem"):
+                    draft = (jobs.OUTPUT_DIR / f"{res['stem']}.draft.md").read_text()
             except Exception as e:   # one broken run must not end the evaluation
                 res = {"status": "crashed", "errors": [f"{type(e).__name__}: {e}"], "passed": False,
                        "targets": {"T1 ready": False}}

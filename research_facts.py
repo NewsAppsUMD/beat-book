@@ -35,6 +35,11 @@ MAX_QUOTE_CHARS = 700
 MIN_FACT_WORDS = 6
 MAX_FACT_WORDS = 70
 MIN_KEYWORD_OVERLAP = 0.5
+# Lower bar for facts stated as figures and names, such as results-table
+# rows ("Toni Preckwinkle 470,960 69.03%"), whose quotes lack the verbs a
+# sentence uses. Applies only when the fact has figures, and every figure and
+# every name in it is in the quote.
+MIN_KEYWORD_OVERLAP_TABULAR = 0.25
 MAX_FACTS_PER_RUN = 25
 
 _STOPWORDS = set("""a an and are as at be been but by for from had has have he her his in into is
@@ -77,8 +82,55 @@ def figures_in(text: str) -> List[str]:
     return out
 
 
+_MONTH_RE = r"(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\.?"
+_DATE_RE = re.compile(rf"\b({_MONTH_RE})\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:,?\s+((?:19|20)\d{{2}}))?\b", re.I)
+_YEAR_RE = re.compile(r"\b(?:19|20)\d{2}\b")
+
+
+def _month_key(m: str) -> str:
+    return m.lower().rstrip(".")[:3]
+
+
+def _dates_on(text: str) -> set:
+    """{("mar", "17")} for every "March 17" / "Mar. 17, 2026" in the text."""
+    t = unicodedata.normalize("NFKC", text or "")
+    return {(_month_key(m.group(1)), str(int(m.group(2)))) for m in _DATE_RE.finditer(t)}
+
+
+def _split_dates(text: str) -> Tuple[str, List[Tuple[str, str]], List[str]]:
+    """Remove dates and years from a statement. Returns (rest, [(month,
+    day)], [years]) so they can be checked against the whole page, not
+    just the quote: writers routinely date a fact from the page's dateline."""
+    t = unicodedata.normalize("NFKC", text or "")
+    dates, years = [], []
+    def take_date(m):
+        dates.append((_month_key(m.group(1)), str(int(m.group(2)))))
+        if m.group(3):
+            years.append(m.group(3))
+        return " "
+    t = _DATE_RE.sub(take_date, t)
+    def take_year(m):
+        years.append(m.group())
+        return " "
+    t = _YEAR_RE.sub(take_year, t)
+    return t, dates, years
+
+
+def proper_names(text: str) -> List[str]:
+    """Capitalized words that are likely names ("Preckwinkle", "Reilly"),
+    skipping each sentence's first word and common capitalized words."""
+    out = []
+    for sent in re.split(r"(?<=[.!?;:])\s+", _plain_text(text or "")):
+        words = re.findall(r"[A-Za-z][A-Za-z'-]*", sent)
+        for w in words[1:]:
+            if w[0].isupper() and w.lower() not in _STOPWORDS and len(w) > 2:
+                out.append(w.lower().removesuffix("'s"))
+    return out
+
+
 def key_words(text: str) -> List[str]:
     words = re.findall(r"[a-z][a-z'-]{2,}", normalize_for_quote(_plain_text(text)))
+    words = [re.sub(r"'s$|'$", "", w) for w in words]      # Reilly's → reilly
     return [w for w in words if w not in _STOPWORDS]
 
 
@@ -155,7 +207,18 @@ def check_fact(fact: str, quote: str, page_text: str) -> Optional[str]:
     if normalize_for_quote(quote) not in normalize_for_quote(page_text):
         return ("the quote does not appear on that page. Copy it exactly from the "
                 "page text you fetched, without rewording or joining separate passages.")
-    missing = [f for f in figures_in(fact) if f not in figures_in(quote)]
+    # Dates and years may come from anywhere on the page (its dateline, say);
+    # every other figure must be in the quote itself.
+    rest, dates, years = _split_dates(fact)
+    page_dates, page_years = _dates_on(page_text), set(_YEAR_RE.findall(page_text or ""))
+    missing = [f"{m} {d}" for m, d in dates if (m, d) not in page_dates]
+    missing += [y for y in years if y not in page_years]
+    if missing:
+        return (f"these dates in the fact are not on the page: {', '.join(missing)}. "
+                "Use only dates the page gives.")
+    quote_figures = figures_in(_split_dates(quote)[0]) + figures_in(quote)
+    figures = figures_in(rest)
+    missing = [f for f in figures if f not in quote_figures]
     if missing:
         return (f"these figures in the fact are not in the quote: {', '.join(missing)}. "
                 "Quote the passage that states them, or remove them from the fact.")
@@ -163,7 +226,11 @@ def check_fact(fact: str, quote: str, page_text: str) -> Optional[str]:
     if words:
         qwords = set(key_words(quote))
         overlap = sum(1 for w in words if w in qwords) / len(words)
-        if overlap < MIN_KEYWORD_OVERLAP:
+        bar = MIN_KEYWORD_OVERLAP
+        names = proper_names(rest)       # dates removed, so "March" isn't a name
+        if figures and all(n in qwords for n in names):
+            bar = MIN_KEYWORD_OVERLAP_TABULAR
+        if overlap < bar:
             return ("the fact says more than the quote does. Restate only what the "
                     "quote says, or quote the passage that supports the rest.")
     return None

@@ -193,8 +193,8 @@ If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely
 The research step (`research_agent.py`, Claude Sonnet 4.6) adds current context from the web, but it cannot edit the beat book. It reads the draft, searches the web, and fetches pages. For each fact it wants to add, it submits the fact with a verbatim quote from a page it fetched. The app then checks each submission (`research_facts.py`):
 
 - The quote must appear on that page. Whitespace, quote marks, dashes and Markdown formatting are ignored.
-- Every figure in the fact, including dollar amounts, percentages and years, must be in the quote.
-- Most of the fact's key words must be in the quote, so the fact can't say more than its source.
+- Every figure in the fact, such as dollar amounts, counts and percentages, must be in the quote. Dates and years may come from elsewhere on the page, such as its dateline, but must appear on it.
+- Most of the fact's key words must be in the quote, so the fact can't say more than its source. A fact made of figures and names, like a results-table row, passes with fewer matching words, as long as every figure and name is in the quote.
 
 The app inserts accepted facts itself and writes the attribution from the page. A fact goes under the bullet it adds to, after the paragraph it extends, or at the end of its section. No existing line changes, so nothing from your stories can be lost. Rejected submissions go back to the model with the reason, so it can fix them. The build record lists every accepted fact with its quote, and every rejection with its reason. The agent has no shell and no file access.
 
@@ -206,7 +206,7 @@ To test the research step, run the evaluation. It builds each fixed corpus sever
 .venv/bin/python evals/research_eval.py --dry-run
 ```
 
-`--dry-run` uses scripted models and makes no API calls. Without it, the script calls the real models (three corpora, two runs each by default) and writes a report to `evals/results/`.
+`--dry-run` uses scripted models and makes no API calls. Without it, the script calls the real models (three corpora, two runs each by default) and writes a report to `evals/results/`. The first run of each corpus writes a draft, and later runs reuse it, so runs differ only in research and each takes about 3.5 minutes. `--drafts-from evals/results/<dir>` reuses an earlier evaluation's drafts for every run. `--new-drafts` writes a fresh draft each time.
 
 ### Selecting the embedding model in the UI
 
