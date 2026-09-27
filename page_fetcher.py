@@ -9,8 +9,8 @@ Running it here lets the app:
 - serve repeats from a cache: within a run, a second request for a page gets
   a short note instead of the page again; across runs, pages are cached on
   disk for CACHE_TTL_SECONDS so the same bio is not fetched for every book;
-- keep exactly the text the model read, so web-added claims can be checked
-  against it (see jobs.tag_web_basis);
+- keep exactly the text the model read, so each fact it submits can be
+  checked against its quote (see research_facts.check_fact);
 - decide what may be fetched: only http(s) URLs that have already appeared
   in the run (search results, pages already read, the beat book itself), a
   rule borrowed from the server tool that limits where a manipulated model
