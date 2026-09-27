@@ -22,6 +22,7 @@ text, and the app does the copying.
 
 from __future__ import annotations
 
+import datetime
 import re
 import time
 import unicodedata
@@ -255,6 +256,91 @@ def _url_dates(url: str) -> Tuple[set, set]:
     return {(_MONTHS[int(m.group(2)) - 1], str(int(m.group(3))))}, {m.group(1)}
 
 
+_MONTH_NUM = {m: i + 1 for i, m in enumerate("jan feb mar apr may jun jul aug sep oct nov dec".split())}
+_WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_PUBLISHED_ON_RE = re.compile(
+    rf"\b(?:published|posted|updated|last updated)\b[^0-9a-z]{{0,20}}(?:on\s+)?({_MONTH_RE})\s+(\d{{1,2}}),?\s+((?:19|20)\d{{2}})",
+    re.I)
+
+
+# A date shortly after a byline ("by Hannah Meisel ... May 21, 2026"), the
+# layout many news sites use. Only a byline-anchored date counts: site
+# headers often carry today's date, which is not the story's.
+_BYLINE_DATE_RE = re.compile(
+    rf"\bby\s+[A-Z][^\n]{{1,60}}(?:\s+(?:and|&)\s+[A-Z][^\n]{{1,60}})?[\s|·,]{{1,40}}"
+    rf"(?i:(?:(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+)?({_MONTH_RE}))\s+(\d{{1,2}}),?\s+((?:19|20)\d{{2}})")
+
+
+def publication_date(url: str, page_text: str) -> Optional[datetime.date]:
+    """The page's publication date: from its URL (/2026/03/17/), a
+    "Published June 5, 2026" dateline, or a date right after the byline."""
+    m = _URL_DATE_RE.search(urlparse(url or "").path)
+    if m:
+        try:
+            return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    text = unicodedata.normalize("NFKC", page_text or "")
+    m = _PUBLISHED_ON_RE.search(text) or _BYLINE_DATE_RE.search(text)
+    if m:
+        try:
+            return datetime.date(int(m.group(3)), _MONTH_NUM[_month_key(m.group(1))], int(m.group(2)))
+        except (KeyError, ValueError):
+            pass
+    return None
+
+
+_RELATIVE_RE = re.compile(
+    r"\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tonight|yesterday)\b", re.I)
+_WINDOW_WORDS = 4
+
+
+def _stem(w: str) -> str:
+    return w[:5]
+
+
+def dates_implied_by(quote: str, published: Optional[datetime.date], fact: str = "") -> set:
+    """Dates a quote pins down relative to the publication date: "Thursday"
+    in a story published Friday, June 5 is Thursday, June 4; "yesterday" is
+    the day before; "today" or "tonight" is the day itself. Returns
+    {(month, day, year)}.
+
+    When the quote names several days ("Friday's announcement ... Thursday's
+    vote"), only the one whose nearby words best match the fact counts, so
+    a fact about the vote can't borrow the announcement's date."""
+    if published is None:
+        return set()
+    q = quote or ""
+    words = re.findall(r"[A-Za-z']+", q.lower())
+    hits = []
+    for i, w in enumerate(words):
+        m = _RELATIVE_RE.fullmatch(re.sub(r"'s$", "", w))
+        if not m:
+            continue
+        name = m.group(1).lower()
+        if name in ("today", "tonight"):
+            d = published
+        elif name == "yesterday":
+            d = published - datetime.timedelta(days=1)
+        else:
+            back = (published.weekday() - _WEEKDAYS.index(name)) % 7   # 0 = publication day
+            d = published - datetime.timedelta(days=back)
+        window = words[max(0, i - _WINDOW_WORDS):i] + words[i + 1:i + 1 + _WINDOW_WORDS]
+        hits.append((d, {_stem(x) for x in window if x not in _STOPWORDS}))
+    if not hits:
+        return set()
+    days = {d for d, _ in hits}
+    if len(days) > 1 and fact:
+        fact_stems = {_stem(w) for w in key_words(fact)}
+        scored = [(len(ctx & fact_stems), d) for d, ctx in hits]
+        best = max(score for score, _ in scored)
+        days = {d for score, d in scored if score == best} if best > 0 else set()
+    return {(_MONTHS_SHORT[d.month - 1], str(d.day), str(d.year)) for d in days}
+
+
+_MONTHS_SHORT = "jan feb mar apr may jun jul aug sep oct nov dec".split()
+
+
 def check_fact(fact: str, quote: str, page_text: str, url: str = "") -> Optional[str]:
     """Return None if the fact is backed by the quote and the quote is on the
     page, else a reason the model can act on. `url` lets a date in the page's
@@ -277,17 +363,47 @@ def check_fact(fact: str, quote: str, page_text: str, url: str = "") -> Optional
     parts, why = locate_quote(quote, page_text)
     if parts is None:
         return why
-    # Dates and years may come from anywhere on the page (its dateline, say);
-    # every other figure must be in the quote itself.
+    # A date in the fact must be in the quote, or be pinned down by it: a
+    # weekday, "today" or "yesterday" in the quote, counted from the page's
+    # publication date. A date merely appearing somewhere on the page is not
+    # enough: a Friday story's dateline is not the date of Thursday's vote.
     rest, dates, years = _split_dates(fact)
-    url_dates, url_years = _url_dates(url)
-    page_dates = _dates_on(page_text) | url_dates
-    page_years = set(_YEAR_RE.findall(page_text or "")) | url_years
-    missing = [f"{m} {d}" for m, d in dates if (m, d) not in page_dates]
-    missing += [y for y in years if y not in page_years]
-    if missing:
-        return (f"these dates in the fact are not on the page: {', '.join(missing)}. "
-                "Use only dates the page gives.")
+    quote_dates = _dates_on(quote)
+    quote_years = set(_YEAR_RE.findall(quote or ""))
+    published = publication_date(url, page_text)
+    implied = dates_implied_by(quote, published, rest)
+    implied_md = {(m, d) for m, d, _ in implied}
+    # "As of <publication date>" states something at the time the page was
+    # published, which the page itself establishes.
+    as_of_md, as_of_years = set(), set()
+    if published is not None:
+        pub_m = _MONTHS_SHORT[published.month - 1]
+        for m in re.finditer(rf"\bas of\s+({_MONTH_RE})(?:\s+(\d{{1,2}})(?!\d))?,?(?:\s+((?:19|20)\d{{2}}))?", fact, re.I):
+            day_ok = m.group(2) is None or int(m.group(2)) == published.day
+            year_ok = m.group(3) is None or int(m.group(3)) == published.year
+            if _month_key(m.group(1)) == pub_m and day_ok and year_ok:
+                if m.group(2):
+                    as_of_md.add((pub_m, str(published.day)))
+                as_of_years.add(str(published.year))
+    bad = [f"{m} {d}" for m, d in dates
+           if (m, d) not in quote_dates and (m, d) not in implied_md and (m, d) not in as_of_md]
+    if bad:
+        hint = ""
+        if published is not None and implied:
+            said = ", ".join(f"{m.title()} {d}" for m, d, _ in sorted(implied))
+            hint = (f" The page was published {published.strftime('%b %-d, %Y')}; the weekday "
+                    f"or relative day in the quote points to {said}.")
+        return (f"the date {', '.join(bad)} is not in the quote.{hint} Quote the passage that "
+                "gives the date, or use only the date the quote supports.")
+    # Years: in the quote, or the year of a date the quote pins down, or the
+    # publication year when the fact dates something the quote describes.
+    ok_years = quote_years | {y for _, _, y in implied} | as_of_years
+    if published is not None and (dates or implied):
+        ok_years.add(str(published.year))
+    bad_years = [y for y in years if y not in ok_years]
+    if bad_years:
+        return (f"the year {', '.join(bad_years)} is not in the quote. Quote the passage that "
+                "gives it, or leave it out.")
     quote_figures = figures_in(_split_dates(quote)[0]) + figures_in(quote)
     figures = figures_in(rest)
     missing = [f for f in figures if f not in quote_figures]
@@ -358,10 +474,20 @@ def find_placement(markdown: str, section: str, after_line: str) -> Optional[str
         return (f"there is no section or subsection named “{section}”. Sections: "
                 + "; ".join(sections(markdown))
                 + (". Subsections: " + "; ".join(subs) if subs else "") + ".")
-    if after_line and _target_line(lines, bounds, after_line) is None:
-        return ("`after_line` does not match the start of any line in that section. "
-                "Copy the first words of an existing paragraph or bullet exactly, or leave it empty.")
     return None
+
+
+def placement_note(markdown: str, section: str, after_line: str) -> str:
+    """A note when `after_line` matches no line in the section; the fact
+    then goes at the end of the section instead of being rejected."""
+    if not after_line:
+        return ""
+    lines = markdown.split("\n")
+    bounds = _section_bounds(lines, section)
+    if bounds is not None and _target_line(lines, bounds, after_line) is None:
+        return (" `after_line` didn't match the start of any line in that section, so it "
+                "was placed at the end of the section.")
+    return ""
 
 
 def _target_line(lines: List[str], bounds: Tuple[int, int], after_line: str) -> Optional[int]:

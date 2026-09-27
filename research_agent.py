@@ -43,6 +43,7 @@ from research_facts import (
     find_placement,
     insert_facts,
     locate_quote,
+    placement_note,
     sections,
     subsections,
 )
@@ -125,7 +126,8 @@ def build_tools() -> List[Dict[str, Any]]:
                 "Submit one fact to add to the beat book. The application checks that "
                 "`quote` appears verbatim on the page at `url` (which you must have "
                 "fetched), that every figure and most key words in `fact` appear in the "
-                "quote (dates may come from elsewhere on the page, such as its dateline), "
+                "quote (a date must be in the quote, or follow from a weekday like "
+                "'Thursday' in it counted from the page's publication date), "
                 "and it then inserts the fact with an attribution it writes from "
                 "the page. You get back 'accepted' or the reason it was rejected; fix "
                 "and resubmit if you can. Existing text in the beat book cannot be "
@@ -148,7 +150,8 @@ def build_tools() -> List[Dict[str, Any]]:
                         "e.g. 'Chicago Sun-Times' or 'Chicago Housing Authority'.")},
                     "published": {"type": "string", "description": (
                         "The page's publication date if the page states one, as 'Mon YYYY' "
-                        "or 'Mon D, YYYY'. Leave empty if unknown.")},
+                        "or 'Mon D, YYYY'. Leave empty if unknown. This dates the page, not "
+                        "the event: an event's date must come from the quote.")},
                     "section": {"type": "string", "description": (
                         "The exact heading of the section or subsection it belongs in, "
                         "from the lists in the first message.")},
@@ -587,7 +590,10 @@ class FactDesk:
         }
         self.accepted.append(record)
         self.trace["facts_accepted"].append(record)
-        return f"Accepted as fact #{record['id']}. It will read: {record['text']}"
+        note = placement_note(self.draft, section, after_line)
+        if note:
+            record["after_line"] = ""
+        return f"Accepted as fact #{record['id']}. It will read: {record['text']}{note}"
 
     def final_markdown(self) -> str:
         return insert_facts(self.draft, self.accepted)

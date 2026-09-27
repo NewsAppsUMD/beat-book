@@ -117,7 +117,9 @@ def test_insertion_never_changes_existing_lines():
 
 def test_placement_errors_are_explained():
     assert "no section or subsection named" in rf.find_placement(DRAFT, "Budget", "")
-    assert "does not match" in rf.find_placement(DRAFT, "Beat Overview", "Nothing like this line")
+    # An unmatched after_line no longer rejects: the fact goes at section end.
+    assert rf.find_placement(DRAFT, "Beat Overview", "Nothing like this line") is None
+    assert "placed at the end of the section" in rf.placement_note(DRAFT, "Beat Overview", "Nothing like this line")
     assert rf.find_placement(DRAFT, "beat overview", "") is None      # case-insensitive heading
 
 
@@ -275,14 +277,6 @@ def test_table_rule_still_needs_every_name_and_figure():
         "Preckwinkle and Reilly traded accusations about property tax delays all spring.", quote, RESULTS_PAGE)
 
 
-def test_dates_may_come_from_elsewhere_on_the_page():
-    quote = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
-    fact = "As of March 18, 2026, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
-    assert rf.check_fact(fact, quote, RESULTS_PAGE) is None
-    bad = "As of April 2, 2026, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
-    assert "not on the page: apr 2" in rf.check_fact(bad, quote, RESULTS_PAGE)
-    assert "not on the page: 2025" in rf.check_fact(
-        "In 2025, certified results showed Preckwinkle with 470,960 votes (69.03%) to Reilly's 211,278 (30.97%).", quote, RESULTS_PAGE)
 
 
 # ── Excerpted quotes, extraction spacing, subsections, URL dates ───────────
@@ -341,9 +335,85 @@ def test_facts_can_go_under_a_subsection():
     assert "Subsections: Board of Review Elections; Stadium Fight" in why
 
 
-def test_a_date_in_the_url_counts_as_on_the_page():
+
+# ── Dates must come from the quote, or follow from it ──────────────────────
+
+BEARS_PAGE = ("By Patrick Finley. Published June 5, 2026 at 1:30 PM CDT. What made Friday's "
+              "announcement unique was Thursday's board of directors vote, which hadn't happened "
+              "at any other point in the past three years.")
+BEARS_QUOTE = "What made Friday's announcement unique was Thursday's board of directors vote"
+
+
+def test_publication_date_is_not_the_event_date():
+    """Regression: the evaluation accepted "voted on June 5" from a page
+    published June 5 whose quote says the vote was Thursday (June 4)."""
+    why = rf.check_fact("The Bears' board of directors vote was on June 5, 2026, before the announcement.",
+                        BEARS_QUOTE, BEARS_PAGE, "https://www.nprillinois.org/illinois/2026-06-05/bears-board")
+    assert why and "jun 5 is not in the quote" in why and "Jun 4" in why
+    assert rf.check_fact("The Bears' board of directors vote was on June 4, before Friday's announcement.",
+                         BEARS_QUOTE, BEARS_PAGE, "https://www.nprillinois.org/illinois/2026-06-05/bears-board") is None
+
+
+def test_dateline_alone_supplies_the_publication_date():
+    # No date in the URL: "Published June 5, 2026" in the text is used.
+    assert rf.publication_date("https://example.org/bears", BEARS_PAGE) == __import__("datetime").date(2026, 6, 5)
+    assert rf.check_fact("The Bears' board of directors vote was on June 4, before Friday's announcement.",
+                         BEARS_QUOTE, BEARS_PAGE, "https://example.org/bears") is None
+
+
+def test_weekday_counts_back_from_publication_and_today_is_the_day_itself():
+    page = "Posted March 17, 2026. Voters went to the polls today in the Cook County primary, with turnout of 38 percent."
+    quote = "Voters went to the polls today in the Cook County primary, with turnout of 38 percent."
+    assert rf.check_fact("Voters went to the polls on March 17, 2026 in the Cook County primary, with 38 percent turnout.",
+                         quote, page) is None
+    assert "mar 16 is not in the quote" in rf.check_fact(
+        "Voters went to the polls on March 16, 2026 in the Cook County primary, with 38 percent turnout.", quote, page)
+
+
+def test_date_without_support_in_the_quote_is_rejected():
+    page = "Posted March 18, 2026. Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
     quote = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
-    page = "Toni Preckwinkle 470,960 69.03% Brendan Reilly 211,278 30.97%"
-    fact = "In the March 17 primary, Preckwinkle received 470,960 votes (69.03%) to Reilly's 211,278 (30.97%)."
-    assert "mar 17" in rf.check_fact(fact, quote, page)
-    assert rf.check_fact(fact, quote, page, "https://chicago.suntimes.com/elections/2026/03/17/cook-county") is None
+    assert "is not in the quote" in rf.check_fact(
+        "On March 16, 2026, Preckwinkle had 470,960 votes (69.03%) to Reilly's 211,278 (30.97%).", quote, page)
+    assert "year 2025 is not in the quote" in rf.check_fact(
+        "In 2025, Preckwinkle had 470,960 votes (69.03%) to Reilly's 211,278 (30.97%).", quote, page)
+    # A date the quote itself gives is fine.
+    q2 = "On March 17, Toni Preckwinkle took 470,960 votes, or 69.03%, to Brendan Reilly's 211,278."
+    assert rf.check_fact("On March 17, 2026, Preckwinkle took 470,960 votes (69.03%) to Reilly's 211,278.",
+                         q2, "Posted March 18, 2026. " + q2) is None
+
+
+def test_announcement_date_is_not_borrowed_for_the_vote():
+    # Friday = the announcement; the vote is Thursday. "June 5 vote" must fail
+    # even though "Friday" in the quote points to June 5.
+    why = rf.check_fact("The Bears' board of directors vote was on June 5, before Friday's announcement.",
+                        BEARS_QUOTE, BEARS_PAGE, "https://example.org/bears")
+    assert why and "jun 5 is not in the quote" in why
+    # A fact only about the announcement can be dated June 5 (Friday)...
+    assert rf.check_fact("The announcement was made on June 5 and was unique, the story says.",
+                         BEARS_QUOTE, BEARS_PAGE, "https://example.org/bears") is None
+    # ...but one date for a fact about both events is ambiguous and is refused.
+    assert rf.check_fact("The Bears made their announcement on June 5, the day after the board of directors vote.",
+                         BEARS_QUOTE, BEARS_PAGE, "https://example.org/bears")
+
+
+def test_publication_date_from_the_byline_not_the_site_header():
+    import datetime
+    page = ("Contact Us\n\n    Friday, September 25, 2026\n\n Illinois lawmakers fail to pass Bears bill\n"
+            "by\nBrenden Moore\nand\nBen Szalinski\n \n\nJune 1, 2026\n\nin\nBudget\n"
+            "After the House adjourned shortly before sunrise Monday, Welch said there is a lot of work ahead.")
+    assert rf.publication_date("https://capitolnewsillinois.com/news/bears-bill/", page) == datetime.date(2026, 6, 1)
+    quote = "After the House adjourned shortly before sunrise Monday, Welch said there is a lot of work ahead."
+    assert rf.check_fact("The House adjourned before sunrise on June 1, and Welch said there is a lot of work ahead.",
+                         quote, page, "https://capitolnewsillinois.com/news/bears-bill/") is None
+
+
+def test_as_of_the_publication_date_is_allowed_and_nothing_else():
+    page = "Published August 13, 2026. Warren said the team's sole focus is Hammond."
+    quote = "Warren said the team's sole focus is Hammond."
+    assert rf.check_fact("As of August 13, 2026, Warren said the team's sole focus is Hammond.", quote, page) is None
+    assert rf.check_fact("As of August 2026, Warren said the team's sole focus is Hammond.", quote, page) is None
+    assert "aug 10 is not in the quote" in rf.check_fact(
+        "As of August 10, 2026, Warren said the team's sole focus is Hammond.", quote, page)
+    assert "is not in the quote" in rf.check_fact(
+        "On August 13, 2026, Warren said the team's sole focus is Hammond.", quote, page)
