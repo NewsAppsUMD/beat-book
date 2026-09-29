@@ -49,7 +49,8 @@ _NOT_NAMES = {
     "his", "her", "their", "its", "this", "that", "these", "those", "several", "many",
     "some", "most", "both", "each", "every", "any", "all", "one", "two", "three", "four",
     "five", "six", "seven", "eight", "nine", "ten", "first", "last", "next", "new",
-    "democratic", "republican", "democrat", "gov", "sen", "rep", "mr", "mrs", "ms", "dr",
+    "democratic", "republican", "democrat", "gov", "sen", "sens", "rep", "reps", "mr", "mrs",
+    "ms", "dr",
     "state", "city", "county", "house", "senate", "board", "committee", "department",
     "office", "mayor", "governor", "president", "chairman", "chair", "commissioner",
     "judge", "court", "council", "authority", "act", "bill", "law", "plan", "project",
@@ -68,7 +69,9 @@ def names_in(claim: str) -> List[str]:
     ("Buckner's"), since most sentence starters are ordinary words."""
     text = re.sub(r"[*_`]+", "", claim or "")
     out: List[str] = []
-    for sent in re.split(r"(?<=[.!?])\s+", text):
+    # A dash or colon starts a new clause too: in "**Tinaglia** — Skeptical
+    # of the plan", "Skeptical" opens the description.
+    for sent in re.split(r"(?<=[.!?])\s+|\s+[—–]\s+|:\s+", text):
         tokens = [t.rstrip(".-") for t in re.findall(r"[A-Za-z][A-Za-z'’.-]*", sent)]
         for i, tok in enumerate(tokens):
             if not _CAP_RE.fullmatch(tok):
@@ -79,6 +82,8 @@ def names_in(claim: str) -> List[str]:
             if i == 0:
                 nxt = tokens[1] if len(tokens) > 1 else ""
                 if not (tok.endswith(("'s", "’s")) or _CAP_RE.fullmatch(nxt or "x")):
+                    continue
+                if re.search(r"-[a-z]", tok):     # "Self-imposed", not "Giants-Jets"
                     continue
             out.append(base)
     return list(dict.fromkeys(out))
@@ -146,7 +151,8 @@ def _highlights(raw: str, base_offset: int, anchors: Dict[str, List]) -> List[Di
 # (kind, words in a claim that state the outcome, words in a passage that report it)
 OUTCOMES = [
     ("election",
-     r"won|wins|defeated|prevailed|re-?elected|unseated|conceded|turned back|fended off"
+     r"won|wins|defeated|prevailed|re-?elected|unseated|turned back|fended off"
+     r"|conceded(?=[,.;]|$| (?:the (?:race|election|primary|contest)|defeat|to)\b)"
      r"|(?:was|were) elected|lost(?=[,.;]| (?:the|her|his|their|a|re-?election|reelection|to)\b)",
      r"won|wins|winning|defeat\w*|beat|beats|beating|lost|loses|losing|conced\w*|prevail\w*"
      r"|re-?elected|(?:was|were|been|is|are|get|got) elected|elected (?:to|as)|unseated|victor\w*"
@@ -473,7 +479,8 @@ def classify_claims(entries: dict, provider: Any) -> Dict[str, Any]:
             info["errors"].append(f"{type(ex).__name__}: {ex}"[:300])
             continue
         if len(labels) < len(batch):
-            info["errors"].append(f"{len(batch) - len(labels)} of {len(batch)} claims came back unlabeled")
+            info["errors"].append(f"{len(batch) - len(labels)} of {len(batch)} claims came back unlabeled"
+                                  f" (reply began: {_reply_sample(resp)!r})")
         for i, e in enumerate(batch):
             kind = labels.get(i)
             if kind == "analysis":
@@ -486,20 +493,58 @@ def classify_claims(entries: dict, provider: Any) -> Dict[str, Any]:
     return info
 
 
+_KINDS = ("fact", "analysis", "suggestion")
+
+
+def _label_items(data: Any) -> Dict[int, str]:
+    """Labels from the shapes models return: {"labels": [{"id", "kind"}]},
+    another key for the kind ("label", "type", "category"), a list of kinds
+    in id order, or a mapping of id to kind."""
+    if isinstance(data, dict):
+        inner = next((data[k] for k in ("labels", "claims", "items", "results") if k in data), None)
+        if inner is None:
+            # {"0": "fact", "1": "analysis"}
+            return {int(k): str(v).lower() for k, v in data.items()
+                    if str(k).strip().isdigit() and str(v).lower() in _KINDS}
+        data = inner
+    out: Dict[int, str] = {}
+    if isinstance(data, dict):
+        return _label_items(data)
+    for i, x in enumerate(data if isinstance(data, list) else []):
+        if isinstance(x, str) and x.lower() in _KINDS:
+            out[i] = x.lower()
+        elif isinstance(x, dict):
+            kind = next((str(x[k]).lower() for k in ("kind", "label", "type", "category", "class")
+                         if k in x), "")
+            key = next((x[k] for k in ("id", "index", "number", "n") if k in x), i)
+            if kind in _KINDS and str(key).strip().isdigit():
+                out[int(key)] = kind
+    return out
+
+
 def _parse_labels(resp: Any) -> Dict[int, str]:
     for block in getattr(resp, "content", []) or []:
         if isinstance(block, dict) and block.get("type") == "tool_use":
             data = block.get("input") or {}
             if isinstance(data, str):
                 data = json.loads(data)
-            return {int(x["id"]): str(x["kind"]) for x in data.get("labels", [])
-                    if isinstance(x, dict) and "id" in x and "kind" in x}
+            return _label_items(data)
     text = getattr(resp, "text", "") or ""
-    m = re.search(r"\{.*\}", text, re.S)
+    m = re.search(r"[\[{].*[\]}]", text, re.S)
     if m:
-        data = json.loads(m.group(0))
-        return {int(x["id"]): str(x["kind"]) for x in data.get("labels", [])}
-    raise ValueError("no labels in the model's reply")
+        try:
+            return _label_items(json.loads(m.group(0)))
+        except json.JSONDecodeError:
+            pass
+    raise ValueError(f"no labels in the model's reply: {text[:200]!r}")
+
+
+def _reply_sample(resp: Any) -> str:
+    """The start of a reply, for the build record when labels can't be read."""
+    for block in getattr(resp, "content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            return json.dumps(block.get("input"))[:200]
+    return (getattr(resp, "text", "") or "")[:200]
 
 
 def recount(entries: dict) -> None:

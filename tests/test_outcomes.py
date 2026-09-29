@@ -39,6 +39,9 @@ def test_outcomes_found_in_claims_skip_quotes_and_hypotheticals():
     assert ce.outcomes_in("If Preckwinkle wins, it will be her last term.") == []
     assert ce.outcomes_in('Brewer said the mayor "fired" nobody.') == []
     assert ce.outcomes_in("The beat covers separately elected offices.") == []
+    # Conceding a point isn't conceding a race.
+    assert ce.outcomes_in("Buckner conceded the point, calling it a first step.") == []
+    assert ce.outcomes_in("Reilly conceded to Preckwinkle.") == [("election", "conceded")]
 
 
 def test_preview_story_does_not_support_a_result():

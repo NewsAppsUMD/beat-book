@@ -37,6 +37,12 @@ def test_names_skip_ordinary_sentence_starters_but_keep_possessives():
     assert "mansueto" in ce.names_in("Joe Mansueto owns the Chicago Fire.")
 
 
+def test_names_skip_the_word_that_opens_a_list_items_description():
+    assert ce.names_in("- **Mayor Jim Tinaglia** — Skeptical of the state's late proposal.") == ["jim", "tinaglia"]
+    assert ce.names_in("- **Late spring** — Self-imposed Bears deadline.") == ["bears"]
+    assert ce.names_in("Indiana state Sens. Ryan Mishler and Rick Niemeyer") == ["ryan", "mishler", "rick", "niemeyer"]
+
+
 def test_fact_with_distinctive_anchors_is_cited_with_highlights():
     e = _entries("Joe Mansueto is bankrolling the Fire's $750 million stadium at The 78 without public money.")
     assert ce.add_anchor_evidence(e, _index()) == 1
@@ -142,3 +148,31 @@ def test_word_export_explains_unsourced_facts():
     # Without stats (older books), no sourcing section is added.
     doc = Document(io.BytesIO(_markdown_to_docx("", entries)))
     assert "About the sourcing" not in "\n".join(p.text for p in doc.paragraphs)
+
+
+def test_labels_are_read_from_the_shapes_models_return():
+    tool = lambda data: ChatResponse(content=[{"type": "tool_use", "id": "t", "name": "label_claims",
+                                               "input": data}], stop_reason="tool_use")
+    want = {0: "fact", 1: "analysis"}
+    assert ce._parse_labels(tool({"labels": [{"id": 0, "kind": "fact"}, {"id": 1, "kind": "analysis"}]})) == want
+    assert ce._parse_labels(tool({"labels": [{"id": "0", "label": "Fact"}, {"id": "1", "label": "analysis"}]})) == want
+    assert ce._parse_labels(tool({"labels": ["fact", "analysis"]})) == want
+    assert ce._parse_labels(tool({"0": "fact", "1": "analysis"})) == want
+    assert ce._parse_labels(tool({"labels": {"0": "fact", "1": "analysis"}})) == want
+    text = ChatResponse(content=[{"type": "text", "text": 'Here: [{"id": 0, "type": "fact"}, {"id": 1, "type": "analysis"}]'}],
+                        stop_reason="end_turn")
+    assert ce._parse_labels(text) == want
+
+
+def test_unreadable_reply_is_recorded():
+    class Garbled:
+        label_model = "m"
+
+        def create(self, **kw):
+            return ChatResponse(content=[{"type": "tool_use", "id": "t", "name": "label_claims",
+                                          "input": {"labels": [{"sentence": 0, "verdict": "?"}]}}],
+                                stop_reason="tool_use")
+    e = _entries("Illinois's spring legislative session ended May 31, 2026, without a deal.")
+    info = ce.classify_claims(e, Garbled())
+    assert e["entries"][0]["provenance"] == "unsupported"
+    assert "verdict" in info["errors"][0]
