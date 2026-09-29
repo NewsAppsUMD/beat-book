@@ -134,6 +134,211 @@ def _highlights(raw: str, base_offset: int, anchors: Dict[str, List]) -> List[Di
             for a, b in sorted(set(spans))]
 
 
+# ── Outcomes ─────────────────────────────────────────────────────────────────
+# A claim that something happened (won, lost, acquitted, approved, fired)
+# needs a passage that says it happened. Embeddings can't tell "Preckwinkle
+# faces off Tuesday" from "Preckwinkle turned back Reilly", so a preview
+# written before the result matches the result. Each outcome the claim
+# states must have a word of the same kind in the passage it's cited to.
+# This checks the kind of outcome, not who it happened to: a passage with
+# "won" in it passes for any win.
+
+# (kind, words in a claim that state the outcome, words in a passage that report it)
+OUTCOMES = [
+    ("election",
+     r"won|wins|defeated|prevailed|re-?elected|unseated|conceded|turned back|fended off"
+     r"|(?:was|were) elected|lost(?=[,.;]| (?:the|her|his|their|a|re-?election|reelection|to)\b)",
+     r"won|wins|winning|defeat\w*|beat|beats|beating|lost|loses|losing|conced\w*|prevail\w*"
+     r"|re-?elected|(?:was|were|been|is|are|get|got) elected|elected (?:to|as)|unseated|victor\w*"
+     r"|ousted|fended off|turned back"),
+    ("acquittal", r"acquitted|found not guilty|cleared of", r"acquit\w*|not guilty|cleared"),
+    ("conviction", r"convicted|found guilty|pleaded guilty|sentenced",
+     r"convict\w*|guilty|sentenc\w*|plea"),
+    ("approval",
+     r"approved|ratified|adopted|signed into law|passed the (?:house|senate|council|board|legislature)"
+     r"|(?:bill|measure|ordinance|budget|plan|resolution|contract|referendum) passed",
+     r"approv\w*|ratif\w*|adopt\w*|pass(?:ed|es|age)|signed|voted|vote"),
+    ("rejection", r"rejected|vetoed|voted down|struck down|overturned|denied",
+     r"reject\w*|veto\w*|voted down|struck down|overturn\w*|den(?:ied|ial|ies|y)"),
+    ("removal",
+     r"fired|ousted|removed|dismissed|terminated|resigned|stepped down|forced out|(?:was|were) replaced",
+     r"fir(?:ed|ing)|oust\w*|remov\w*|dismiss\w*|terminat\w*|resign\w*|step(?:ped|s)? down"
+     r"|forced out|replac\w*|depart\w*"),
+    ("appointment",
+     r"appointed|hired|tapped|(?:was|were) (?:selected|chosen|named|confirmed)",
+     r"appoint\w*|hir(?:ed|es|ing)|select\w*|chose|chosen|named|confirm\w*|tapped|picked"),
+    ("settlement", r"settled", r"settle\w*|payout|paid"),
+    ("withdrawal",
+     r"withdrew|withdrawn|dropped (?:the|her|his|their|its|a) (?:lawsuit|suit|case|bid|charges?|appeal|complaint|challenge)",
+     r"withdr\w*|drop\w*|dismiss\w*|abandon\w*"),
+]
+_OUTCOME_RES = [(kind, re.compile(rf"(?<![a-z])(?:{claim})(?![a-z])"),
+                 re.compile(rf"(?<![a-z])(?:{passage})(?![a-z])"))
+                for kind, claim, passage in OUTCOMES]
+# "if she wins", "would have won", "hopes to be elected": not a stated outcome.
+_HYPOTHETICAL_RE = re.compile(
+    r"\b(?:if|whether|would|will|could|might|may|should|can|to|seeks?|seeking|hopes?|looks?"
+    r"|wants?|aims?|trying|expected|plans?|likely)\s+(?:\w+\s+)?$")
+_QUOTED_RE = re.compile(r"\"[^\"]*\"")
+# How far past the cited passage to look, in characters (about 60 words).
+OUTCOME_MARGIN = 400
+
+
+def outcomes_in(claim: str) -> List[tuple]:
+    """(kind, words as written) for each outcome the claim states as having
+    happened. Words inside quotation marks and hypotheticals don't count."""
+    text = _QUOTED_RE.sub(" ", normalize_for_quote(re.sub(r"[*_`]+", "", claim or "")))
+    found = []
+    for kind, claim_re, _ in _OUTCOME_RES:
+        for m in claim_re.finditer(text):
+            if not _HYPOTHETICAL_RE.search(text[:m.start()]):
+                found.append((kind, m.group(0)))
+                break
+    return found
+
+
+# In a passage, an outcome word after these ("Whoever wins", "if she is
+# elected") reports nothing yet.
+_CONDITIONAL_RE = re.compile(r"\b(?:if|whether|whoever|whichever|unless|should)\b")
+_YEAR_RE = re.compile(r"\b(?:19|20)\d\d\b")
+# A year that dates the event ("in 2022", "since March 2019"), not one that
+# describes a thing ("a 2023 lawsuit").
+_EVENT_YEAR_RE = re.compile(
+    r"\b(?:in|during|since|from|by|of)\s+(?:(?:early|late|mid|the)\s+)?"
+    r"(?:[a-z]+\.?\s+(?:\d{1,2},?\s+)?)?((?:19|20)\d\d)\b")
+
+
+_SENTENCE_RE = re.compile(r"[^.!?\n]+(?:[.!?]+[\"'”’)]*|\n|$)")
+
+
+def _sentence_kinds(kinds: set, sent: str, claim_years: set) -> set:
+    """Which of `kinds` one sentence reports. A sentence dated to a year the
+    claim doesn't name is about another event ("Preckwinkle last won ...
+    in 2022"), so it doesn't count."""
+    norm = normalize_for_quote(sent)
+    if any(y not in claim_years for y in _EVENT_YEAR_RE.findall(norm)):
+        return set()
+    stated = set()
+    for kind, _, passage_re in _OUTCOME_RES:
+        if kind not in kinds:
+            continue
+        for m in passage_re.finditer(norm):
+            before = norm[:m.start()]
+            if not (_CONDITIONAL_RE.search(before) or _HYPOTHETICAL_RE.search(before)):
+                stated.add(kind)
+                break
+    return stated
+
+
+def _kinds_stated(outcomes: List[tuple], passage: str, claim: str) -> set:
+    """Which of the claim's outcome kinds some sentence of the passage reports."""
+    kinds = {kind for kind, _ in outcomes}
+    claim_years = set(_YEAR_RE.findall(claim or ""))
+    stated = set()
+    for m in _SENTENCE_RE.finditer(passage or ""):
+        stated |= _sentence_kinds(kinds - stated, m.group(0), claim_years)
+    return stated
+
+
+_INSTITUTION_WORDS = {
+    "review", "appeals", "education", "trustees", "commissioners", "supervisors", "aldermen",
+    "primary", "election", "elections", "general", "district", "ward", "precinct", "side",
+    "north", "south", "east", "west", "northern", "southern", "eastern", "western", "central",
+    "public", "housing", "schools", "school", "agency", "police", "fire", "health", "national",
+    "federal", "united", "states", "american", "department", "division", "bureau", "story",
+}
+
+
+def _outcome_support(kinds: set, article: Dict[str, Any], claim: str, min_names: int = 1) -> Any:
+    """A sentence of the story that names someone in the claim (at least
+    `min_names` of the claim's names) and reports an outcome the matched
+    passages left out, as a support."""
+    # Any capitalized word that isn't a common one or part of an
+    # institution's name, including a name that opens the sentence
+    # ("Steele lost ...").
+    names = [t.lower() for t in re.findall(r"\b[A-Z][a-z'’-]{2,}", re.sub(r"[*_`]+", "", claim or ""))
+             if t.lower() not in _NOT_NAMES and t.lower() not in _STOPWORDS
+             and t.lower() not in _INSTITUTION_WORDS]
+    if not names:
+        return None
+    claim_years = set(_YEAR_RE.findall(claim or ""))
+    content = article.get("content", "")
+    for m in _SENTENCE_RE.finditer(content):
+        sent = m.group(0)
+        norm = normalize_for_quote(sent)
+        if sum(1 for n in dict.fromkeys(names) if _has_word(norm, n)) < min(min_names, len(set(names))):
+            continue
+        if _sentence_kinds(kinds, sent, claim_years) != kinds:
+            continue
+        a, b = m.start(), m.end()
+        while a < b and content[a].isspace():
+            a += 1
+        start, end = max(0, a - OUTCOME_MARGIN // 2), min(len(content), b + OUTCOME_MARGIN // 2)
+        return {
+            "article_id": article["article_id"], "article_title": article.get("title", ""),
+            "article_date": article.get("date", ""), "article_author": article.get("author", ""),
+            "passage_text": content[start:end], "passage_offset": start, "passage_length": end - start,
+            "similarity": None, "match_type": "outcome",
+            "highlights": [{"char_offset": a, "char_length": b - a, "contribution": 0.0}],
+        }
+    return None
+
+
+def _support_window(sup: Dict[str, Any], contents: Dict[str, str]) -> str:
+    content = contents.get(sup.get("article_id", ""))
+    start, length = sup.get("passage_offset"), sup.get("passage_length")
+    if content is None or start is None or length is None:
+        return sup.get("passage_text", "")
+    return content[max(0, start - OUTCOME_MARGIN):start + length + OUTCOME_MARGIN]
+
+
+def check_outcomes(entries: dict, source_index: Dict[str, Any]) -> int:
+    """Make sure a claim's citations report the outcomes it states.
+
+    Citations whose passage reports none of them are dropped. If those left
+    miss an outcome, the stories are searched for a sentence that names
+    people in the claim and reports it (one name in a story already cited,
+    two in any other); each such sentence is cited first. Failing that, the claim becomes unsourced, marked with
+    `outcome_not_stated` (its words for the outcomes nothing reports).
+    Returns how many claims became unsourced."""
+    articles = {a["article_id"]: a for a in source_index.get("articles", [])}
+    contents = {k: a.get("content", "") for k, a in articles.items()}
+    dropped = 0
+    for e in entries.get("entries", []):
+        if e.get("passthrough") or e.get("provenance") != "corpus" or not e.get("supports"):
+            continue
+        claim = e.get("content", "")
+        outcomes = outcomes_in(claim)
+        if not outcomes:
+            continue
+        kept, covered = [], set()
+        for s in e["supports"]:
+            stated = _kinds_stated(outcomes, _support_window(s, contents), claim)
+            if stated:
+                kept.append(s)
+                covered |= stated
+        missing = {kind for kind, _ in outcomes} - covered
+        cited = [articles[aid] for aid in dict.fromkeys(s.get("article_id") for s in e["supports"])
+                 if aid in articles]
+        others = [a for aid, a in articles.items() if aid not in {c["article_id"] for c in cited}]
+        for kind in sorted(missing):
+            # A cited story needs one of the claim's names in the sentence;
+            # any other story needs two, since it wasn't matched at all.
+            found = next((f for f in (_outcome_support({kind}, a, claim) for a in cited) if f), None) \
+                or next((f for f in (_outcome_support({kind}, a, claim, 2) for a in others) if f), None)
+            if found:
+                kept.insert(0, found)
+                missing.discard(kind)
+        if not missing:
+            e["supports"] = kept
+            continue
+        e["supports"] = []
+        e["provenance"] = "unsupported"
+        e["outcome_not_stated"] = [words for kind, words in outcomes if kind in missing]
+        dropped += 1
+    return dropped
+
+
 def add_anchor_evidence(entries: dict, source_index: Dict[str, Any]) -> int:
     """Cite unsupported draft claims whose anchors all appear in one short
     stretch of a story. Returns how many claims gained a citation."""
@@ -157,6 +362,7 @@ def add_anchor_evidence(entries: dict, source_index: Dict[str, Any]) -> int:
                          + sum(1 for n in anchors["names"] if share(n) <= DISTINCTIVE_MAX_SHARE))
         if n_distinctive < MIN_DISTINCTIVE:
             continue
+        outcomes = outcomes_in(e.get("content", ""))
         anchor_words = set(anchors["names"])
         context = [w for w in key_words(e.get("content", "")) if w not in anchor_words]
         best = None
@@ -171,6 +377,8 @@ def add_anchor_evidence(entries: dict, source_index: Dict[str, Any]) -> int:
                 raw = content[start:end]
                 norm = normalize_for_quote(raw)
                 if not _anchors_present(anchors, norm, norm.replace(",", "")):
+                    continue
+                if outcomes and len(_kinds_stated(outcomes, raw, e.get("content", ""))) < len(outcomes):
                     continue
                 words = set(key_words(raw))
                 overlap = sum(1 for w in context if w in words) / len(context) if context else 1.0
@@ -189,6 +397,7 @@ def add_anchor_evidence(entries: dict, source_index: Dict[str, Any]) -> int:
             "highlights": _highlights(raw, start, anchors),
         }]
         e["provenance"] = "corpus"
+        e.pop("outcome_not_stated", None)
         added += 1
     return added
 
@@ -324,6 +533,9 @@ UNSOURCED_REASONS = {
     "in_stories": ("Its names, figures and dates appear in your stories, but no passage says "
                    "what this sentence says. It may combine details from several stories or "
                    "restate them too loosely to match."),
+    "outcome_not_stated": ("Your stories cover it, but none of the passages that match it says "
+                           "this happened. They may have been written before the outcome was "
+                           "known."),
     "no_details": ("It names no people, figures or dates that could be looked up in your "
                    "stories."),
 }
@@ -337,7 +549,7 @@ def _as_written(claim: str, label: str) -> str:
 
 def explain_unsourced(entries: dict, source_index: Dict[str, Any]) -> Dict[str, int]:
     """Give each factual claim still unsupported an `unsourced_reason`
-    ("outside_stories", "in_stories" or "no_details") and, for
+    ("outside_stories", "outcome_not_stated", "in_stories" or "no_details") and, for
     "outside_stories", the details found in no story (`details_not_in_stories`).
     Returns counts per reason."""
     corpus = "\n".join(normalize_for_quote(a.get("content", "")) for a in source_index.get("articles", []))
@@ -357,6 +569,8 @@ def explain_unsourced(entries: dict, source_index: Dict[str, Any]) -> Dict[str, 
         elif missing:
             reason = "outside_stories"
             e["details_not_in_stories"] = missing
+        elif e.get("outcome_not_stated"):
+            reason = "outcome_not_stated"
         else:
             reason = "in_stories"
         e["unsourced_reason"] = reason

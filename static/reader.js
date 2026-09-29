@@ -287,10 +287,13 @@
     if (matchInfo && matchInfo.claimText) {
       const numberLabel = (typeof matchInfo.number === 'number') ? `Source [${matchInfo.number}] cites:` : 'Cited for:';
       const isAnchor = matchInfo.matchType === 'anchors';
-      const band = isAnchor ? 'sim-anchor' : simBand(matchInfo.similarity);
+      const isOutcome = matchInfo.matchType === 'outcome';
+      const band = isAnchor || isOutcome ? 'sim-anchor' : simBand(matchInfo.similarity);
       const thresholdNote = calibration && typeof calibration.threshold === 'number'
         ? ` The cutoff for this book is ${fmtSim(calibration.threshold)}.` : '';
-      const strengthHtml = isAnchor
+      const strengthHtml = isOutcome
+        ? `<div class="match-strength"><span class="sim-dot sim-anchor" aria-hidden="true"></span>Cited for the outcome it states. The highlighted sentence in this story reports it. It is not a fact check.</div>`
+        : isAnchor
         ? `<div class="match-strength"><span class="sim-dot sim-anchor" aria-hidden="true"></span>Matched on the names, figures and dates it states: ${escapeHtml((matchInfo.anchors || []).join(', '))}. They appear together in this story, highlighted below. That is weaker evidence than a close match of meaning, and it is not a fact check.</div>`
         : typeof matchInfo.similarity === 'number'
         ? `<div class="match-strength"><span class="sim-dot ${band}" aria-hidden="true"></span>Match strength ${fmtSim(matchInfo.similarity)}, ${SIM_BAND_LABEL[band]}.${thresholdNote} This is text similarity, not a fact check.</div>` : '';
@@ -472,7 +475,7 @@
     ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
 
     const sorting = stats.claim_sorting || null;
-    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} factual claims had no match.${stats.analysis ? ` ${fmtNum(stats.analysis)} were labeled analysis or interpretation.` : ''}${stats.guidance ? ` ${fmtNum(stats.guidance)} were tips or story ideas.` : ''}</p>
+    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} factual claims had no match.${stats.analysis ? ` ${fmtNum(stats.analysis)} were labeled analysis or interpretation.` : ''}${stats.guidance ? ` ${fmtNum(stats.guidance)} were tips or story ideas.` : ''}${stats.outcome_not_stated ? ` ${fmtNum(stats.outcome_not_stated)} lost their match because they state an outcome, such as who won, that the matching passages don't report.` : ''}</p>
       ${sorting ? `<p class="mf-note">Unmatched claims were sorted into facts, analysis and suggestions by ${escapeHtml(sorting.model || 'a small model')}: ${fmtNum(sorting.fact)} facts, ${fmtNum(sorting.analysis)} analysis, ${fmtNum(sorting.suggestion)} suggestions.${(sorting.errors || []).length ? ' Some could not be sorted and are counted as facts.' : ''}</p>` : ''}
       <p>
         ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
@@ -676,13 +679,16 @@
   const UNSOURCED_TEXT = {
     outside_stories: 'Some of its details appear in none of your stories, so they most likely came from the writing model\'s own general knowledge.',
     in_stories: 'Its names, figures and dates appear in your stories, but no passage says what this sentence says. It may combine details from several stories or restate them too loosely to match.',
+    outcome_not_stated: 'Your stories cover it, but none of the passages that match it says this happened. They may have been written before the outcome was known.',
     no_details: 'It names no people, figures or dates that could be looked up in your stories.',
   };
   function unsourcedNote(entry) {
     const base = UNSOURCED_TEXT[entry.unsourced_reason];
     if (!base) return 'No passage in your stories matches this claim. Check it before relying on it.';
     const missing = entry.details_not_in_stories || [];
-    const detail = missing.length ? ` Not in any story: ${missing.join(', ')}.` : '';
+    const outcome = entry.unsourced_reason === 'outcome_not_stated' && (entry.outcome_not_stated || []).length
+      ? ` Outcome it states: “${entry.outcome_not_stated.join('”, “')}”.` : '';
+    const detail = (missing.length ? ` Not in any story: ${missing.join(', ')}.` : '') + outcome;
     return `No source found. ${base}${detail} Check it before relying on it.`;
   }
 
@@ -767,6 +773,7 @@
       const parts = [];
       if (r.outside_stories) parts.push(`<strong>${r.outside_stories}</strong> mention details that appear in none of your stories, so those details most likely came from the writing model's own general knowledge`);
       if (r.in_stories) parts.push(`<strong>${r.in_stories}</strong> use names, figures and dates found in your stories, but no single passage says what the sentence says. They may combine several stories, or restate them too loosely to match`);
+      if (r.outcome_not_stated) parts.push(`<strong>${r.outcome_not_stated}</strong> state an outcome, such as who won or what was approved, that no matching passage reports. The stories may have been written before it happened`);
       if (r.no_details) parts.push(`<strong>${r.no_details}</strong> name nothing specific that could be looked up`);
       counts = parts.length ? ` Of the ${st.unsupported}: ${parts.join('; ')}.` : '';
     }
@@ -881,8 +888,10 @@
       const num = parseInt(n, 10);
       const c = citationsByNumber[num];
       const isAnchor = c && c.matchType === 'anchors';
-      const band = isAnchor ? 'sim-anchor' : (c ? simBand(c.similarity) : 'sim-unknown');
-      const strength = isAnchor ? ' · matched on names, figures and dates'
+      const isOutcome = c && c.matchType === 'outcome';
+      const band = isAnchor || isOutcome ? 'sim-anchor' : (c ? simBand(c.similarity) : 'sim-unknown');
+      const strength = isOutcome ? ' · reports the outcome it states'
+        : isAnchor ? ' · matched on names, figures and dates'
         : (c && typeof c.similarity === 'number' ? ` · ${SIM_BAND_LABEL[band]} (${fmtSim(c.similarity)})` : '');
       const alts = c && c.supports && c.supports.length > 1 ? ` · ${c.supports.length} matching passages` : '';
       const titleAttr = ((c ? (c.articleTitle ? `Source: ${c.articleTitle}` : `Source [${num}]`) : `Source [${num}]`) + strength + alts).replace(/"/g, '&quot;');

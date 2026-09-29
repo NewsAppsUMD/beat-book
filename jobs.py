@@ -48,7 +48,8 @@ from citation_matcher import (
 from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
 from egress import egress_summary
-from claim_evidence import add_anchor_evidence, classify_claims, explain_unsourced, recount
+from claim_evidence import (add_anchor_evidence, check_outcomes, classify_claims, explain_unsourced,
+                            recount)
 from draft_check import check_draft
 from env_settings import ENV_OVERRIDES
 import research_agent as _research_mod
@@ -414,6 +415,9 @@ async def run_generation(
                 draft_markdown=markdown,
             )
             entries.setdefault("stats", {})["web_basis"] = tag_web_facts(entries, research_trace)
+            # A claim that someone won, lost or was fired needs a passage
+            # that says so, not just one about the same race or dispute.
+            outcomes_dropped = check_outcomes(entries, source_embeddings)
             # Facts the embedding match missed: cite a story stretch that
             # states the same names, figures and dates.
             on_matcher_progress("anchors", 0.9, "Looking for names, figures and dates in the stories…")
@@ -425,6 +429,11 @@ async def run_generation(
             entries["stats"]["claim_sorting"] = sorting
             entries["stats"]["unsourced_reasons"] = explain_unsourced(entries, source_embeddings)
             entries["stats"]["cited_by_anchors"] = anchored
+            # The anchor pass cites some of the dropped claims again, from a
+            # stretch that does report the outcome; count what's left.
+            entries["stats"]["outcome_dropped"] = outcomes_dropped
+            entries["stats"]["outcome_not_stated"] = sum(
+                1 for e in entries.get("entries", []) if e.get("outcome_not_stated"))
             sources = build_sources_file(stories, source_embeddings)
             return entries, sources
 

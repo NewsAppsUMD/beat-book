@@ -662,6 +662,8 @@ def _docx_add_sourcing_section(doc, entries: List[Dict[str, Any]], stats: Dict[s
             bits.append(f"{reasons['outside_stories']} mention details found in none of the stories")
         if reasons.get("in_stories"):
             bits.append(f"{reasons['in_stories']} use details from the stories that no single passage states together")
+        if reasons.get("outcome_not_stated"):
+            bits.append(f"{reasons['outcome_not_stated']} state an outcome that no matching passage reports")
         if reasons.get("no_details"):
             bits.append(f"{reasons['no_details']} name nothing specific to look up")
         doc.add_paragraph("Of these, " + "; ".join(bits) + ".")
@@ -672,6 +674,8 @@ def _docx_add_sourcing_section(doc, entries: List[Dict[str, Any]], stats: Dict[s
         why = UNSOURCED_REASONS.get(e.get("unsourced_reason", ""), "No passage in the stories matches it.")
         missing = e.get("details_not_in_stories") or []
         note = why.replace("your stories", "the stories") + (f" Not in any story: {', '.join(missing)}." if missing else "")
+        if e.get("unsourced_reason") == "outcome_not_stated" and e.get("outcome_not_stated"):
+            note += " Outcome it states: " + ", ".join(f"“{w}”" for w in e["outcome_not_stated"]) + "."
         run = p.add_run(f" — {note}")
         run.italic = True
 
