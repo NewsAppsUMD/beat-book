@@ -323,6 +323,26 @@ def _strip_think_tags(text: str) -> str:
     return stripped
 
 
+def _json_in_text(text: str, required: list[str] | None = None) -> dict | None:
+    """The JSON object a model wrote inside prose ("I'll call label_claims
+    ... ```json {...}```"), for a forced tool call it answered in text. The
+    last object that decodes and has the schema's required keys wins, so an
+    example or draft written before the answer isn't taken for it."""
+    decoder = json.JSONDecoder()
+    found = None
+    i = text.find("{")
+    while i != -1:
+        try:
+            obj, end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            i = text.find("{", i + 1)
+            continue
+        if isinstance(obj, dict) and all(k in obj for k in (required or [])):
+            found = obj
+        i = text.find("{", end)
+    return found
+
+
 class OllamaChatProvider:
 
     def __init__(
@@ -450,6 +470,7 @@ class OllamaChatProvider:
         }
 
         forced_tool_name: str | None = None
+        forced_required: list[str] = []
 
         if (
             tools
@@ -466,6 +487,7 @@ class OllamaChatProvider:
             if schema:
                 body["format"] = schema
                 forced_tool_name = target
+                forced_required = list(schema.get("required") or [])
             else:
                 body["tools"] = self._convert_tools(tools)
         elif tools and (not tool_choice or tool_choice.get("type") != "none"):
@@ -518,6 +540,11 @@ class OllamaChatProvider:
         if forced_tool_name and not raw_tool_calls and text:
             try:
                 parsed = json.loads(text)
+            except json.JSONDecodeError:
+                # Some models (DeepSeek, GLM) ignore the format and wrap the
+                # JSON in prose or a ```json block.
+                parsed = _json_in_text(text, forced_required)
+            if isinstance(parsed, dict):
                 content.append({
                     "type": "tool_use",
                     "id": f"call_{uuid.uuid4().hex[:24]}",
@@ -525,7 +552,7 @@ class OllamaChatProvider:
                     "input": parsed,
                 })
                 stop_reason = "tool_use"
-            except json.JSONDecodeError:
+            else:
                 content.append({"type": "text", "text": text})
                 stop_reason = "end_turn"
         else:

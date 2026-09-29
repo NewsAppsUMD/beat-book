@@ -116,3 +116,33 @@ def test_ollama_model_that_ignores_the_schema_still_gives_a_label(monkeypatch):
     provider, _ = _ollama(monkeypatch, GLM_REPLY)
     idx = [0, 1, 2]
     assert pipeline._label_cluster(provider, STORIES, idx, REDUCED[idx]) == "CHA Leadership Dispute"
+
+
+DEEPSEEK_REPLY = ('I\'ll call `label_claims` with a label for each id.\n\n```json\n{\n  "labels": [\n'
+                  '    {"id": 0, "label": "fact"},\n    {"id": 1, "label": "analysis"}\n  ]\n}\n```')
+
+
+def test_forced_tool_answered_in_prose_becomes_a_tool_call(monkeypatch):
+    import claim_evidence as ce
+    provider, _ = _ollama(monkeypatch, DEEPSEEK_REPLY)
+    resp = provider.create(model="m", system="", messages=[{"role": "user", "content": "x"}],
+                           tools=[ce._CLASSIFY_TOOL], tool_choice={"type": "tool", "name": "label_claims"})
+    assert resp.stop_reason == "tool_use"
+    block = resp.content[0]
+    assert block["type"] == "tool_use" and block["name"] == "label_claims"
+    assert block["input"]["labels"][1] == {"id": 1, "label": "analysis"}
+
+
+def test_json_in_text_takes_the_last_object_with_the_required_keys():
+    from chat_provider import _json_in_text
+    text = ('For example {"labels": []} would be empty. Also {"note": 1}. '
+            'Final: {"labels": [{"id": 0, "kind": "fact"}]} done.')
+    assert _json_in_text(text, ["labels"]) == {"labels": [{"id": 0, "kind": "fact"}]}
+    assert _json_in_text("no json here {not json}", ["labels"]) is None
+    assert _json_in_text('{"other": 1}', ["labels"]) is None
+
+
+def test_ollama_topic_label_in_prose_and_json(monkeypatch):
+    provider, _ = _ollama(monkeypatch, 'Here is the label:\n```json\n{"label": "CHA Leadership Dispute"}\n```')
+    idx = [0, 1, 2]
+    assert pipeline._label_cluster(provider, STORIES, idx, REDUCED[idx]) == "CHA Leadership Dispute"
