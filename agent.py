@@ -383,30 +383,56 @@ def _target_for_topic(topic_size: int) -> int:
 # "...so I should just give the label.City Budget Vote". A draft would open
 # with paragraphs of reasoning that citation matching then counts as claims.
 _TITLE_AT_LINE_START = re.compile(r"(?m)^#[ \t]+\S")
-_TITLE_GLUED_TO_TEXT = re.compile(r"(?<=[.!?:\"')\]])[ \t]*(#[ \t]+\S)")
+# A title glued onto the end of a sentence ("...the title.# CHA Beat Book").
+# Only after sentence punctuation or a closing bracket, never after a quote
+# mark or backtick: reasoning that quotes the instruction ("start with
+# "# Title"") is not the book.
+_TITLE_GLUED_TO_TEXT = re.compile(r"(?<=[.!?:)\]])[ \t]*(#[ \t]+\S)")
 _ANY_HEADING = re.compile(r"(?m)^#{1,3}[ \t]+\S")
+_HEADING_LINE = re.compile(r"^\s*#{1,6}[ \t]+\S")
+# A real title reaches prose within a few headings; an outline sketched in
+# the model's reasoning ("# Title / ## Beat Overview / ## Key Topics ...")
+# is headings with nothing under them.
+MAX_HEADINGS_BEFORE_PROSE = 3
+MIN_PROSE_CHARS = 25
+# A title is a line, not a paragraph: "# Title", that's not continuing the
+# planning notes ..." is reasoning that happens to start with "# ".
+MAX_TITLE_CHARS = 120
+
+
+def _starts_a_book(text: str, i: int) -> bool:
+    if len(text[i:].split("\n", 1)[0].strip()) > MAX_TITLE_CHARS:
+        return False
+    headings = 0
+    for line in text[i:i + 6000].split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped in ("---", "***"):
+            continue
+        if _HEADING_LINE.match(stripped):
+            headings += 1
+            if headings > MAX_HEADINGS_BEFORE_PROSE:
+                return False
+            continue
+        if len(stripped) >= MIN_PROSE_CHARS:
+            return True
+    return False
 
 
 def strip_preamble(markdown: str) -> tuple[str, str]:
-    """Split a draft into (book, preamble): everything before its first
-    title is preamble. The title is the first "# " heading at a line start,
-    or one glued onto the end of a sentence; failing both, the first "##"
-    or "###" heading. A draft with no heading is returned unchanged."""
+    """Split a draft into (book, preamble): everything before its title is
+    preamble. The title is the first "# " heading, at a line start or glued
+    onto the end of a sentence, that is followed by prose within a few
+    headings; failing that, the first "##" or "###" heading that is. A
+    draft with no such heading is returned unchanged."""
     text = markdown or ""
-    starts = []
-    m = _TITLE_AT_LINE_START.search(text)
-    if m:
-        starts.append(m.start())
-    g = _TITLE_GLUED_TO_TEXT.search(text)
-    if g:
-        starts.append(g.start(1))
+    candidates = sorted({m.start() for m in _TITLE_AT_LINE_START.finditer(text)}
+                        | {g.start(1) for g in _TITLE_GLUED_TO_TEXT.finditer(text)})
+    starts = [i for i in candidates if _starts_a_book(text, i)]
     if not starts:
-        h = _ANY_HEADING.search(text)
-        if h:
-            starts.append(h.start())
-    if not starts or min(starts) == 0:
+        starts = [h.start() for h in _ANY_HEADING.finditer(text) if _starts_a_book(text, h.start())][:1]
+    if not starts or starts[0] == 0:
         return text, ""
-    i = min(starts)
+    i = starts[0]
     return text[i:].lstrip(), text[:i].strip()
 
 

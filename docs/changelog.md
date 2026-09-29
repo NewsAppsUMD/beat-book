@@ -95,6 +95,11 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - The Word export adds "About the sourcing", with counts, the explanation and a "Claims to check" list with reasons, before the Sources section. Books without citation stats are unchanged.
 - On the Bears book: 3 facts have details in no story ("since 1920", "Giants-Jets", "Guaranteed Rate Field"), 43 use details from the stories that no passage states, and 2 name nothing specific.
 
+### Preamble cut: quoted titles and sketched outlines
+- A GLM-5.3 housing draft started with reasoning. The cut had treated a quoted `"# Title"` in GLM's deliberation as the book's title. Past it came a section outline sketched in the reasoning ("# Title / ## subtitle line maybe / ## Beat Overview …"), then the real book.
+- A title glued onto a sentence no longer counts after a quote mark or backtick. A candidate title must also be at most 120 characters, and it must reach a prose line of 25 or more characters within three headings, which an outline with nothing under its headings fails. On that draft, the cut now lands on "# Beat Book: Chicago Housing Authority & Cook County Government" and removes 4,573 characters.
+- Not handled: a model that restarts the book when asked to continue a draft that hit the length limit. GLM did this, so repeated sections after the title remain.
+
 ### Stale browser tabs
 - A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.
 - The reader now removes any marker it doesn't recognize. The app page is served with `Cache-Control: no-cache`. New `GET /api/version` fingerprints the frontend files, and an open tab checks it on focus, showing "Beat Book has been updated. Reload to use the new version" when it changes.
