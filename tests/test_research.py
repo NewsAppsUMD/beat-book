@@ -432,3 +432,28 @@ def test_month_and_year_of_publication_are_allowed():
     # A specific day still needs the quote.
     assert "aug 12 is not in the quote" in rf.check_fact(
         "On August 12, 2026, Warren said there is nothing in writing from the state of Illinois.", quote, page)
+
+
+def test_reworded_fact_from_the_same_page_is_a_duplicate():
+    from research_agent import FactDesk
+    url = "https://example.com/indiana"
+    page = ("Indiana will issue a bond to pay for the construction, as it had for the Indianapolis "
+            "Colts' Lucas Oil Stadium, which will be paid off by a 12% admission tax and a "
+            "specialized tax district surrounding the stadium. There will likely be taxes needed "
+            "in both Lake and Porter counties.")
+
+    class Fetcher:
+        read = {url: {"text": page, "final_url": url, "title": "Indiana passes bill"}}
+    trace = {"facts_accepted": [], "facts_rejected": []}
+    desk = FactDesk(DRAFT, Fetcher(), trace)
+    first = {"fact": "Indiana will issue a bond for the stadium, repaid by a 12% admission tax and a "
+                     "specialized tax district, as it did for Lucas Oil Stadium.",
+             "quote": page.split(". There")[0], "url": url, "section": "Beat Overview"}
+    again = {**first, "fact": "Indiana will issue a bond for the Hammond stadium, as it did for Lucas "
+                              "Oil Stadium, repaid by a 12% admission tax and a specialized tax district.",
+             "section": "Key Sources & Players"}
+    assert desk.submit(first).startswith("Accepted")
+    assert "repeats fact #1" in desk.submit(again)
+    other = {**first, "fact": "Taxes will likely be needed in both Lake and Porter counties.",
+             "quote": "There will likely be taxes needed in both Lake and Porter counties."}
+    assert desk.submit(other).startswith("Accepted")

@@ -42,6 +42,7 @@ from research_facts import (
     check_fact,
     find_placement,
     insert_facts,
+    key_words,
     locate_quote,
     placement_note,
     sections,
@@ -61,6 +62,9 @@ WRAP_UP_TURNS_LEFT = 2
 WEB_SEARCH_MAX_USES = 6
 # Network fetches per run. Repeats and cached pages don't count.
 WEB_FETCH_MAX_USES = 8
+# A fact from a page already quoted repeats an accepted one when this share
+# of the shorter fact's key words is in the other.
+DUPLICATE_OVERLAP = 0.7
 
 FETCH_TOOL_NAME = "fetch_page"
 SUBMIT_TOOL_NAME = "submit_fact"
@@ -576,6 +580,15 @@ class FactDesk:
         key = (normalize_for_quote(fact), url)
         if any((normalize_for_quote(f["fact"]), f["url"]) == key for f in self.accepted):
             return reject("that fact was already accepted.")
+        # The same fact reworded, from the same page, placed somewhere else.
+        words = set(key_words(fact))
+        for f in self.accepted:
+            if f["url"] != url or not words:
+                continue
+            other = set(key_words(f["fact"]))
+            if other and len(words & other) / min(len(words), len(other)) >= DUPLICATE_OVERLAP:
+                return reject(f"it repeats fact #{f['id']} from the same page. Submit only what that "
+                              "fact doesn't already say, or move on.")
         attribution, name = attribution_for(str(inp.get("source_name") or ""),
                                             str(inp.get("published") or ""),
                                             page.get("final_url") or url, page.get("title", ""))

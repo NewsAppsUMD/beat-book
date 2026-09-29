@@ -190,3 +190,8 @@ def test_date_pinned_down_by_a_weekday_is_not_called_outside_the_stories():
     assert e["entries"][0]["unsourced_reason"] == "in_stories"
     assert e["entries"][1]["unsourced_reason"] == "outside_stories"
     assert e["entries"][1]["details_not_in_stories"] == ["June 2"]
+
+
+def test_hyphenated_descriptors_are_not_names():
+    assert "bears-specific" not in ce.names_in("Pritzker pushed PILOT rather than a Bears-specific deal.")
+    assert "giants-jets" in ce.names_in("The Giants-Jets move is the precedent.")

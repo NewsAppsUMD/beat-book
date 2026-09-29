@@ -76,16 +76,14 @@ def names_in(claim: str) -> List[str]:
     for sent in re.split(r"(?<=[.!?])\s+|\s+[—–]\s+|:\s+", text):
         tokens = [t.rstrip(".-") for t in re.findall(r"[A-Za-z][A-Za-z'’.-]*", sent)]
         for i, tok in enumerate(tokens):
-            if not _CAP_RE.fullmatch(tok):
-                continue
+            if not _CAP_RE.fullmatch(tok) or re.search(r"-[a-z]", tok):
+                continue            # "Bears-specific", not "Giants-Jets"
             base = re.sub(r"['’]s$|['’]$", "", tok).strip(".").lower()
             if len(base) < 3 or base in _NOT_NAMES or base in _STOPWORDS:
                 continue
             if i == 0:
                 nxt = tokens[1] if len(tokens) > 1 else ""
                 if not (tok.endswith(("'s", "’s")) or _CAP_RE.fullmatch(nxt or "x")):
-                    continue
-                if re.search(r"-[a-z]", tok):     # "Self-imposed", not "Giants-Jets"
                     continue
             out.append(base)
     return list(dict.fromkeys(out))
