@@ -134,3 +134,65 @@ def test_model_prose_is_not_sent_back_to_ollama(tmp_path, monkeypatch):
     assistant = [m for m in later if m["role"] == "assistant"]
     assert assistant and all(m["content"] == "" for m in assistant)       # reasoning dropped
     assert assistant[0]["tool_calls"][0]["function"]["name"] == "web_search"  # tool call kept
+
+
+def _chat_body(monkeypatch, env, replies):
+    """Send one request through OllamaChatProvider with a scripted server."""
+    import chat_provider as cp
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    sent = []
+
+    def handler(request):
+        body = json.loads(request.content)
+        sent.append(body)
+        status, payload = replies[min(len(sent) - 1, len(replies) - 1)]
+        return httpx.Response(status, json=payload) if isinstance(payload, dict) else httpx.Response(status, text=payload)
+    real = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+    return cp, sent
+
+
+def test_ollama_think_on_sends_think_and_keeps_the_answer_clean(monkeypatch):
+    ok = (200, {"message": {"role": "assistant", "content": "City Budget Vote",
+                            "thinking": "The user wants a label..."}, "done_reason": "stop"})
+    cp, sent = _chat_body(monkeypatch, {"OLLAMA_THINK": "on", "OLLAMA_CHAT_HOST": "http://o.test"}, [ok])
+    resp = cp.OllamaChatProvider().create(model="glm-5.3:cloud", system="", messages=[{"role": "user", "content": "x"}])
+    assert sent[0]["think"] is True and resp.text == "City Budget Vote"
+
+
+def test_ollama_think_falls_back_for_models_without_thinking(monkeypatch):
+    rejected = (400, '{"error":"\\"llama3\\" does not support thinking"}')
+    ok = (200, {"message": {"role": "assistant", "content": "City Budget Vote"}, "done_reason": "stop"})
+    cp, sent = _chat_body(monkeypatch, {"OLLAMA_THINK": "on", "OLLAMA_CHAT_HOST": "http://o.test"}, [rejected, ok, ok])
+    p = cp.OllamaChatProvider()
+    assert p.create(model="llama3", system="", messages=[{"role": "user", "content": "x"}]).text == "City Budget Vote"
+    assert [b["think"] for b in sent] == [True, False]
+    p.create(model="llama3", system="", messages=[{"role": "user", "content": "x"}])
+    assert sent[-1]["think"] is False            # remembered: no second rejection
+    cp._OLLAMA_NO_THINKING.discard("llama3")
+
+
+def test_think_is_off_by_default(monkeypatch):
+    ok = (200, {"message": {"role": "assistant", "content": "x"}, "done_reason": "stop"})
+    cp, sent = _chat_body(monkeypatch, {"OLLAMA_CHAT_HOST": "http://o.test"}, [ok])
+    cp.OllamaChatProvider().create(model="qwen3:8b", system="", messages=[{"role": "user", "content": "x"}])
+    assert sent[0]["think"] is False
+
+
+def test_turn_at_the_output_limit_without_a_tool_call_gets_a_firm_nudge(tmp_path, monkeypatch):
+    script = [{"content": "Let me deliberate at great length..."},       # ends at the limit
+              {"content": "", "tool_calls": [_tool_call("finalize_research", {"summary": "Nothing to add."})]}]
+    import research_agent as ra
+    real_ask = ra._OllamaBackend.ask
+    calls = {"n": 0}
+
+    async def ask(self, *a, **kw):
+        content, stop, usage = await real_ask(self, *a, **kw)
+        calls["n"] += 1
+        return content, ("max_tokens" if calls["n"] == 1 else stop), usage
+    monkeypatch.setattr(ra._OllamaBackend, "ask", ask)
+    out, trace, chat = _run(tmp_path, monkeypatch, script)
+    nudge = [m for m in chat["chat"][1]["messages"] if m["role"] == "user"][-1]["content"]
+    assert "without calling a tool" in nudge and trace["turns_at_output_limit"] == 1
+    assert trace["finalized"]

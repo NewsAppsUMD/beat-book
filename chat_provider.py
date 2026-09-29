@@ -343,6 +343,19 @@ def _json_in_text(text: str, required: list[str] | None = None) -> dict | None:
     return found
 
 
+# OLLAMA_THINK=on requests Ollama's thinking mode ("think": true) on every
+# call and discards the thinking. Some models (GLM-5.3) ignore "think": false
+# and reason in the answer itself, which breaks structured replies and fills
+# tool-calling turns; with "think": true they put the reasoning in a separate
+# `thinking` field, leaving the answer clean. Off by default, since models that
+# honor "think": false (Qwen) would only get slower.
+_OLLAMA_NO_THINKING: set[str] = set()     # models that rejected "think": true
+
+
+def ollama_think_on() -> bool:
+    return (os.environ.get("OLLAMA_THINK") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 class OllamaChatProvider:
 
     def __init__(
@@ -466,7 +479,7 @@ class OllamaChatProvider:
                 "num_predict": max_tokens,
                 "num_ctx": 65536,
             },
-            "think": think,
+            "think": bool(think or (ollama_think_on() and actual_model not in _OLLAMA_NO_THINKING)),
         }
 
         forced_tool_name: str | None = None
@@ -501,17 +514,26 @@ class OllamaChatProvider:
             flush=True,
         )
 
-        try:
-            with httpx.Client(timeout=600.0) as client:
-                resp = client.post(
-                    f"{self._host}/api/chat",
-                    headers=self._headers(),
-                    json=body,
-                )
-        except httpx.ConnectError as e:
-            raise ChatConnectionError(str(e)) from e
-        except httpx.TimeoutException as e:
-            raise ChatConnectionError(f"Timeout: {e}") from e
+        def _post():
+            try:
+                with httpx.Client(timeout=600.0) as client:
+                    return client.post(
+                        f"{self._host}/api/chat",
+                        headers=self._headers(),
+                        json=body,
+                    )
+            except httpx.ConnectError as e:
+                raise ChatConnectionError(str(e)) from e
+            except httpx.TimeoutException as e:
+                raise ChatConnectionError(f"Timeout: {e}") from e
+
+        resp = _post()
+        # A model without thinking support rejects "think": true. Remember it
+        # and retry once without, so OLLAMA_THINK=on is safe for any model.
+        if resp.status_code == 400 and body["think"] and "think" in resp.text.lower():
+            _OLLAMA_NO_THINKING.add(actual_model)
+            body["think"] = False
+            resp = _post()
 
         if resp.status_code == 429:
             err = ChatRateLimitError(f"Ollama rate limit: {resp.text}")

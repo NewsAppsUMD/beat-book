@@ -113,6 +113,12 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - On Ollama, each page shown to the model is capped at 16,000 characters, where Claude sees 60,000. The model's earlier prose isn't sent back each turn, because GLM-5.3 writes out its reasoning, which would fill the 64k context. The full page text is still kept for the quote check.
 - The Anthropic key is required only when a configured step uses Anthropic. The build record, egress table and evaluation report name the research provider and model.
 
+### GLM-5.3 research: thinking mode
+- The first GLM-5.3 evaluation run searched 6 times and read 7 pages. Then turns 6 through 10 each reached the 16,000-token output limit without a tool call, and it added no facts. The forced summary also ran out, at 2,048 tokens. GLM ignores `"think": false` and reasons in its answer. With `"think": true` it puts the reasoning in a separate `thinking` field, leaving the answer clean.
+- `OLLAMA_THINK=on` sends `"think": true` on every Ollama call, and the app discards the thinking. A model that rejects thinking is remembered and retried without it. It's off by default.
+- A research turn that reaches the output limit without calling a tool now gets a firm nudge to submit facts, instead of "please continue". The forced summary gets 4,096 tokens.
+- Tests start from the default provider settings whatever the local `.env` says.
+
 ### Stale browser tabs
 - A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.
 - The reader now removes any marker it doesn't recognize. The app page is served with `Cache-Control: no-cache`. New `GET /api/version` fingerprints the frontend files, and an open tab checks it on focus, showing "Beat Book has been updated. Reload to use the new version" when it changes.

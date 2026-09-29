@@ -864,7 +864,14 @@ async def run_research_agent(
             await _emit(on_progress, "paused", "Server-side search paused; resuming")
             continue
         if stop_reason == "max_tokens":
-            messages.append({"role": "user", "content": "Your previous response hit the token limit. Please continue."})
+            called = any(_block_get(b, "type") == "tool_use" for b in content)
+            trace["turns_at_output_limit"] = trace.get("turns_at_output_limit", 0) + 1
+            messages.append({"role": "user", "content": (
+                "Your previous response hit the output limit." if called else
+                "[Application notice] You used the whole turn without calling a tool. Don't "
+                "deliberate at length: submit the facts you already have quotes for with "
+                "submit_fact now, several in one turn if you can, then call finalize_research."
+            ) + " Please continue."})
             continue
         if stop_reason != "tool_use":
             await _emit(on_progress, "unexpected_stop", f"Unexpected stop_reason: {stop_reason}")
@@ -968,8 +975,9 @@ async def _finalize_only_turn(backend, system_prompt: str, tools: List[Dict[str,
     try:
         # Same tool list as every other turn: earlier search results in the
         # transcript refer to these tool definitions.
+        # 4,096 tokens: on thinking models the thinking counts against it.
         content, stop_reason, usage = await backend.ask(
-            system_prompt, tools, msgs, 2048, tool_choice={"type": "tool", "name": FINALIZE_TOOL_NAME})
+            system_prompt, tools, msgs, 4096, tool_choice={"type": "tool", "name": FINALIZE_TOOL_NAME})
     except Exception as e:
         trace["finalize_turn_error"] = f"{type(e).__name__}: {e}"
         return ""
