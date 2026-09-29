@@ -138,8 +138,12 @@ _ABBREVIATIONS = [
     (r"\bCapt\.", "Capt<<DOT>>"),
     (r"\bCol\.", "Col<<DOT>>"),
     (r"\bRev\.", "Rev<<DOT>>"),
+    (r"\bSens\.", "Sens<<DOT>>"),   # "Reps. Chuy García and Delia Ramirez"
+    (r"\bReps\.", "Reps<<DOT>>"),
     (r"\bSen\.", "Sen<<DOT>>"),
     (r"\bRep\.", "Rep<<DOT>>"),
+    (r"\bAtty\.", "Atty<<DOT>>"),
+    (r"\bDept\.", "Dept<<DOT>>"),
     (r"\bGov\.", "Gov<<DOT>>"),
     (r"\bAld\.", "Ald<<DOT>>"),   # Chicago alderpersons: "Ald. Walter Burnett"
     (r"\bSupt\.", "Supt<<DOT>>"),

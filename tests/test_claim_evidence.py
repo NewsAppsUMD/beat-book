@@ -255,3 +255,12 @@ def test_near_cutoff_needs_two_names_or_a_figure():
     figure = _near_entry("The soccer stadium will cost $750 million.", ("story-0", STORIES[0]["content"]))
     assert ce.add_near_evidence(figure, idx) == 1
     assert figure["entries"][0]["supports"][0]["anchors"] == ["750"]
+
+
+def test_plural_titles_do_not_split_sentences():
+    assert cm.split_into_sentences(
+        "A coalition including Reps. Chuy García and Delia Ramirez wants it. State Sens. Ryan Mishler "
+        "and Rick Niemeyer backed it. Atty. Gen. Kwame Raoul sued.") == [
+        "A coalition including Reps. Chuy García and Delia Ramirez wants it.",
+        "State Sens. Ryan Mishler and Rick Niemeyer backed it.",
+        "Atty. Gen. Kwame Raoul sued."]
