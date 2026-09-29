@@ -7,6 +7,7 @@ topics and produces a beat book without an interview stage.
 
 import asyncio
 import json
+import re
 from typing import Callable, Awaitable
 
 from pipeline import PipelineResult
@@ -376,6 +377,55 @@ def _target_for_topic(topic_size: int) -> int:
     return min(10, (topic_size + 2) // 3)
 
 
+# The draft must start at its "# Title" line. Some models on Ollama (GLM-5.3)
+# ignore "think": false and write their deliberation into the answer itself,
+# untagged, then glue the real answer onto the end of it:
+# "...so I should just give the label.City Budget Vote". A draft would open
+# with paragraphs of reasoning that citation matching then counts as claims.
+_TITLE_AT_LINE_START = re.compile(r"(?m)^#[ \t]+\S")
+_TITLE_GLUED_TO_TEXT = re.compile(r"(?<=[.!?:\"')\]])[ \t]*(#[ \t]+\S)")
+_ANY_HEADING = re.compile(r"(?m)^#{1,3}[ \t]+\S")
+
+
+def strip_preamble(markdown: str) -> tuple[str, str]:
+    """Split a draft into (book, preamble): everything before its first
+    title is preamble. The title is the first "# " heading at a line start,
+    or one glued onto the end of a sentence; failing both, the first "##"
+    or "###" heading. A draft with no heading is returned unchanged."""
+    text = markdown or ""
+    starts = []
+    m = _TITLE_AT_LINE_START.search(text)
+    if m:
+        starts.append(m.start())
+    g = _TITLE_GLUED_TO_TEXT.search(text)
+    if g:
+        starts.append(g.start(1))
+    if not starts:
+        h = _ANY_HEADING.search(text)
+        if h:
+            starts.append(h.start())
+    if not starts or min(starts) == 0:
+        return text, ""
+    i = min(starts)
+    return text[i:].lstrip(), text[:i].strip()
+
+
+def _without_preamble(on_beat_book, on_message):
+    """Wrap the draft callback so every draft reaches it without model
+    preamble, and say so on the progress feed when some was cut."""
+    async def hand_off(filename: str, markdown: str) -> None:
+        book, preamble = strip_preamble(markdown)
+        if preamble:
+            print(f"[agent] removed {len(preamble)} characters before the draft's title: "
+                  f"{preamble[:200]!r}", flush=True)
+            await on_message(
+                f"Removed {len(preamble):,} characters the model wrote before the beat "
+                "book's title (its own reasoning, not part of the book)."
+            )
+        await on_beat_book(filename, book)
+    return hand_off
+
+
 def _derive_filename(pipeline_result: PipelineResult) -> str:
     """Build a descriptive snake_case filename from the top broad topic."""
     import re
@@ -734,6 +784,7 @@ async def run_agent(
 
     last_message_text = ""
     beat_book_done = False
+    on_beat_book = _without_preamble(on_beat_book, on_message)   # see strip_preamble
 
     # Research-progress tracking. listed_topics is the set of topic labels the
     # agent has called list_stories_in_topic on (a proxy for "topics the
