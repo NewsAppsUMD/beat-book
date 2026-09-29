@@ -66,6 +66,10 @@ PASSAGE_OVERLAP_WORDS = 16
 
 # Top-K candidate passages kept per beat-book sentence.
 TOP_K = 5
+# For a claim with no match, passages this far below the cutoff are kept as
+# "near" candidates. claim_evidence.add_near_evidence cites one only if it
+# also contains a distinctive name, figure or date from the claim.
+NEAR_MARGIN = 0.10
 
 # Calibration parameters. We compute a per-corpus threshold by sampling random
 # (beat_book_sentence, source_passage) pairs and taking `noise_median + N·sigma`
@@ -672,6 +676,22 @@ def _context_sum_embeddings(
     return out
 
 
+def _support_record(cand: Dict[str, Any], articles_by_id: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    passage = cand["passage"]
+    article = articles_by_id.get(passage["article_id"], {})
+    return {
+        "article_id": passage["article_id"],
+        "article_title": article.get("title", ""),
+        "article_date": article.get("date", ""),
+        "article_author": article.get("author", ""),
+        "passage_text": passage["text"],
+        "passage_offset": int(passage["char_offset"]),
+        "passage_length": int(passage["char_length"]),
+        "similarity": round(cand["similarity"], 4),
+        "highlights": [],
+    }
+
+
 def markdown_to_beatbook_entries(
     markdown: str,
     source_index: Dict[str, Any],
@@ -787,22 +807,28 @@ def markdown_to_beatbook_entries(
     # Pick top-K above threshold per beat-book sentence.
     k = min(TOP_K, sim_matrix.shape[1]) if sim_matrix.shape[1] > 0 else 0
     top_supports_per_sentence: List[List[Dict[str, Any]]] = []
+    near_per_sentence: List[List[Dict[str, Any]]] = []
     for row_i in range(sim_matrix.shape[0]):
         row = sim_matrix[row_i]
         if k == 0:
             top_supports_per_sentence.append([])
+            near_per_sentence.append([])
             continue
         # argpartition is O(n); we sort just the top-K slice afterwards.
         cand_idx = np.argpartition(-row, k - 1)[:k]
         cand_idx = cand_idx[np.argsort(-row[cand_idx])]
         per_sentence: List[Dict[str, Any]] = []
+        near: List[Dict[str, Any]] = []
         for col_i in cand_idx:
             sim = float(row[col_i])
-            if sim < threshold:
+            if sim >= threshold:
+                per_sentence.append({"passage": global_passages[col_i], "similarity": sim})
+            elif sim >= threshold - NEAR_MARGIN and not per_sentence:
+                near.append({"passage": global_passages[col_i], "similarity": sim})
+            else:
                 break
-            passage = global_passages[col_i]
-            per_sentence.append({"passage": passage, "similarity": sim})
         top_supports_per_sentence.append(per_sentence)
+        near_per_sentence.append(near)
 
     if on_progress:
         kept_total = sum(len(s) for s in top_supports_per_sentence)
@@ -949,7 +975,7 @@ def markdown_to_beatbook_entries(
             stats["list_items_cited"] += 1
         if provenance == "corpus" and kind == "table_row":
             stats["table_rows_cited"] += 1
-        out_entries.append({
+        out = {
             "content": entry["content"],
             "passthrough": False,
             "kind": kind,
@@ -957,7 +983,11 @@ def markdown_to_beatbook_entries(
             "provenance": provenance,
             "section": entry.get("section", ""),
             "supports": supports,
-        })
+        }
+        near = near_per_sentence[entry_to_embed_idx[i]] if provenance == "unsupported" else []
+        if near:
+            out["near_supports"] = [_support_record(c, articles_by_id) for c in near]
+        out_entries.append(out)
 
     # Claims from the draft that no longer appear: the research agent
     # rewrote or removed them. The draft came from the reporter's stories,

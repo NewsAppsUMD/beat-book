@@ -48,8 +48,8 @@ from citation_matcher import (
 from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
 from egress import egress_summary
-from claim_evidence import (add_anchor_evidence, check_outcomes, classify_claims, explain_unsourced,
-                            recount)
+from claim_evidence import (add_anchor_evidence, add_near_evidence, check_outcomes, classify_claims,
+                            explain_unsourced, recount)
 from draft_check import check_draft
 from env_settings import ENV_OVERRIDES
 import research_agent as _research_mod
@@ -425,10 +425,16 @@ async def run_generation(
             # Sort what is still unsourced into facts, analysis and suggestions.
             on_matcher_progress("sorting", 0.95, "Separating facts from analysis…")
             sorting = classify_claims(entries, chat_provider)
+            # Facts just below the cutoff: cite a passage that shares a
+            # distinctive figure or date, or two names, with the claim.
+            # Outcomes are checked again for the claims this cites.
+            near_cited = add_near_evidence(entries, source_embeddings)
+            check_outcomes(entries, source_embeddings)
             recount(entries)
             entries["stats"]["claim_sorting"] = sorting
             entries["stats"]["unsourced_reasons"] = explain_unsourced(entries, source_embeddings)
             entries["stats"]["cited_by_anchors"] = anchored
+            entries["stats"]["near_added"] = near_cited
             # The anchor pass cites some of the dropped claims again, from a
             # stretch that does report the outcome; count what's left.
             entries["stats"]["outcome_dropped"] = outcomes_dropped

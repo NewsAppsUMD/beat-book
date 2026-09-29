@@ -195,3 +195,63 @@ def test_date_pinned_down_by_a_weekday_is_not_called_outside_the_stories():
 def test_hyphenated_descriptors_are_not_names():
     assert "bears-specific" not in ce.names_in("Pritzker pushed PILOT rather than a Bears-specific deal.")
     assert "giants-jets" in ce.names_in("The Giants-Jets move is the precedent.")
+
+
+def _near_entry(claim, *passages):
+    return {"entries": [{"content": claim, "passthrough": False, "kind": "sentence",
+                         "provenance": "unsupported", "supports": [],
+                         "near_supports": [{"article_id": aid, "passage_text": text, "passage_offset": 0,
+                                            "passage_length": len(text), "similarity": 0.71, "highlights": []}
+                                           for aid, text in passages]}], "stats": {}}
+
+
+def test_near_cutoff_passage_is_cited_only_with_a_distinctive_detail():
+    # Mansueto is in one of four stories: distinctive. Bears/Chicago aren't.
+    e = _near_entry("Joe Mansueto is paying for the Fire's stadium himself.",
+                    ("story-1", STORIES[1]["content"][:120]), ("story-0", STORIES[0]["content"][:200]))
+    assert ce.add_near_evidence(e, _index()) == 1
+    claim = e["entries"][0]
+    assert claim["provenance"] == "corpus" and "near_supports" not in claim
+    assert [s["article_id"] for s in claim["supports"]] == ["story-0"]
+    sup = claim["supports"][0]
+    assert sup["match_type"] == "near" and "mansueto" in sup["anchors"]
+    marked = {STORIES[0]["content"][h["char_offset"]:h["char_offset"] + h["char_length"]] for h in sup["highlights"]}
+    assert "Mansueto" in marked
+
+
+def test_near_cutoff_passage_with_only_common_words_is_not_cited():
+    e = _near_entry("The Bears met Chicago lawmakers about Hammond again.",
+                    ("story-1", STORIES[1]["content"][:150]))
+    assert ce.add_near_evidence(e, _index()) == 0
+    assert e["entries"][0]["provenance"] == "unsupported" and "near_supports" not in e["entries"][0]
+
+
+def test_matcher_keeps_near_candidates_only_for_unmatched_claims(monkeypatch):
+    from test_transparency import HashEmbed
+    idx = cm.embed_source_stories([{"article_id": s["article_id"], "title": s["title"], "content": s["content"]}
+                                   for s in STORIES], HashEmbed())
+    monkeypatch.setattr(cm, "_calibrate_threshold", lambda *a, **k: {"threshold": 0.99, "raw_threshold": 0.99,
+                        "noise_mean": 0, "noise_std": 0, "noise_median": 0, "noise_mad": 0,
+                        "ceiling": 0.75, "samples": 0, "sigma": 3})
+    monkeypatch.setattr(cm, "NEAR_MARGIN", 0.99)
+    out = cm.markdown_to_beatbook_entries("# B\n\n## Overview\n\nJoe Mansueto owns the Chicago Fire.\n",
+                                          idx, HashEmbed())
+    claim = next(e for e in out["entries"] if not e["passthrough"])
+    assert claim["provenance"] == "unsupported" and claim["near_supports"]
+    assert claim["near_supports"][0]["similarity"] < 0.99
+
+
+def test_near_cutoff_needs_two_names_or_a_figure():
+    idx = _index()
+    idx["articles"] += [{"article_id": f"x{i}", "content": "Unrelated filler about the city budget. " * 5}
+                        for i in range(6)]
+    story3 = ("story-3", STORIES[3]["content"])
+    # One distinctive name isn't enough; two are, and so is a figure alone.
+    one = _near_entry("The committee chaired by Wilf meets soon.", story3)
+    assert ce.anchors_in(one["entries"][0]["content"])["names"] == ["wilf"]
+    assert ce.add_near_evidence(one, idx) == 0
+    two = _near_entry("The committee chaired by Mark Wilf meets soon.", story3)
+    assert ce.add_near_evidence(two, idx) == 1
+    figure = _near_entry("The soccer stadium will cost $750 million.", ("story-0", STORIES[0]["content"]))
+    assert ce.add_near_evidence(figure, idx) == 1
+    assert figure["entries"][0]["supports"][0]["anchors"] == ["750"]

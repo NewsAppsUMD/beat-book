@@ -288,10 +288,13 @@
       const numberLabel = (typeof matchInfo.number === 'number') ? `Source [${matchInfo.number}] cites:` : 'Cited for:';
       const isAnchor = matchInfo.matchType === 'anchors';
       const isOutcome = matchInfo.matchType === 'outcome';
-      const band = isAnchor || isOutcome ? 'sim-anchor' : simBand(matchInfo.similarity);
+      const isNear = matchInfo.matchType === 'near';
+      const band = isAnchor || isOutcome || isNear ? 'sim-anchor' : simBand(matchInfo.similarity);
       const thresholdNote = calibration && typeof calibration.threshold === 'number'
         ? ` The cutoff for this book is ${fmtSim(calibration.threshold)}.` : '';
-      const strengthHtml = isOutcome
+      const strengthHtml = isNear
+        ? `<div class="match-strength"><span class="sim-dot sim-anchor" aria-hidden="true"></span>Match strength ${fmtSim(matchInfo.similarity)}, just below this book's cutoff${calibration && typeof calibration.threshold === 'number' ? ` of ${fmtSim(calibration.threshold)}` : ''}. It is cited because the passage also contains ${escapeHtml((matchInfo.anchors || []).join(', '))}, highlighted below. That is weaker evidence than a match above the cutoff, and it is not a fact check.</div>`
+        : isOutcome
         ? `<div class="match-strength"><span class="sim-dot sim-anchor" aria-hidden="true"></span>Cited for the outcome it states. The highlighted sentence in this story reports it. It is not a fact check.</div>`
         : isAnchor
         ? `<div class="match-strength"><span class="sim-dot sim-anchor" aria-hidden="true"></span>Matched on the names, figures and dates it states: ${escapeHtml((matchInfo.anchors || []).join(', '))}. They appear together in this story, highlighted below. That is weaker evidence than a close match of meaning, and it is not a fact check.</div>`
@@ -475,7 +478,7 @@
     ` : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
 
     const sorting = stats.claim_sorting || null;
-    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} factual claims had no match.${stats.analysis ? ` ${fmtNum(stats.analysis)} were labeled analysis or interpretation.` : ''}${stats.guidance ? ` ${fmtNum(stats.guidance)} were tips or story ideas.` : ''}${stats.outcome_not_stated ? ` ${fmtNum(stats.outcome_not_stated)} lost their match because they state an outcome, such as who won, that the matching passages don't report.` : ''}</p>
+    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}${stats.cited_near_cutoff ? `, ${fmtNum(stats.cited_near_cutoff)} just below the cutoff because the passage shares a distinctive name, figure or date` : ''}. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} factual claims had no match.${stats.analysis ? ` ${fmtNum(stats.analysis)} were labeled analysis or interpretation.` : ''}${stats.guidance ? ` ${fmtNum(stats.guidance)} were tips or story ideas.` : ''}${stats.outcome_not_stated ? ` ${fmtNum(stats.outcome_not_stated)} lost their match because they state an outcome, such as who won, that the matching passages don't report.` : ''}</p>
       ${sorting ? `<p class="mf-note">Unmatched claims were sorted into facts, analysis and suggestions by ${escapeHtml(sorting.model || 'a small model')}: ${fmtNum(sorting.fact)} facts, ${fmtNum(sorting.analysis)} analysis, ${fmtNum(sorting.suggestion)} suggestions.${(sorting.errors || []).length ? ' Some could not be sorted and are counted as facts.' : ''}</p>` : ''}
       <p>
         ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
@@ -889,8 +892,10 @@
       const c = citationsByNumber[num];
       const isAnchor = c && c.matchType === 'anchors';
       const isOutcome = c && c.matchType === 'outcome';
-      const band = isAnchor || isOutcome ? 'sim-anchor' : (c ? simBand(c.similarity) : 'sim-unknown');
-      const strength = isOutcome ? ' · reports the outcome it states'
+      const isNear = c && c.matchType === 'near';
+      const band = isAnchor || isOutcome || isNear ? 'sim-anchor' : (c ? simBand(c.similarity) : 'sim-unknown');
+      const strength = isNear ? ` · just below the cutoff (${fmtSim(c.similarity)}), confirmed by a shared detail`
+        : isOutcome ? ' · reports the outcome it states'
         : isAnchor ? ' · matched on names, figures and dates'
         : (c && typeof c.similarity === 'number' ? ` · ${SIM_BAND_LABEL[band]} (${fmtSim(c.similarity)})` : '');
       const alts = c && c.supports && c.supports.length > 1 ? ` · ${c.supports.length} matching passages` : '';

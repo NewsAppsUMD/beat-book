@@ -408,6 +408,66 @@ def add_anchor_evidence(entries: dict, source_index: Dict[str, Any]) -> int:
     return added
 
 
+# ── Near matches confirmed by a detail ──────────────────────────────────────
+# In a corpus about one subject, passages just below the cutoff are often
+# the right source, but as often they are only about the same subject. A
+# shared distinctive detail (a name, figure, year or date found in few
+# stories) separates the two about as well as the cutoff does above it: a
+# figure or date on its own, or at least two names. One name alone ("HUD",
+# "Parker") turns up in too many passages about the same subject.
+
+def add_near_evidence(entries: dict, source_index: Dict[str, Any]) -> int:
+    """Cite an unsupported factual claim to a near-cutoff passage (the
+    matcher's `near_supports`) that contains a distinctive figure or date
+    from the claim, or two of its distinctive names. Run it after
+    classify_claims, so questions and tips stay uncited. Removes
+    `near_supports` from every entry. Returns how many claims gained a
+    citation."""
+    articles = source_index.get("articles", [])
+    lowered = [normalize_for_quote(a.get("content", "")) for a in articles]
+    share_cache: Dict[str, float] = {}
+
+    def share(key: str, test) -> float:
+        if key not in share_cache:
+            share_cache[key] = sum(1 for t in lowered if test(t)) / len(lowered) if lowered else 1.0
+        return share_cache[key]
+
+    added = 0
+    for e in entries.get("entries", []):
+        near = e.pop("near_supports", None)
+        if not near or e.get("passthrough") or e.get("provenance") != "unsupported":
+            continue
+        anchors = anchors_in(e.get("content", ""))
+        details = (
+            [("name", n) for n in anchors["names"] if share("n:" + n, lambda t, n=n: _has_word(t, n)) <= DISTINCTIVE_MAX_SHARE]
+            + [("figure", f) for f in anchors["figures"] + anchors["years"]
+               if share("f:" + f, lambda t, f=f: _has_word(t.replace(",", ""), f)) <= DISTINCTIVE_MAX_SHARE]
+            + [("date", (m, d)) for m, d in anchors["dates"]
+               if share(f"d:{m}{d}", lambda t, m=m, d=d: _date_in(t, m, d)) <= DISTINCTIVE_MAX_SHARE])
+        if not details:
+            continue
+        kept = []
+        for sup in near:
+            norm = normalize_for_quote(sup.get("passage_text", ""))
+            found = [v for kind, v in details
+                     if (kind == "name" and _has_word(norm, v))
+                     or (kind == "figure" and _has_word(norm.replace(",", ""), v))
+                     or (kind == "date" and _date_in(norm, *v))]
+            if len(found) >= 2 or any(kind != "name" for kind, v in details if v in found):
+                one = {"names": [v for v in found if isinstance(v, str) and not v.isdigit()],
+                       "figures": [], "years": [v for v in found if isinstance(v, str) and v.isdigit()],
+                       "dates": [v for v in found if isinstance(v, tuple)]}
+                sup = {**sup, "match_type": "near",
+                       "anchors": [v if isinstance(v, str) else f"{v[0]} {v[1]}" for v in found],
+                       "highlights": _highlights(sup.get("passage_text", ""), sup.get("passage_offset", 0), one)}
+                kept.append(sup)
+        if kept:
+            e["supports"] = kept
+            e["provenance"] = "corpus"
+            added += 1
+    return added
+
+
 # ── Sorting the rest: fact, analysis or suggestion ───────────────────────────
 
 CLASSIFY_BATCH = 50
@@ -562,6 +622,9 @@ def recount(entries: dict) -> None:
     st["cited_by_anchors"] = sum(
         1 for e in claims if e.get("provenance") == "corpus"
         and (e.get("supports") or [{}])[0].get("match_type") == "anchors")
+    st["cited_near_cutoff"] = sum(
+        1 for e in claims if e.get("provenance") == "corpus"
+        and (e.get("supports") or [{}])[0].get("match_type") == "near")
     st["list_items_cited"] = sum(1 for e in claims if e.get("provenance") == "corpus" and e.get("kind") == "list_item")
     st["table_rows_cited"] = sum(1 for e in claims if e.get("provenance") == "corpus" and e.get("kind") == "table_row")
 
