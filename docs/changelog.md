@@ -118,6 +118,7 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - `OLLAMA_THINK=on` sends `"think": true` on every Ollama call, and the app discards the thinking. A model that rejects thinking is remembered and retried without it. It's off by default.
 - A research turn that reaches the output limit without calling a tool now gets a firm nudge to submit facts, instead of "please continue". The forced summary gets 4,096 tokens.
 - Tests start from the default provider settings whatever the local `.env` says.
+- A second GLM-5.3 run with `OLLAMA_THINK=on` also added no facts. Search and fetching worked: 6 searches, 7 pages. But 7 of 10 turns, and the forced summary, spent their whole output budget on thinking, so no tool was called. Thinking counts against the per-turn limit. GLM stalls at the step that writes facts with exact quotes. Decision (2026-09-28): research stays on Claude. The Ollama path stays available for testing other models; the evaluation measures one in a single run.
 
 ### Stale browser tabs
 - A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.
