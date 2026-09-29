@@ -107,6 +107,12 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - A title glued onto a sentence no longer counts after a quote mark or backtick. A candidate title must also be at most 120 characters, and it must reach a prose line of 25 or more characters within three headings, which an outline with nothing under its headings fails. On that draft, the cut now lands on "# Beat Book: Chicago Housing Authority & Cook County Government" and removes 4,573 characters.
 - Not handled: a model that restarts the book when asked to continue a draft that hit the length limit. GLM did this, so repeated sections after the title remain.
 
+### Web research on Ollama
+- `RESEARCH_PROVIDER=ollama` runs the research step on an Ollama model (`RESEARCH_OLLAMA_MODEL`, else `OLLAMA_CHAT_MODEL`). The research loop now goes through a small backend layer. Anthropic keeps its streamed requests, server-side search and container handling. Ollama goes through the app's Ollama chat provider.
+- Ollama models can't search on their own, so `web_search.py` calls Ollama's search service when the model asks. Results feed the fetch allowlist, and snippets stay unquotable. Searches are capped at 6 per run in the app. Without `OLLAMA_API_KEY`, research runs without search.
+- On Ollama, each page shown to the model is capped at 16,000 characters, where Claude sees 60,000. The model's earlier prose isn't sent back each turn, because GLM-5.3 writes out its reasoning, which would fill the 64k context. The full page text is still kept for the quote check.
+- The Anthropic key is required only when a configured step uses Anthropic. The build record, egress table and evaluation report name the research provider and model.
+
 ### Stale browser tabs
 - A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.
 - The reader now removes any marker it doesn't recognize. The app page is served with `Cache-Control: no-cache`. New `GET /api/version` fingerprints the frontend files, and an open tab checks it on focus, showing "Beat Book has been updated. Reload to use the new version" when it changes.

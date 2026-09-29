@@ -162,11 +162,14 @@ class PageFetcher:
     fetched, and the text of every page read."""
 
     def __init__(self, max_fetches: int, seed_text: Iterable[str] = (),
-                 allow_hosts_from: Iterable[str] = ()):
+                 allow_hosts_from: Iterable[str] = (), max_shown_chars: int = MAX_SHOWN_CHARS):
         """`seed_text`: text whose URLs may be fetched (the beat book).
         `allow_hosts_from`: text whose URLs' hosts may be fetched at any
         path (the vetted data portals in the research prompt)."""
         self.max_fetches = max_fetches
+        # How much of each page the model sees. Smaller for models with a
+        # small context window; the full text is still kept for checking.
+        self.max_shown_chars = max_shown_chars
         self.network_fetches = 0
         self.allowed: Set[str] = set()
         self.allowed_hosts: Set[str] = set()
@@ -220,16 +223,17 @@ class PageFetcher:
             page = cached
             cached_copy = True
         text = page.get("text") or ""
+        shown_limit = self.max_shown_chars
         rec = {"url": url, "final_url": page.get("final_url", url), "title": page.get("title", ""),
-               "chars": len(text), "shown_chars": min(len(text), MAX_SHOWN_CHARS),
-               "truncated": len(text) > MAX_SHOWN_CHARS, "cached": cached_copy,
+               "chars": len(text), "shown_chars": min(len(text), shown_limit),
+               "truncated": len(text) > shown_limit, "cached": cached_copy,
                "via": page.get("via", ""), "text": text}
         self.read[url] = rec
         self.allow_from(text)
         if not text.strip():
             return {"ok": True, "record": rec, "text": f"Fetched {url}, but no readable text was found."}
-        shown = text[:MAX_SHOWN_CHARS]
-        note = f"\n\n[Truncated: showing {MAX_SHOWN_CHARS:,} of {len(text):,} characters.]" if rec["truncated"] else ""
+        shown = text[:shown_limit]
+        note = f"\n\n[Truncated: showing {shown_limit:,} of {len(text):,} characters.]" if rec["truncated"] else ""
         age = ""
         if cached_copy:
             age = f" (cached copy from {time.strftime('%Y-%m-%d', time.localtime(page.get('fetched_at', 0)))})"

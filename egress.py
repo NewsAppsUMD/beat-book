@@ -52,6 +52,17 @@ def egress_plan(web_research: bool = True) -> List[Dict[str, Any]]:
     anthropic = _destination("api.anthropic.com", "Anthropic")
     firecrawl = bool(os.environ.get("FIRECRAWL_API_KEY", "").strip())
 
+    from research_agent import research_provider
+    research = research_provider()
+    if research["provider"] == "ollama":
+        research_to = _destination(_host_of(os.environ.get("OLLAMA_CHAT_HOST", "https://ollama.com")), "Ollama")
+        from web_search import ollama_search_host
+        research_search_note = (f"Searches run through Ollama's search service ({_host_of(ollama_search_host())})"
+                                if research["search"] else "Web search is off (no OLLAMA_API_KEY)")
+    else:
+        research_to = anthropic
+        research_search_note = "Searches run at Anthropic"
+
     rows: List[Dict[str, Any]] = []
     if firecrawl:
         rows.append({
@@ -105,10 +116,10 @@ def egress_plan(web_research: bool = True) -> List[Dict[str, Any]]:
             "stage": "Add web research",
             "phase": "generate",
             "sends": "The full draft beat book, not the source stories, plus the text of "
-                     "web pages it reads. Searches run at Anthropic; pages are fetched "
-                     + ("by Firecrawl" if firecrawl else "from this machine"),
+                     "web pages it reads. " + research_search_note
+                     + "; pages are fetched " + ("by Firecrawl" if firecrawl else "from this machine"),
             "content": "derived",
-            "to": anthropic,
+            "to": research_to,
         },
         {
             "stage": "Sort unsourced claims",

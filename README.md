@@ -215,6 +215,8 @@ The app inserts accepted facts itself and writes the attribution from the page. 
 
 Searches run on Anthropic's servers. Pages are fetched by the app (`page_fetcher.py`), from your machine, or through Firecrawl when `FIRECRAWL_API_KEY` is set. The agent can only fetch URLs already seen in the run, plus pages on the vetted data portals in its prompt. Each redirect is checked against private and loopback addresses. Repeat requests return a note, not the page again, and pages are cached in `.cache/web_pages/` for seven days. At most 8 new pages are fetched per run, and at most 25 facts are added per book.
 
+**Research on Ollama.** Set `RESEARCH_PROVIDER=ollama` to run research on an Ollama model, `RESEARCH_OLLAMA_MODEL` or else `OLLAMA_CHAT_MODEL`, in place of Claude. Ollama models can't search on their own. The app calls Ollama's search service (`POST https://ollama.com/api/web_search`, authorized by `OLLAMA_API_KEY`) when the model asks, the same way it runs its page fetcher. Without a key, research runs without search and uses only URLs in the book and the vetted portals. Pages shown to an Ollama model are capped at 16,000 characters, and its earlier prose isn't sent back each turn, so a run fits the provider's 64k-token context. The checks on every fact are the same as on Claude: a weaker model gets more rejections, not more errors. With `CHAT_PROVIDER=ollama` as well, a book builds without an Anthropic key, except for OCR of scanned PDFs.
+
 To test the research step, run the evaluation. It builds each fixed corpus several times and checks every run against stated targets: every web line quoted, no story claims lost, and every quote re-verified.
 
 ```bash
