@@ -176,3 +176,17 @@ def test_unreadable_reply_is_recorded():
     info = ce.classify_claims(e, Garbled())
     assert e["entries"][0]["provenance"] == "unsupported"
     assert "verdict" in info["errors"][0]
+
+
+def test_date_pinned_down_by_a_weekday_is_not_called_outside_the_stories():
+    idx = {"articles": [
+        {"article_id": "a", "date": "2026-06-05",
+         "content": "The Bears' board of directors voted Thursday to advance the Hammond plan, "
+                    "then announced it Friday."},
+    ]}
+    e = _entries("The Bears' board of directors voted June 4 to advance Hammond.",
+                 "The Bears' board of directors voted June 2 to advance Hammond.")
+    ce.explain_unsourced(e, idx)
+    assert e["entries"][0]["unsourced_reason"] == "in_stories"
+    assert e["entries"][1]["unsourced_reason"] == "outside_stories"
+    assert e["entries"][1]["details_not_in_stories"] == ["June 2"]

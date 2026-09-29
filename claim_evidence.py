@@ -24,11 +24,13 @@ Two passes over the citation entries, after embedding matching:
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
 from typing import Any, Dict, List
 
-from research_facts import _STOPWORDS, _split_dates, figures_in, key_words, normalize_for_quote
+from research_facts import (_STOPWORDS, _split_dates, dates_implied_by, figures_in, key_words,
+                            normalize_for_quote)
 
 # ── Anchors ──────────────────────────────────────────────────────────────────
 
@@ -597,16 +599,32 @@ def explain_unsourced(entries: dict, source_index: Dict[str, Any]) -> Dict[str, 
     ("outside_stories", "outcome_not_stated", "in_stories" or "no_details") and, for
     "outside_stories", the details found in no story (`details_not_in_stories`).
     Returns counts per reason."""
-    corpus = "\n".join(normalize_for_quote(a.get("content", "")) for a in source_index.get("articles", []))
+    articles = source_index.get("articles", [])
+    corpus = "\n".join(normalize_for_quote(a.get("content", "")) for a in articles)
     digits = corpus.replace(",", "")
     counts = {k: 0 for k in UNSOURCED_REASONS}
+
+    def published(a: Dict[str, Any]) -> Any:
+        try:
+            return datetime.date.fromisoformat(str(a.get("date", ""))[:10])
+        except ValueError:
+            return None
+
+    def date_found(claim: str, month: str, day: str) -> bool:
+        """Written out in a story, or pinned down by one: "Thursday" in a
+        story published Friday, June 5 is June 4."""
+        if _date_in(corpus, month, day):
+            return True
+        return any((month, str(int(day))) == (m, d)
+                   for a in articles
+                   for m, d, _ in dates_implied_by(a.get("content", ""), published(a), claim))
     for e in entries.get("entries", []):
         if e.get("passthrough") or e.get("provenance") != "unsupported":
             continue
         anchors = anchors_in(e.get("content", ""))
         checks = ([(n, _has_word(corpus, n)) for n in anchors["names"]]
                   + [(f, _has_word(digits, f)) for f in anchors["figures"] + anchors["years"]]
-                  + [(f"{_MONTH_FULL.get(m, m).title()} {int(d)}", _date_in(corpus, m, d))
+                  + [(f"{_MONTH_FULL.get(m, m).title()} {int(d)}", date_found(e.get("content", ""), m, d))
                      for m, d in anchors["dates"]])
         missing = [_as_written(e.get("content", ""), label) for label, found in checks if not found]
         if not checks:
