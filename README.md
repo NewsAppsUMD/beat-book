@@ -179,6 +179,17 @@ OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
+A variable exported in your shell overrides the same one in `.env`. At startup the app prints the chat, embedding and research models it will use, plus a warning for each `.env` value the shell overrides. Check that log after switching models. If a model is set in the shell, run `unset OLLAMA_CHAT_MODEL` (or the variable the warning names) before `make run`.
+
+**Damaged drafts.** Some models write out their reasoning in the answer, or rewrite the whole book when asked to continue it. After each build the app checks the draft for:
+
+- a missing title
+- a length far past the target
+- repeated sections
+- lines that read like the model's reasoning
+
+A book that fails gets a ⚠ in the sidebar and the library, and a banner in the reader that explains what was found. The result is saved in the build record. Books built before this check are checked once at startup.
+
 ### What stays on Anthropic
 
 Even with `CHAT_PROVIDER=ollama`, two features still use the Anthropic API:

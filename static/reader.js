@@ -22,6 +22,7 @@
   let ticking = false;
   let isNavTicking = false;
   let currentBookId = null;
+  let bookWarning = "";        // why the draft check thinks this book is damaged
   let calibration = null;       // per-corpus similarity threshold block
   let sourcingStats = null;     // counts of cited / web / unsourced claims
   let manifestCache = null;     // lazily loaded <stem>.manifest.json
@@ -386,7 +387,9 @@
         <dt>Topics used</dt><dd>${(m.selected_topics || []).map(escapeHtml).join(', ') || '—'}</dd>
         <dt>Stories</dt><dd>${fmtNum(agent.stories_in_scope)} in the selected topics, of ${fmtNum(corpus.num_stories)} uploaded</dd>
       </dl>
-      ${(m.errors || []).length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${m.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}`;
+      ${(m.errors || []).length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${m.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}
+      ${m.draft_check && !m.draft_check.ok ? `<div class="mf-errors"><strong>The draft looks damaged</strong><ul>${m.draft_check.problems.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul></div>` : ''}
+      ${(m.settings_from_shell || []).length ? `<p class="mf-note">These settings came from the shell that started the server, overriding .env: ${m.settings_from_shell.map(escapeHtml).join(', ')}.</p>` : ''}`;
 
     const stageRows = [['write', 'Explore stories and write the draft'], ['research', 'Web research'], ['citations', 'Match citations']]
       .filter(([k]) => stages[k]).map(([k, label]) => `<tr><td>${label}</td><td>${escapeHtml(fmtSeconds(stages[k].seconds))}</td></tr>`).join('');
@@ -713,6 +716,11 @@
     return i === -1 ? extra + html : html.slice(0, i + 5) + extra + html.slice(i + 5);
   }
 
+  function renderWarning() {
+    if (!bookWarning) return '';
+    return `<div class="book-damaged" role="alert"><strong>This book may be damaged.</strong> ${escapeHtml(bookWarning)} This usually happens when a model writes out its reasoning in the answer. Rebuild it, or build it with a different writing model. See "How this book was made" for which model wrote it.</div>`;
+  }
+
   function renderSourcingSummary() {
     const st = sourcingStats;
     if (!st || !st.claims) return '';
@@ -905,7 +913,7 @@
     html = html
       .replace(/\[\[PV:[^\]]*\]\]/g, '<span class="claim">')
       .replace(/\[\[(?:WEB|CITE)[^\]]*\]\]/g, '');
-    html = insertAfterFirstH1(html, renderSourcingSummary());
+    html = insertAfterFirstH1(html, renderWarning() + renderSourcingSummary());
     if (Object.keys(sourcesByKey).length > 0) html += renderFootnotesSection(sourcesByKey);
 
     const contentEl = $('reader-content');
@@ -927,7 +935,7 @@
       return;
     }
     const contentEl = $('reader-content');
-    contentEl.innerHTML = marked.parse(markdown);
+    contentEl.innerHTML = insertAfterFirstH1(marked.parse(markdown), renderWarning());
     contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, table, pre').forEach((el, i) => {
       el.classList.add('fade-in');
       el.style.animationDelay = `${i * 0.03}s`;
@@ -956,6 +964,7 @@
       }
     }
     currentBookId = opts.id || null;
+    bookWarning = opts.warning || "";
     $('reader-content').innerHTML = '<p class="reader-loading">Loading…</p>';
     $('reader-content').classList.remove('show-sourcing');
     const howBtn = $('reader-howmade');

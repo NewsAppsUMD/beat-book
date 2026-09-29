@@ -2092,3 +2092,15 @@ button.web-badge:hover { border-color: var(--prov-web); }
   background: var(--accent-soft); border: 1px solid var(--border-strong); color: var(--text);
   font-size: 0.88rem; box-shadow: 0 4px 16px rgba(0,0,0,0.08);
 }
+
+/* Damaged-draft warning */
+.book-damaged {
+  margin: -1rem 0 1.25rem; padding: 0.75rem 1rem; border-radius: var(--radius);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  color: var(--text); font-size: 0.9rem; line-height: 1.5;
+}
+.book-damaged strong { color: var(--danger); }
+.book-warning { color: var(--danger); font-size: 0.8rem; margin-left: 0.3rem; flex-shrink: 0; }
+.library-card-warning { margin-top: 0.4rem; font-size: 0.78rem; color: var(--danger); }
+.book-damaged + .sourcing-summary { margin-top: 0; }

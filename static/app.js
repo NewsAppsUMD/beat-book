@@ -147,6 +147,7 @@
       item.innerHTML =
         `<span class="status-dot ${dotClass(b)}" title="${escapeHtml(b.status)}"></span>` +
         `<span class="book-title">${escapeHtml(b.title || "Untitled")}</span>` +
+        (b.warning ? `<span class="book-warning" title="${escapeHtml("May be damaged: " + b.warning)}">⚠</span>` : "") +
         `<button class="book-item-menu" aria-label="More actions">⋯</button>`;
       item.addEventListener("click", () => activateBook(b.id));
       item.querySelector(".book-item-menu").addEventListener("click", (e) => openBookMenu(b.id, e));
@@ -181,7 +182,8 @@
           statusHtml +
           (created ? `<span>${created}</span>` : "") +
           (counts.length ? `<span>${counts.join(" · ")}</span>` : "") +
-        `</div>`;
+        `</div>` +
+        (b.warning ? `<div class="library-card-warning" title="${escapeHtml(b.warning)}">⚠ May be damaged. Open it to see why.</div>` : "");
       card.addEventListener("click", () => activateBook(b.id));
       libraryGrid.appendChild(card);
     }
@@ -208,7 +210,7 @@
     if (!b || b.status !== "ready" || !b.stem) return;
     currentBookId = id;
     showView("reader");
-    window.Reader.open(b.stem, { title: b.title, id });
+    window.Reader.open(b.stem, { title: b.title, id, warning: b.warning || "" });
     if (isUnread(b)) {
       b.opened_at = Date.now() / 1000;       // optimistic
       renderSidebar(); renderLibrary();

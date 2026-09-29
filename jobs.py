@@ -49,6 +49,8 @@ from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
 from egress import egress_summary
 from claim_evidence import add_anchor_evidence, classify_claims, explain_unsourced, recount
+from draft_check import check_draft
+from env_settings import ENV_OVERRIDES
 import research_agent as _research_mod
 
 MANIFEST_VERSION = 1
@@ -255,6 +257,8 @@ async def run_generation(
             "research": {"provider": "anthropic", "model": _research_mod.MODEL},
         },
         "egress": egress_summary(),
+        # .env settings a shell variable overrode when the server started.
+        "settings_from_shell": list(ENV_OVERRIDES),
         "corpus": _corpus_record(pipeline_result),
         "stages": {},
         "agent": agent_trace,
@@ -358,6 +362,14 @@ async def run_generation(
 
         # 4. Canonical markdown.
         (OUTPUT_DIR / filename).write_text(revised_markdown, encoding="utf-8")
+
+        # Label a damaged draft (reasoning left in, the book written twice)
+        # instead of presenting it as an ordinary finished book.
+        verdict = check_draft(revised_markdown, target_words)
+        manifest["draft_check"] = verdict
+        store.update_book(book_id, warning=" ".join(verdict["problems"]))
+        if not verdict["ok"]:
+            await emit({"type": "error", "text": "This book may be damaged. " + " ".join(verdict["problems"])})
         await emit({"type": "beat_book_markdown_saved", "filename": filename})
 
         final_title = _title_from_markdown(markdown) or _title_from_markdown(revised_markdown) or (book["title"] if book else stem)

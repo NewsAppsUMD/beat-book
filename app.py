@@ -35,14 +35,51 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-# Load .env
-_env_file = Path(__file__).parent / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+# Load .env (a shell variable wins; differences are recorded, see env_settings).
+from env_settings import ENV_OVERRIDES, is_secret as _is_secret, load_env
+load_env(Path(__file__).parent / ".env")
+
+
+def _check_existing_books() -> int:
+    """Run the damaged-draft check once on ready books built before it
+    existed (records with no "warning" field). Returns how many it flagged."""
+    from draft_check import check_draft
+    flagged = 0
+    for rec in store.list_books():
+        if rec.get("status") != "ready" or "warning" in rec:
+            continue
+        md = OUTPUT_DIR / f"{rec.get('stem', '')}.md"
+        if not md.exists():
+            continue
+        verdict = check_draft(md.read_text(encoding="utf-8"), int(rec.get("target_words") or 2000))
+        store.update_book(rec["id"], warning=" ".join(verdict["problems"]))
+        flagged += 0 if verdict["ok"] else 1
+    return flagged
+
+
+def log_model_settings() -> None:
+    """Print the models this server will use, and any .env setting a shell
+    variable is overriding (values shown only for non-secrets)."""
+    try:
+        chat = get_chat_provider()
+        print(f"[startup] chat: {type(chat).__name__} (writing {chat.agent_model}, exploring "
+              f"{chat.explore_model}, labels {chat.label_model})", flush=True)
+    except Exception as e:
+        print(f"[startup] chat provider not configured: {e}", flush=True)
+    try:
+        emb = get_embed_client()
+        print(f"[startup] embeddings: {get_embed_provider()} {getattr(emb, 'model_name', '')}", flush=True)
+    except Exception as e:
+        print(f"[startup] embeddings not configured: {e}", flush=True)
+    try:
+        from research_agent import MODEL as _research_model
+        print(f"[startup] research: anthropic {_research_model}", flush=True)
+    except Exception:
+        pass
+    for name in ENV_OVERRIDES:
+        shown = "" if _is_secret(name) else f" ({os.environ.get(name)!r})"
+        print(f"[startup] WARNING: {name} is set in the shell{shown} and overrides the "
+              f"different value in .env. Unset it in this shell to use .env.", flush=True)
 
 from pipeline import run_pipeline, PipelineResult
 from agent import _derive_filename, LENGTH_PRESETS, DEFAULT_TARGET_WORDS
@@ -78,6 +115,10 @@ async def lifespan(app: FastAPI):
     adopted = store.adopt_orphan_files()
     if adopted:
         print(f"[startup] adopted {adopted} pre-existing beat book(s) into library", flush=True)
+    log_model_settings()
+    flagged = _check_existing_books()
+    if flagged:
+        print(f"[startup] {flagged} existing beat book(s) look damaged; they are marked in the library", flush=True)
     job_queue = asyncio.Queue()
     _worker_task = asyncio.create_task(generation_worker(job_queue, book_jobs))
     print("[startup] generation worker started (single process — do not use "
