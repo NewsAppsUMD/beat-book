@@ -375,8 +375,7 @@
   function safeHref(url) { return /^https?:\/\//i.test(url || '') ? escapeHtml(url) : '#'; }
 
   // ── "How this book was made": the build record as a timeline ────────────
-  // A summary card (status, key outcomes, a waterfall of the stages on one
-  // time axis), then the stages in the order they ran. Each stage opens to
+  // The stages in the order they ran. Each stage opens to
   // an activity feed of what its agent did, turn by turn. Records made
   // before steps were timestamped keep the order, without clock times.
   function fmtClock(sec) {
@@ -572,7 +571,6 @@
     const agent = m.agent || {}, research = m.research || {}, stages = m.stages || {};
     const cites = m.citations || {}, stats = cites.stats || {}, corpus = m.corpus || {};
     const cal = cites.calibration || {};
-    const total = m.seconds;
     const webOff = research.skipped || m.web_research === false;
     const accepted = research.facts_accepted || [], rejected = research.facts_rejected || [];
     const read = agent.stories_read || [], scanned = agent.stories_scanned_only || [];
@@ -673,32 +671,7 @@
       open: problems.length > 0,
     }));
 
-    // Summary card with a waterfall of the stages on one time axis.
-    const bars = [['write', 'Write'], ['trim', 'Trim'], ['research', 'Research'], ['citations', 'Match']]
-      .filter(([k]) => stages[k] && typeof stages[k].started_at === 'number' && total && t0)
-      .map(([k, label]) => ({ k, label, left: ((stages[k].started_at - t0) / total) * 100, width: (stages[k].seconds / total) * 100, seconds: stages[k].seconds }));
-    const hue = { write: 'write', trim: 'neutral', research: 'web', citations: 'cite' };
-    const waterfall = bars.length ? `
-      <div class="bt-waterfall" role="img" aria-label="${escapeHtml(bars.map(b => `${b.label} ${fmtSeconds(b.seconds)}`).join(', '))}">
-        ${bars.map(b => `<span class="bt-seg bt-hue-${hue[b.k]}" style="left:${b.left.toFixed(2)}%;width:${Math.max(b.width, 0.8).toFixed(2)}%"></span>`).join('')}
-      </div>
-      <div class="bt-axis"><span>0:00</span><span>${escapeHtml(fmtClock(total))}</span></div>
-      <ul class="bt-legend">${bars.map(b => `<li class="bt-hue-${hue[b.k]}"><span class="bt-swatch"></span>${escapeHtml(b.label)} <span class="bt-muted">${escapeHtml(fmtSeconds(b.seconds))}</span></li>`).join('')}</ul>` : '';
-    const timed = (agent.model_calls || []).some(c => typeof c.t === 'number');
-    const stat = (value, label) => `<div><dd>${value}</dd><dt>${escapeHtml(label)}</dt></div>`;
-    const summary = `<section class="bt-summary">
-      <div class="bt-status bt-status-${failed ? 'failed' : problems.length ? 'warn' : 'ok'}">${btIcon(failed ? 'x' : problems.length ? 'alert' : 'check')}${failed ? 'Build failed' : problems.length ? 'Ready, with problems' : 'Ready'}</div>
-      <p class="bt-when">${m.started_at ? `Built ${escapeHtml(new Date(m.started_at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}` : ''}${total ? ` · took ${escapeHtml(fmtSeconds(total))}` : ''}</p>
-      <dl class="bt-stats">
-        ${stat(`${fmtNum(read.length)}<small> / ${fmtNum(agent.stories_in_scope)}</small>`, 'stories read in full')}
-        ${stat(webOff ? '—' : fmtNum(accepted.length), webOff ? 'web research off' : 'web facts added')}
-        ${stats.claims ? stat(`${fmtNum(stats.cited)}<small> / ${fmtNum(stats.claims)}</small>`, 'claims matched to stories') : ''}
-      </dl>
-      ${waterfall}
-      ${timed ? '' : '<p class="bt-note">This book was built before each step was timed, so steps are in order without times.</p>'}
-    </section>`;
-
-    return `<div class="bt">${summary}<ol class="bt-stages">${list.join('')}</ol></div>`;
+    return `<div class="bt"><ol class="bt-stages">${list.join('')}</ol></div>`;
   }
 
   async function openManifest() {
