@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=PT+Sans:wght@400;700&family=PT+Sans+Caption:wght@400;700&display=swap"
     rel="stylesheet">
-  <link rel="stylesheet" href="/static/style.css?v=18">
+  <link rel="stylesheet" href="/static/style.css?v=20">
   <script src="/static/vendor/marked.min.js"></script>
 </head>
 
@@ -199,6 +199,18 @@
                   </div>
                 </div>
 
+                <div class="style-selector">
+                  <div class="style-heading">Web research</div>
+                  <label class="research-toggle" for="web-research-toggle">
+                    <input type="checkbox" id="web-research-toggle" checked>
+                    <span class="research-toggle-switch" aria-hidden="true"></span>
+                    <span class="research-toggle-text">
+                      <span class="style-name">Add facts from the web</span>
+                      <span class="style-desc">Claude searches for newer facts and adds each one with a quote the app checked against the page. It sends the draft, not your stories, to Anthropic, and adds a few minutes. Turn it off to build only from your stories.</span>
+                    </span>
+                  </label>
+                </div>
+
                 <details class="egress-plan" id="egress-plan" hidden>
                   <summary id="egress-plan-summary">Where your material goes</summary>
                   <p class="egress-plan-lede" id="egress-plan-lede"></p>
@@ -248,7 +260,7 @@
                     <span class="step-icon" aria-hidden="true"></span>
                     <div class="step-body">
                       <div class="step-title">Research context</div>
-                      <div class="step-sub">Browsing the web for additional reporting context</div>
+                      <div class="step-sub" id="research-step-sub">Browsing the web for additional reporting context</div>
                     </div>
                   </li>
                   <li class="step" data-step="cite">
@@ -368,8 +380,8 @@
     </div>
   </div>
 
-  <script src="/static/reader.js?v=18"></script>
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/reader.js?v=20"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 
 </html>

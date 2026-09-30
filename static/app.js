@@ -314,6 +314,9 @@
             setStage("review"); setShimmerDeterminate(pct / 100);
           }
           break;
+        case "research_skipped":
+          if (drive) markResearchSkipped();
+          break;
         case "research_started":
           if (drive) { setGenerating("Researching context", "Opening the sandbox for the research agent…"); setStage("research"); setShimmerIndeterminate(); }
           break;
@@ -783,6 +786,21 @@
     $("create-scroll").scrollTo({ top: 0 });
   }
 
+  // Web research on/off: the viewer's last choice is remembered in this
+  // browser, and the egress table follows it.
+  const researchToggle = $("web-research-toggle");
+  function webResearchOn() { return !researchToggle || researchToggle.checked; }
+  if (researchToggle) {
+    try {
+      const saved = localStorage.getItem("beatbook.webResearch");
+      if (saved !== null) researchToggle.checked = saved === "on";
+    } catch (e) { /* storage unavailable: keep the default */ }
+    researchToggle.addEventListener("change", () => {
+      try { localStorage.setItem("beatbook.webResearch", researchToggle.checked ? "on" : "off"); } catch (e) {}
+      renderEgressPlan();
+    });
+  }
+
   // Show, from the server's current configuration, what each stage sends off
   // this machine and where — before the reporter commits to generating.
   async function renderEgressPlan() {
@@ -790,7 +808,7 @@
     if (!box) return;
     let plan;
     try {
-      const r = await fetch("/api/egress-plan");
+      const r = await fetch(`/api/egress-plan?web_research=${webResearchOn()}`);
       if (!r.ok) throw new Error();
       plan = await r.json();
     } catch (e) { box.hidden = true; return; }
@@ -844,7 +862,7 @@
       const style = styleRadio ? styleRadio.value : "narrative";
       const lengthRadio = document.querySelector('input[name="length"]:checked');
       const length = lengthRadio ? lengthRadio.value : "standard";
-      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style, length }) });
+      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style, length, web_research: webResearchOn() }) });
       const data = await resp.json();
       if (!resp.ok) { setGenerating("Couldn't start", data.error || "Failed to enqueue generation."); setShimmerIndeterminate(); return; }
       setWorking(false);                          // generation is server-side now
@@ -900,7 +918,20 @@
     });
   }
   function markAllStagesDone() { if (stepperEl) stepperEl.querySelectorAll(".step").forEach(el => { el.classList.remove("active"); el.classList.add("done"); }); }
-  function resetStages() { stagesReached.clear(); }
+  const RESEARCH_SUB = "Browsing the web for additional reporting context";
+  function markResearchSkipped() {
+    const el = stepperEl && stepperEl.querySelector('.step[data-step="research"]');
+    if (el) el.classList.add("skipped");
+    const sub = $("research-step-sub");
+    if (sub) sub.textContent = "Turned off for this book";
+  }
+  function resetStages() {
+    stagesReached.clear();
+    const el = stepperEl && stepperEl.querySelector('.step[data-step="research"]');
+    if (el) el.classList.remove("skipped");
+    const sub = $("research-step-sub");
+    if (sub) sub.textContent = RESEARCH_SUB;
+  }
   function setShimmerDeterminate(fraction) { if (shimmerBar && shimmerFill) { shimmerBar.classList.add("determinate"); shimmerFill.style.width = `${Math.min(Math.max(fraction, 0), 1) * 100}%`; } }
   function setShimmerIndeterminate() { if (shimmerBar && shimmerFill) { shimmerBar.classList.remove("determinate"); shimmerFill.style.width = ""; } }
 

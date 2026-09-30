@@ -203,6 +203,8 @@ If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely
 
 ### How web research works
 
+Web research is optional. The **Web research** toggle on the topic screen turns it off for a book; the browser remembers the choice. With it off, the book comes only from your stories and the writing model, the research step is left out of the "Where your material goes" table, and the build record says research was off. With an Ollama writing model and research off, a build needs no Anthropic key.
+
 The research step (`research_agent.py`, Claude Sonnet 4.6) adds current context from the web, but it cannot edit the beat book. It reads the draft, searches the web, and fetches pages. For each fact it wants to add, it submits the fact with a verbatim quote from a page it fetched. The app then checks each submission (`research_facts.py`):
 
 - The quote must appear on that page. Whitespace, quote marks, dashes, Markdown formatting and stray spaces from page extraction are ignored. A quote may join several verbatim passages from the page, with or without "…", the way a reporter excerpts. Each passage must be at least 20 characters and appear on the page, and the reader shows them joined with "…".

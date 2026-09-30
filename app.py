@@ -254,10 +254,11 @@ async def embed_config():
 
 
 @app.get("/api/egress-plan")
-async def egress_plan_endpoint():
+async def egress_plan_endpoint(web_research: bool = True):
     """What each stage sends off this machine, and where, under the current
-    configuration. Shown on the create screen before generation starts."""
-    return JSONResponse(egress_summary())
+    configuration. Shown on the create screen before generation starts;
+    ?web_research=false leaves out the research step."""
+    return JSONResponse(egress_summary(web_research))
 
 
 async def _run_ingest_job(
@@ -803,6 +804,7 @@ class CreateBookRequest(BaseModel):
     title: Optional[str] = None
     style: str = "narrative"
     length: str = "standard"        # brief | standard | indepth (see LENGTH_PRESETS)
+    web_research: bool = True       # add checked facts from the web (Claude)
 
 
 class PatchBookRequest(BaseModel):
@@ -925,7 +927,8 @@ async def create_book_endpoint(body: CreateBookRequest):
         style=style,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, target_words=target_words, embed_model=sess.embed_model)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style,
+                  target_words=target_words, embed_model=sess.embed_model, web_research=body.web_research)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])

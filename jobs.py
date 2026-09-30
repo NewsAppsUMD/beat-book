@@ -81,6 +81,7 @@ class BookJob:
     style: str = "narrative"
     target_words: int = 2000
     embed_model: Optional[str] = None
+    web_research: bool = True
     status: str = "queued"
     events: List[dict] = field(default_factory=list)
     subscribers: set = field(default_factory=set)        # set[asyncio.Queue]
@@ -212,6 +213,7 @@ async def run_generation(
     style: str = "narrative",
     target_words: int = 2000,
     chat_provider: Optional[ChatProvider] = None,
+    web_research: bool = True,
 ) -> None:
     """Run one beat book end to end. Never raises — terminal state is recorded
     in the store and emitted as a ``beat_book`` or ``error`` event."""
@@ -221,13 +223,18 @@ async def run_generation(
     stem = book["stem"] if book else f"beat_book_{book_id}"
     filename = f"{stem}.md"
 
-    if not anthropic_key:
-        store.update_book(book_id, status="failed", error="ANTHROPIC_API_KEY not configured.")
-        await emit({"type": "error", "text": "ANTHROPIC_API_KEY not configured."})
+    # Anthropic is needed for web research, and for writing unless an
+    # Ollama model writes. Without research, an Ollama build needs no key.
+    writes_on_anthropic = (type(chat_provider).__name__ == "AnthropicChatProvider" if chat_provider is not None
+                           else os.environ.get("CHAT_PROVIDER", "anthropic").strip().lower() != "ollama")
+    if not anthropic_key and (web_research or writes_on_anthropic):
+        why = "web research" if web_research and not writes_on_anthropic else "this build"
+        store.update_book(book_id, status="failed", error=f"ANTHROPIC_API_KEY not configured ({why} needs it).")
+        await emit({"type": "error", "text": f"ANTHROPIC_API_KEY not configured ({why} needs it)."})
         await emit({"type": "status", "status": "failed"})
         return
 
-    store.update_book(book_id, status="generating", target_words=target_words)
+    store.update_book(book_id, status="generating", target_words=target_words, web_research=web_research)
     await emit({"type": "status", "status": "generating"})
 
     # ── Build manifest: a durable record of how this book was made ──────────
@@ -235,7 +242,7 @@ async def run_generation(
         chat_provider = get_chat_provider(api_key=anthropic_key)
     t_start = time.time()
     agent_trace: dict = {}
-    research_trace: dict = {}
+    research_trace: dict = {} if web_research else {"skipped": True}
     manifest: dict = {
         "manifest_version": MANIFEST_VERSION,
         "book_id": book_id,
@@ -256,8 +263,10 @@ async def run_generation(
                 "provider": get_embed_provider(),
                 "model": getattr(embed_client, "model_name", None) if embed_client else None,
             },
-            "research": {"provider": "anthropic", "model": _research_mod.MODEL},
+            "research": ({"provider": "anthropic", "model": _research_mod.MODEL} if web_research
+                         else {"provider": None, "model": None, "skipped": True}),
         },
+        "web_research": web_research,
         "egress": egress_summary(),
         # .env settings a shell variable overrode when the server started.
         "settings_from_shell": list(ENV_OVERRIDES),
@@ -334,35 +343,39 @@ async def run_generation(
         (OUTPUT_DIR / f"{stem}.draft.md").write_text(markdown, encoding="utf-8")
         t_research = time.time()
 
-        # 2. Run research sequentially on the real draft.
-        await emit({"type": "research_started", "filename": filename})
-        (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
-
-        async def on_research_progress(stage, detail):
-            await emit({"type": "research_progress", "stage": stage, "detail": detail})
-
-        async def on_research_tool_status(tool_name, desc, detail):
-            await emit({"type": "research_tool_status", "tool_name": tool_name, "tool": desc, "detail": detail})
-
-        async def on_research_text(text):
-            await emit({"type": "research_message", "text": text})
-
+        # 2. Run research sequentially on the real draft, unless the
+        #    reporter turned web research off.
         research_result: str | None = None
-        try:
-            research_result = await run_research_agent(
-                sandbox_dir=sandbox_dir,
-                markdown_filename=filename,
-                anthropic_api_key=anthropic_key,
-                on_progress=on_research_progress,
-                on_tool_status=on_research_tool_status,
-                on_text=on_research_text,
-                trace=research_trace,
-            )
-        except Exception as e:
-            traceback.print_exc()
-            manifest["errors"].append(f"research: {type(e).__name__}: {e}")
-            await emit({"type": "error",
-                        "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft."})
+        if not web_research:
+            await emit({"type": "research_skipped"})
+        else:
+            await emit({"type": "research_started", "filename": filename})
+            (sandbox_dir / filename).write_text(markdown, encoding="utf-8")
+
+            async def on_research_progress(stage, detail):
+                await emit({"type": "research_progress", "stage": stage, "detail": detail})
+
+            async def on_research_tool_status(tool_name, desc, detail):
+                await emit({"type": "research_tool_status", "tool_name": tool_name, "tool": desc, "detail": detail})
+
+            async def on_research_text(text):
+                await emit({"type": "research_message", "text": text})
+
+            try:
+                research_result = await run_research_agent(
+                    sandbox_dir=sandbox_dir,
+                    markdown_filename=filename,
+                    anthropic_api_key=anthropic_key,
+                    on_progress=on_research_progress,
+                    on_tool_status=on_research_tool_status,
+                    on_text=on_research_text,
+                    trace=research_trace,
+                )
+            except Exception as e:
+                traceback.print_exc()
+                manifest["errors"].append(f"research: {type(e).__name__}: {e}")
+                await emit({"type": "error",
+                            "text": f"Research agent failed ({type(e).__name__}: {e}). Using draft."})
 
         # 3. The research agent receives the draft beat book in its sandbox,
         #    enriches it with web research, and returns the full revised
@@ -373,8 +386,9 @@ async def run_generation(
         else:
             revised_markdown = markdown
 
-        await emit({"type": "research_complete"})
-        _stage("research", t_research)
+        if web_research:
+            await emit({"type": "research_complete"})
+            _stage("research", t_research)
         manifest["research_changes"] = _draft_diff(markdown, revised_markdown)
 
         # 4. Canonical markdown.
@@ -581,6 +595,7 @@ async def generation_worker(job_queue: asyncio.Queue, book_jobs: dict) -> None:
                     style=job.style,
                     target_words=job.target_words,
                     chat_provider=chat_pvd,
+                    web_research=job.web_research,
                 )
             except Exception:
                 # run_generation already handles its own errors; this is a backstop

@@ -44,8 +44,9 @@ def _embed_destination() -> Dict[str, Any]:
     return _destination("api.openai.com", "OpenAI")
 
 
-def egress_plan() -> List[Dict[str, Any]]:
-    """One row per stage: what is sent, where, and when it applies."""
+def egress_plan(web_research: bool = True) -> List[Dict[str, Any]]:
+    """One row per stage: what is sent, where, and when it applies. With
+    web_research off, the research step is left out."""
     chat = _chat_destination()
     embed = _embed_destination()
     anthropic = _destination("api.anthropic.com", "Anthropic")
@@ -126,11 +127,13 @@ def egress_plan() -> List[Dict[str, Any]]:
             "to": embed,
         },
     ]
+    if not web_research:
+        rows = [r for r in rows if r["stage"] != "Add web research"]
     return rows
 
 
-def egress_summary() -> Dict[str, Any]:
-    rows = egress_plan()
+def egress_summary(web_research: bool = True) -> Dict[str, Any]:
+    rows = egress_plan(web_research)
     off_machine_full_text = sorted({
         r["to"]["host"] for r in rows
         if r["content"] == "full_text" and not r["to"]["local"]
