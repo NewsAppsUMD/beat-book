@@ -445,7 +445,6 @@
             ${s.sub ? `<span class="bt-stage-sub">${s.sub}</span>` : ''}
             ${(s.chips || []).length ? `<span class="bt-chips">${s.chips.join('')}</span>` : ''}
           </span>
-          <span class="bt-stage-dur">${typeof s.seconds === 'number' ? escapeHtml(fmtSeconds(s.seconds)) : ''}</span>
           <span class="bt-chevron">${btIcon('chevron')}</span>
         </summary>
         <div class="bt-stage-body">${s.body || ''}</div>
@@ -576,7 +575,7 @@
     const read = agent.stories_read || [], scanned = agent.stories_scanned_only || [];
     const problems = [...(m.errors || []), ...(m.draft_check && !m.draft_check.ok ? m.draft_check.problems : [])];
     const failed = m.status === 'failed';
-    const startedAt = (k) => stages[k] && rel(stages[k].started_at);
+    const took = (k) => stages[k] && typeof stages[k].seconds === 'number' ? fmtSeconds(stages[k].seconds) : '';
     const list = [];
 
     // Stories and settings
@@ -598,8 +597,7 @@
       const write = (agent.model_calls || []).filter(c => c.phase === 'write');
       list.push(btStage({
         hue: 'neutral', icon: 'pen', title: 'Read your stories and write the draft',
-        sub: [startedAt('write') && `Started at ${startedAt('write')}`, escapeHtml(agent.write_model || '')].filter(Boolean).join(' · '),
-        seconds: stages.write && stages.write.seconds,
+        sub: [took('write'), escapeHtml(agent.write_model || '')].filter(Boolean).join(' · '),
         chips: [btChip(`${fmtNum(read.length)} read in full`), scanned.length ? btChip(`${fmtNum(scanned.length)} skimmed`) : '', btChip(plural(agent.turns || 0, 'turn'))],
         body: btFeed(writerFeed(m, rel)) + btKv([
           ['Explored with', explore.length ? `${escapeHtml(agent.explore_model || '')}${fmtTokens(explore) ? ` <span class="bt-muted">· ${fmtTokens(explore)} tokens</span>` : ''}` : ''],
@@ -614,7 +612,7 @@
       const tr = m.trim;
       list.push(btStage({
         hue: 'neutral', icon: 'scissors', title: 'Trim the draft to length',
-        sub: startedAt('trim') ? `Started at ${startedAt('trim')}` : '', seconds: stages.trim && stages.trim.seconds,
+        sub: took('trim'),
         chips: [btChip(`${fmtNum(tr.words_before)} words, target ${fmtNum(tr.target_words)}`), tr.used ? btChip(plural((tr.removed || []).length, 'passage') + ' cut') : btChip('Not used')],
         body: `<p class="bt-p">${escapeHtml(tr.reason || '')}</p>`
           + btFeed((tr.used ? (tr.removed || []) : []).map(x => btEvent('scissors', `${escapeHtml(x.text || '')} <span class="bt-muted">· ${escapeHtml(x.section || '')}</span>`)).join('')),
@@ -629,8 +627,7 @@
       const diff = (m.research_changes || {}).unified_diff;
       list.push(btStage({
         hue: 'neutral', icon: 'globe', title: 'Web research',
-        sub: [startedAt('research') && `Started at ${startedAt('research')}`, escapeHtml(research.model || '')].filter(Boolean).join(' · '),
-        seconds: stages.research && stages.research.seconds,
+        sub: [took('research'), escapeHtml(research.model || '')].filter(Boolean).join(' · '),
         chips: [btChip(plural((research.web_searches || []).length, 'search', 'searches')), btChip(`${plural((research.pages_read || []).length, 'page')} read`),
                 btChip(`${plural(accepted.length, 'fact')} added`), rejected.length ? btChip(`${fmtNum(rejected.length)} rejected`) : ''],
         body: `<p class="bt-p bt-muted">The research model can't edit the book. It submits each fact with a quote from a page it read, and the app checks the quote before adding the fact.</p>`
@@ -649,8 +646,7 @@
       const sorting = stats.claim_sorting || null;
       list.push(btStage({
         hue: 'neutral', icon: 'link', title: 'Match claims to your stories',
-        sub: [startedAt('citations') && `Started at ${startedAt('citations')}`, escapeHtml(((m.providers || {}).embeddings || {}).model || '')].filter(Boolean).join(' · '),
-        seconds: stages.citations && stages.citations.seconds,
+        sub: [took('citations'), escapeHtml(((m.providers || {}).embeddings || {}).model || '')].filter(Boolean).join(' · '),
         chips: [btChip(`${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} matched`), stats.unsupported ? btChip(`${fmtNum(stats.unsupported)} unsourced facts`) : '',
                 stats.analysis ? btChip(`${fmtNum(stats.analysis)} analysis`) : '', stats.guidance ? btChip(`${fmtNum(stats.guidance)} tips`) : ''],
         body: btFeed((cites.steps || []).map(s => btEvent('step', `${escapeHtml(CITE_STEP[s.stage] || s.stage)}${rel(s.t) ? ` <span class="bt-muted">· ${rel(s.t)}</span>` : ''}`)).join('')) + btKv([
