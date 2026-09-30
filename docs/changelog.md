@@ -2,10 +2,10 @@
 
 ## Session: September 30, 2026 — Build timeline
 
-- "How this book was made" opens as a timeline. Stages are nodes in the order they ran (before generation, explore and write, trim, web research, citation matching, finished), each with its start time, duration, share of the build, model and tokens. Inside each stage, one row per model turn says what the agent did, and opens to the details: story titles, search queries, pages, facts with their quotes, and rejections with their reasons. The writing prompt, what was sent where, and the citation cutoff sit under the stage they belong to. "By type" switches to the earlier grouped view; the choice is remembered.
+- "How this book was made" is now a timeline, replacing the grouped sections. A summary card gives the build status, stories read in full, web facts added, claims matched, and a bar showing when each stage ran on one time axis. Below it, each stage is a row with an icon badge, its start time and duration, its model, and chips with its outcome counts. A row opens to a feed of what the stage's agent did, divided by turn: stories read, searches, pages fetched, facts added (with their quotes, long ones shortened until opened) and facts rejected (with the reason). The writing prompt, what was sent where, token counts and the citation cutoff sit under the stage they belong to. Stage colors follow the reader: web research is amber like the "web" badge, citation matching blue like the citation chips.
 - The writing agent's model and tool calls, the research agent's model calls, and the citation matcher's steps now carry a timestamp (`t`). The research trace gains `events`, an ordered log of searches, fetches, submitted facts and the finalize call, each pointing into the list that holds its details.
-- Exploring and writing now report tokens separately. The "By type" table showed them as one merged cell.
-- Books built before this change still get the timeline, ordered by turn and without clock times.
+- Exploring and writing now report tokens separately; the old table showed them as one merged cell.
+- Books built before this change still get the timeline, in turn order without step times. Their research steps are grouped by kind.
 
 ## Session: September 26, 2026 — Sourcing transparency (Phase 1)
 

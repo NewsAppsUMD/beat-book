@@ -3,7 +3,7 @@
 // SPA's #view-reader column (not a full window). Parameterized by stem, resets
 // its citation state on every open, and binds scroll to #reader-main.
 //
-// Exposes window.Reader = { open, openCitation, openSupport, openManifest, setManifestView,
+// Exposes window.Reader = { open, openCitation, openSupport, openManifest, toggleQuote, openWebFact,
 // toggleSourcing, showPreview, hidePreview }.
 // Only these are referenced from generated HTML (citation chips / footnotes);
 // everything else is wired with addEventListener.
@@ -374,146 +374,20 @@
   }
   function safeHref(url) { return /^https?:\/\//i.test(url || '') ? escapeHtml(url) : '#'; }
 
-  function manifestSection(title, body, open) {
-    return `<details class="mf-section"${open ? ' open' : ''}><summary>${escapeHtml(title)}</summary><div class="mf-body">${body}</div></details>`;
-  }
-
-  function renderManifest(m) {
-    const p = manifestParts(m);
-    return manifestSection('Overview', p.overview, true)
-      + manifestSection('Models, tokens and time', p.models, false)
-      + manifestSection('Where your material went', p.egress, true)
-      + manifestSection('What the writing agent read', p.agentBody, false)
-      + manifestSection('What web research added', p.researchBody, false)
-      + manifestSection('How citations were matched', p.citeBody, false);
-  }
-
-  // The "By type" view's sections. The timeline reuses some of them.
-  function manifestParts(m) {
-    const prov = m.providers || {};
-    const chat = prov.chat || {}, emb = prov.embeddings || {}, res = prov.research || {};
-    const agent = m.agent || {}, research = m.research || {};
-    const corpus = m.corpus || {}, cites = m.citations || {}, stats = cites.stats || {};
-    const cal = cites.calibration || {};
-    const stages = m.stages || {};
-    const agentTok = sumUsage(agent.model_calls), resTok = sumUsage(research.model_calls);
-
-    const overview = `<dl class="mf-dl">
-        <dt>Built</dt><dd>${m.started_at ? escapeHtml(new Date(m.started_at * 1000).toLocaleString()) : '—'} · ${escapeHtml(fmtSeconds(m.seconds))}</dd>
-        <dt>Style</dt><dd>${escapeHtml(m.style || '')}, about ${fmtNum(m.target_words)} words</dd>
-        <dt>Topics used</dt><dd>${(m.selected_topics || []).map(escapeHtml).join(', ') || '—'}</dd>
-        <dt>Stories</dt><dd>${fmtNum(agent.stories_in_scope)} in the selected topics, of ${fmtNum(corpus.num_stories)} uploaded</dd>
-      </dl>
-      ${(m.errors || []).length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${m.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}
-      ${m.draft_check && !m.draft_check.ok ? `<div class="mf-errors"><strong>The draft looks damaged</strong><ul>${m.draft_check.problems.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul></div>` : ''}
-      ${m.draft_check && (m.draft_check.notes || []).length ? `<p class="mf-note">${m.draft_check.notes.map(escapeHtml).join(' ')}</p>` : ''}
-      ${m.trim ? `<p class="mf-note"><strong>Trimming.</strong> The draft came in at ${fmtNum(m.trim.words_before)} words against a target of ${fmtNum(m.trim.target_words)}, so ${m.trim.method === 'selection' ? 'the writing model was asked which paragraphs, list items and table rows to remove, and the app removed them without rewording anything' : 'the writing model was asked to cut it'}. ${escapeHtml(m.trim.reason || '')}${m.trim.used && (m.trim.details_dropped || []).length ? ` The cut removed these names, figures and dates: ${m.trim.details_dropped.map(escapeHtml).join(', ')}${m.trim.details_dropped_count > m.trim.details_dropped.length ? `, and ${fmtNum(m.trim.details_dropped_count - m.trim.details_dropped.length)} more` : ''}.` : ''}${m.trim.used ? ' The untrimmed draft is saved with the book.' : ''}</p>${m.trim.used && (m.trim.removed || []).length ? `<details><summary>${m.trim.removed.length} removed passages</summary><ul class="mf-list">${m.trim.removed.map(r => `<li><span class="mf-host">${escapeHtml(r.section || '')}</span><br>${escapeHtml(r.text || '')}</li>`).join('')}</ul></details>` : ''}` : ''}
-      ${(m.settings_from_shell || []).length ? `<p class="mf-note">These settings came from the shell that started the server, overriding .env: ${m.settings_from_shell.map(escapeHtml).join(', ')}.</p>` : ''}`;
-
-    const stageRows = [['write', 'Explore stories and write the draft'], ['trim', 'Trim the draft to length'], ['research', 'Web research'], ['citations', 'Match citations']]
-      .filter(([k]) => stages[k]).map(([k, label]) => `<tr><td>${label}</td><td>${escapeHtml(fmtSeconds(stages[k].seconds))}</td></tr>`).join('');
-    const models = `<table class="mf-table"><thead><tr><th>Step</th><th>Model</th><th>Tokens in / out</th></tr></thead><tbody>
-        <tr><td>Explore the stories</td><td>${escapeHtml(agent.explore_model || chat.explore_model || '')}</td><td rowspan="2">${fmtNum(agentTok.input + agentTok.cacheRead)} / ${fmtNum(agentTok.output)}</td></tr>
-        <tr><td>Write the draft</td><td>${escapeHtml(agent.write_model || chat.write_model || '')}</td></tr>
-        <tr><td>Web research</td><td>${escapeHtml(research.model || res.model || '')}</td><td>${fmtNum(resTok.input + resTok.cacheRead)} / ${fmtNum(resTok.output)}</td></tr>
-        <tr><td>Embeddings</td><td>${escapeHtml([emb.provider, emb.model].filter(Boolean).join(' · '))}</td><td>—</td></tr>
-      </tbody></table>
-      ${stageRows ? `<table class="mf-table"><thead><tr><th>Stage</th><th>Time</th></tr></thead><tbody>${stageRows}</tbody></table>` : ''}`;
-
-    const egressRows = ((m.egress || {}).rows || []).map(r => `<tr>
-        <td>${escapeHtml(r.stage)}</td><td>${escapeHtml(r.sends)}</td>
-        <td>${r.to && r.to.local ? '<span class="mf-local">This machine</span>' : escapeHtml((r.to && (r.to.service + ' · ' + r.to.host)) || '')}</td></tr>`).join('');
-    const egress = egressRows ? `<table class="mf-table"><thead><tr><th>Stage</th><th>What is sent</th><th>Where</th></tr></thead><tbody>${egressRows}</tbody></table>
-      <p class="mf-note">From the configuration when this book was built. Upload stages ran before this book was queued.</p>` : '<p class="mf-note">Not recorded.</p>';
-
-    const read = agent.stories_read || [];
-    const scanned = agent.stories_scanned_only;   // absent in older records
-    const readList = read.length ? `<h4>Read in full</h4><ol class="mf-list">${read.map(r => `<li>${escapeHtml(r.title || `Story ${r.index}`)}</li>`).join('')}</ol>` : '<p class="mf-note">No stories were read in full.</p>';
-    const scannedList = scanned && scanned.length ? `<details><summary>${scanned.length} more seen only as 2,000-character excerpts</summary><ol class="mf-list">${scanned.map(r => `<li>${escapeHtml(r.title || `Story ${r.index}`)}</li>`).join('')}</ol></details>` : '';
-    const toolCounts = {};
-    (agent.tool_calls || []).forEach(t => { toolCounts[t.tool] = (toolCounts[t.tool] || 0) + 1; });
-    const searches = (agent.tool_calls || []).filter(t => t.tool === 'search_stories').map(t => (t.input || {}).query).filter(Boolean);
-    const readSentence = scanned
-      ? `The writing agent read <strong>${fmtNum(read.length)}</strong> stories in full and saw ${fmtNum(scanned.length)} more only as excerpts, over ${fmtNum(agent.turns)} turns.`
-      : `The writing agent read or scanned <strong>${fmtNum(read.length)}</strong> stories in ${fmtNum(agent.turns)} turns before it wrote the draft. This older record counts topic scans as reads.`;
-    const agentBody = `<p>${readSentence}
-        ${agent.final_write && agent.final_write.truncated ? ' <strong>The draft hit the output limit and may be cut off.</strong>' : ''}</p>
-      <p class="mf-note">Tool use: ${Object.entries(toolCounts).map(([k, v]) => `${escapeHtml(k)} ×${v}`).join(', ') || 'none'}.
-      ${searches.length ? `Searches: ${searches.map(q => `“${escapeHtml(q)}”`).join(', ')}.` : ''}</p>
-      ${readList}${scannedList}
-      ${agent.write_system_prompt ? `<details class="mf-prompt"><summary>Instructions given to the writing model</summary><pre>${escapeHtml(agent.write_system_prompt)}</pre></details>` : ''}`;
-
-    const pagesRead = research.pages_read || (research.web_fetches || []).map(u => ({ url: u, title: '' }));
-    const results = research.web_results || [];
-    const changes = m.research_changes || {};
-    const wb = stats.web_basis || null;
-    const accepted = research.facts_accepted || [];
-    const rejected = research.facts_rejected || [];
-    const isQuoted = research.design === 'quoted_facts';
-    const link = (url, title) => `<a href="${safeHref(url)}" target="_blank" rel="noopener">${escapeHtml(title || hostLink(url))}</a>`;
-
-    let basisHtml = '';
-    if (isQuoted) {
-      basisHtml = `<p>Web research added <strong>${fmtNum(accepted.length)}</strong> facts. Each one quotes a page the agent fetched, and the app checked that the quote is on the page and that every figure in the fact is in the quote. The app wrote each attribution from the page. ${fmtNum(rejected.length)} submissions failed the check and were left out. The agent could not edit the beat book, so no text from your stories was changed.</p>`
-        + (wb && wb.unverified ? `<p class="mf-errors">${fmtNum(wb.unverified)} web-added lines could not be matched to a checked fact. That should not happen; treat them as unverified.</p>` : '');
-    } else if (wb) {
-      basisHtml = `<p class="mf-note">This book was built with an earlier research design that let the agent edit the book directly. Of its ${fmtNum(stats.research_added)} web-added claims, ${fmtNum(wb.read || 0)} were matched to a page it read.</p>`;
-    }
-    const replacedList = changes.replaced_claims || [];
-    const replacedHtml = replacedList.length ? `<h4>Claims from your stories that research changed or removed</h4><ul class="mf-list">${replacedList.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul>` : '';
-    const acceptedHtml = accepted.length ? `<h4>Facts added, with their quotes</h4><ol class="mf-list mf-facts">${accepted.map(f => `<li>
-        <div>${escapeHtml(f.fact)}</div>
-        <blockquote class="mf-quote">“${quoteHtml(f)}”</blockquote>
-        <div class="mf-host">${link(f.final_url || f.url, f.title)} · ${escapeHtml(f.attribution || '')} · in “${escapeHtml(f.section || '')}”</div></li>`).join('')}</ol>` : '';
-    const rejectedHtml = rejected.length ? `<details><summary>${rejected.length} submissions rejected</summary><ul class="mf-list">${rejected.map(r => `<li>${escapeHtml(r.fact || '')}<br><span class="mf-host">${escapeHtml(r.reason || '')}${r.url ? ' · ' + escapeHtml(hostLink(r.url)) : ''}</span></li>`).join('')}</ul></details>` : '';
-    const finishNote = research.finalized
-      ? (research.finalize_turn ? ' It finished on an extra turn reserved for recording its summary.' : '')
-      : ' It did not formally finish.';
-
-    const researchBody = (research.model_calls || []).length ? `
-      ${research.summary ? `<blockquote class="mf-quote">${escapeHtml(research.summary)}</blockquote><p class="mf-note">The research model's own summary.</p>` : ''}
-      ${basisHtml}
-      ${acceptedHtml}
-      ${rejectedHtml}
-      ${replacedHtml}
-      <p>${fmtNum((research.web_searches || []).length)} web searches and ${fmtNum(pagesRead.length)} pages read over ${fmtNum(research.turns)} turns.${finishNote}</p>
-      ${(research.web_searches || []).length ? `<p class="mf-note">Searches: ${research.web_searches.map(q => `“${escapeHtml(q)}”`).join(', ')}</p>` : ''}
-      ${pagesRead.length ? `<h4>Pages it read</h4><ul class="mf-list">${pagesRead.map(c => {
-          const bits = [hostLink(c.url)];
-          if (typeof c.chars === 'number') bits.push(c.chars ? `${fmtNum(c.chars)} characters${c.truncated ? ', shown in part' : ''}` : 'no readable text');
-          if (c.cached) bits.push('cached copy');
-          return `<li>${link(c.url, c.title)} <span class="mf-host">${escapeHtml(bits.join(' · '))}</span></li>`;
-        }).join('')}</ul>` : ''}
-      ${research.repeat_fetches ? `<p class="mf-note">It asked for ${fmtNum(research.repeat_fetches)} pages it had already read; the app answered from its copy.</p>` : ''}
-      ${(research.fetch_errors || []).length ? `<details><summary>${research.fetch_errors.length} fetches refused or failed</summary><ul class="mf-list">${research.fetch_errors.map(x => `<li>${escapeHtml(x)}</li>`).join('')}</ul></details>` : ''}
-      ${results.length ? `<details><summary>${results.length} search results it saw</summary><ul class="mf-list">${results.map(r => `<li>${link(r.url, r.title)} <span class="mf-host">${escapeHtml(hostLink(r.url))}${r.page_age ? ' · ' + escapeHtml(r.page_age) : ''}</span></li>`).join('')}</ul></details>` : ''}
-      ${changes.unified_diff ? `<details><summary>Changes to the draft</summary><pre class="mf-diff">${changes.unified_diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre>${changes.truncated ? '<p class="mf-note">Diff truncated.</p>' : ''}</details>` : ''}
-    ` : (research.skipped || m.web_research === false)
-      ? '<p class="mf-note">Web research was turned off for this book. Everything in it comes from your stories and the writing model; nothing was added from the web.</p>'
-      : '<p class="mf-note">Web research did not run, or failed. The book is the unrevised draft.</p>';
-
-    const sorting = stats.claim_sorting || null;
-    const citeBody = `<p>${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched a passage in your stories${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}${stats.cited_near_cutoff ? `, ${fmtNum(stats.cited_near_cutoff)} just below the cutoff because the passage shares a distinctive name, figure or date` : ''}. ${fmtNum(stats.research_added)} came from web research. ${fmtNum(stats.unsupported)} factual claims had no match.${stats.analysis ? ` ${fmtNum(stats.analysis)} were labeled analysis or interpretation.` : ''}${stats.guidance ? ` ${fmtNum(stats.guidance)} were tips or story ideas.` : ''}${stats.outcome_not_stated ? ` ${fmtNum(stats.outcome_not_stated)} lost their match because they state an outcome, such as who won, that the matching passages don't report.` : ''}</p>
-      ${sorting ? `<p class="mf-note">Unmatched claims were sorted into facts, analysis and suggestions by ${escapeHtml(sorting.model || 'a small model')}: ${fmtNum(sorting.fact)} facts, ${fmtNum(sorting.analysis)} analysis, ${fmtNum(sorting.suggestion)} suggestions.${(sorting.errors || []).length ? ' Some could not be sorted and are counted as facts.' : ''}</p>` : ''}
-      <p>
-        ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
-      <p class="mf-note">The cutoff is ${fmtSim(cal.threshold)}: the typical similarity of random, unrelated pairs in this corpus (${fmtSim(cal.noise_median)}) plus ${escapeHtml(String(cal.sigma || 3))} spreads, kept between ${fmtSim(0.40)} and ${fmtSim(cal.ceiling)}.${typeof cal.raw_threshold === 'number' && cal.raw_threshold > cal.threshold ? ' The upper limit clamped it, which happens with narrow single-topic corpora.' : ''}</p>`;
-
-    return { overview, models, egress, agentBody, researchBody, citeBody, basisHtml, replacedHtml, finishNote };
-  }
-
-  // ── Timeline view: the same build record, in the order things happened ──
-  // Stages are nodes on a line; inside each, one row per model turn. Records
-  // made before steps were timestamped still get the order, without clocks.
+  // ── "How this book was made": the build record as a timeline ────────────
+  // A summary card (status, key outcomes, a waterfall of the stages on one
+  // time axis), then the stages in the order they ran. Each stage opens to
+  // an activity feed of what its agent did, turn by turn. Records made
+  // before steps were timestamped keep the order, without clock times.
   function fmtClock(sec) {
-    if (typeof sec !== 'number' || sec < 0) return '';
+    if (typeof sec !== 'number' || !isFinite(sec) || sec < 0) return '';
     const s = Math.round(sec);
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }
   function fmtTokens(calls) {
     const u = sumUsage(calls);
     if (!u.input && !u.cacheRead && !u.output) return '';
-    return `${fmtNum(u.input + u.cacheRead)} tokens in / ${fmtNum(u.output)} out`;
+    return `${fmtNum(u.input + u.cacheRead)} in / ${fmtNum(u.output)} out`;
   }
   function plural(n, one, many) { return `${fmtNum(n)} ${n === 1 ? one : (many || one + 's')}`; }
   function groupBy(items, key) {
@@ -522,209 +396,309 @@
     return out;
   }
 
-  // One row per turn: a one-line summary that opens to the details.
-  function tlTurn(clock, label, summary, body) {
-    const head = `<span class="tl-clock">${escapeHtml(clock)}</span><span class="tl-turn-label">${escapeHtml(label)}</span><span class="tl-turn-summary">${summary}</span>`;
-    return body
-      ? `<details class="tl-turn"><summary>${head}</summary><div class="tl-turn-body">${body}</div></details>`
-      : `<div class="tl-turn tl-turn-flat">${head}</div>`;
+  // Feather-style icons, matching the app's other inline SVGs.
+  const BT_ICON = {
+    inbox: '<polyline points="22 12 16 12 14 15 10 15 8 12 2 12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/>',
+    pen: '<path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>',
+    scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><line x1="20" y1="4" x2="8.12" y2="15.88"/><line x1="14.47" y1="14.48" x2="20" y2="20"/><line x1="8.12" y1="8.12" x2="12" y2="12"/>',
+    globe: '<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>',
+    link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    x: '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+    search: '<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+    file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+    list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+    added: '<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>',
+    rejected: '<circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>',
+    flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/>',
+    alert: '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
+    step: '<circle cx="12" cy="12" r="3"/>',
+    chevron: '<polyline points="6 9 12 15 18 9"/>',
+  };
+  function btIcon(name) {
+    return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${BT_ICON[name] || ''}</svg>`;
   }
 
-  function tlStage({ clock, title, seconds, total, meta, summary, body, kind, open }) {
-    const share = typeof seconds === 'number' && total ? Math.max(1, Math.round((seconds / total) * 100)) : 0;
-    return `<li class="tl-stage tl-${kind || 'step'}">
-      <span class="tl-dot" aria-hidden="true"></span>
-      <details${open ? ' open' : ''}>
-        <summary>
-          <span class="tl-head"><span class="tl-clock">${escapeHtml(clock || '')}</span><span class="tl-title">${escapeHtml(title)}</span>${typeof seconds === 'number' ? `<span class="tl-dur">${escapeHtml(fmtSeconds(seconds))}</span>` : ''}</span>
-          ${share ? `<span class="tl-bar" aria-hidden="true"><span style="width:${share}%"></span></span>` : ''}
-          ${meta ? `<span class="tl-meta">${meta}</span>` : ''}
-          ${summary ? `<span class="tl-summary">${summary}</span>` : ''}
+  // ── Building blocks ──
+  function btChip(text, tone) { return `<span class="bt-chip${tone ? ' bt-chip-' + tone : ''}">${text}</span>`; }
+
+  function btKv(rows) {
+    const items = rows.filter(r => r && r[1]).map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${v}</dd></div>`).join('');
+    return items ? `<dl class="bt-kv">${items}</dl>` : '';
+  }
+
+  // One line in a stage's activity feed.
+  function btEvent(icon, html, tone) {
+    return `<li class="bt-ev${tone ? ' bt-ev-' + tone : ''}"><span class="bt-ev-icon">${btIcon(icon)}</span><div class="bt-ev-body">${html}</div></li>`;
+  }
+  function btBreak(label, clock) {
+    return `<li class="bt-break"><span>${escapeHtml(label)}</span>${clock ? `<time>${escapeHtml(clock)}</time>` : ''}</li>`;
+  }
+  function btFeed(items) { return items ? `<ol class="bt-feed">${items}</ol>` : ''; }
+
+  function btStage(s) {
+    return `<li class="bt-stage bt-hue-${s.hue}${s.status ? ' bt-' + s.status : ''}">
+      <details${s.open ? ' open' : ''}>
+        <summary class="bt-stage-head">
+          <span class="bt-badge">${btIcon(s.icon)}</span>
+          <span class="bt-stage-main">
+            <span class="bt-stage-title">${escapeHtml(s.title)}</span>
+            ${s.sub ? `<span class="bt-stage-sub">${s.sub}</span>` : ''}
+            ${(s.chips || []).length ? `<span class="bt-chips">${s.chips.join('')}</span>` : ''}
+          </span>
+          <span class="bt-stage-dur">${typeof s.seconds === 'number' ? escapeHtml(fmtSeconds(s.seconds)) : ''}</span>
+          <span class="bt-chevron">${btIcon('chevron')}</span>
         </summary>
-        <div class="tl-body">${body || ''}</div>
+        <div class="bt-stage-body">${s.body || ''}</div>
       </details>
     </li>`;
   }
 
-  function egressLine(m, stageNames) {
+  function btEgress(m, stageNames) {
     const rows = ((m.egress || {}).rows || []).filter(r => stageNames.includes(r.stage));
-    return rows.map(r => `<p class="tl-egress"><span class="tl-egress-label">Sent</span> ${escapeHtml(r.sends)} → ${r.to && r.to.local ? '<span class="mf-local">stays on this machine</span>' : escapeHtml((r.to && r.to.service) || '')}</p>`).join('');
+    if (!rows.length) return '';
+    return rows.map(r => `${escapeHtml(r.sends)} <span class="bt-arrow">→</span> ${r.to && r.to.local ? '<span class="mf-local">stays on this machine</span>' : `<strong>${escapeHtml((r.to && r.to.service) || '')}</strong>`}`).join('<br>');
   }
 
-  const WRITER_TOOL = {
-    view_topics: () => 'Looked at the topic list',
-    list_stories_in_topic: (i) => `Listed the stories in “${escapeHtml(i.topic || '')}”`,
-    read_stories_in_topic: (i) => `Skimmed 2,000-character excerpts of the stories in “${escapeHtml(i.topic || '')}”`,
-    search_stories: (i) => `Searched your stories for “${escapeHtml(i.query || '')}”`,
-    generate_beat_book: () => 'Wrote the draft',
-  };
+  // Long quotes start clamped to a few lines, with a button to show them all.
+  function btQuote(f) {
+    const long = (f.quote || '').length > 280;
+    return `<blockquote class="bt-quote${long ? ' bt-clamped' : ''}"><span class="bt-quote-text">“${quoteHtml(f)}”</span></blockquote>`
+      + (long ? '<button type="button" class="bt-quote-toggle" aria-expanded="false" onclick="Reader.toggleQuote(this)">Show full quote</button>' : '');
+  }
+  function toggleQuote(btn) {
+    const q = btn.previousElementSibling;
+    const open = q.classList.toggle('bt-clamped') === false;
+    btn.setAttribute('aria-expanded', String(open));
+    btn.textContent = open ? 'Show less' : 'Show full quote';
+  }
 
-  function writerTurns(m, rel) {
+  function btPrompt(label, text) {
+    return text ? `<details class="bt-more"><summary>${escapeHtml(label)}</summary><pre>${escapeHtml(text)}</pre></details>` : '';
+  }
+
+  // ── Stage feeds ──
+  function writerFeed(m, rel) {
     const agent = m.agent || {};
     const titles = {};
     [...(agent.stories_read || []), ...(agent.stories_scanned_only || [])].forEach(s => { titles[s.index] = s.title; });
     const calls = groupBy(agent.model_calls || [], c => c.turn);
     const tools = groupBy(agent.tool_calls || [], c => c.turn);
     const turns = [...new Set([...calls.keys(), ...tools.keys()])].sort((a, b) => a - b);
+    const fw = agent.final_write || {};
     return turns.map(turn => {
       const mc = calls.get(turn) || [], tc = tools.get(turn) || [];
-      const clock = rel(Math.min(...[...mc, ...tc].map(x => x.t).filter(t => typeof t === 'number')));
-      const writes = mc.some(c => c.phase === 'write');
-      const reads = tc.filter(t => t.tool === 'read_story');
-      const lines = tc.filter(t => t.tool !== 'read_story').map(t => (WRITER_TOOL[t.tool] || (() => escapeHtml(t.tool)))(t.input || {}));
-      if (reads.length) lines.unshift(`Read ${plural(reads.length, 'story', 'stories')} in full`);
-      if (writes && !tc.some(t => t.tool === 'generate_beat_book')) lines.push('Wrote the draft');
-      const fw = agent.final_write || {};
-      const body = [
-        reads.length ? `<ol class="mf-list">${reads.map(r => `<li>${escapeHtml(titles[(r.input || {}).index] || `Story ${(r.input || {}).index}`)}</li>`).join('')}</ol>` : '',
-        writes && fw.chars ? `<p class="mf-note">The draft came to ${fmtNum(fw.chars)} characters${fw.continuation_rounds ? `, written over ${plural(fw.continuation_rounds + 1, 'request')}` : ''}.${fw.truncated ? ' <strong>It hit the output limit and may be cut off.</strong>' : ''}</p>` : '',
-        fmtTokens(mc) ? `<p class="mf-host">${escapeHtml(mc.map(c => c.model).filter(Boolean)[0] || '')} · ${fmtTokens(mc)}</p>` : '',
-      ].join('');
-      return tlTurn(clock, `Turn ${turn + 1}`, lines.join(' · ') || 'Thought it over', body);
+      const first = Math.min(...[...mc, ...tc].map(x => x.t).filter(t => typeof t === 'number'));
+      const rows = tc.map(t => {
+        const i = t.input || {};
+        switch (t.tool) {
+          case 'view_topics': return btEvent('list', 'Looked at the list of topics');
+          case 'list_stories_in_topic': return btEvent('list', `Listed the stories in <strong>${escapeHtml(i.topic || '')}</strong>`);
+          case 'read_stories_in_topic': return btEvent('list', `Skimmed a 2,000-character excerpt of every story in <strong>${escapeHtml(i.topic || '')}</strong>`);
+          case 'read_story': return btEvent('file', `<span class="bt-verb">Read</span> ${escapeHtml(titles[i.index] || `Story ${i.index}`)}`);
+          case 'search_stories': return btEvent('search', `Searched your stories for “${escapeHtml(i.query || '')}”`);
+          case 'generate_beat_book': return '';
+          default: return btEvent('step', escapeHtml(t.tool));
+        }
+      });
+      if (mc.some(c => c.phase === 'write')) {
+        rows.push(btEvent('pen', `Wrote the draft${fw.chars ? ` <span class="bt-muted">· ${fmtNum(fw.chars)} characters${fw.continuation_rounds ? ` over ${plural(fw.continuation_rounds + 1, 'request')}` : ''}</span>` : ''}${fw.truncated ? '<div class="bt-warn">It hit the output limit and may be cut off.</div>' : ''}`, 'key'));
+      }
+      return btBreak(`Turn ${turn + 1}`, rel(first)) + (rows.join('') || btEvent('step', '<span class="bt-muted">Planned its next step</span>'));
     }).join('');
   }
 
-  function researchTurns(m, rel) {
-    const r = m.research || {};
-    const pages = r.pages_read || [], acc = r.facts_accepted || [], rej = r.facts_rejected || [];
+  function researchEvent(r, e) {
     const link = (url, title) => `<a href="${safeHref(url)}" target="_blank" rel="noopener">${escapeHtml(title || hostLink(url))}</a>`;
-    const calls = groupBy(r.model_calls || [], c => c.turn);
-    const events = groupBy(r.events || [], e => e.turn);
-    const turns = [...new Set([...calls.keys(), ...events.keys()])];
-    return turns.map(turn => {
-      const evs = events.get(turn) || [], mc = calls.get(turn) || [];
-      const clock = rel(Math.min(...[...mc, ...evs].map(x => x.t).filter(t => typeof t === 'number')));
-      const n = k => evs.filter(e => e.kind === k).length;
-      const bits = [];
-      if (n('search')) bits.push(`${plural(n('search'), 'search', 'searches')}`);
-      if (n('fetch')) bits.push(`read ${plural(n('fetch'), 'page')}`);
-      if (n('fact_accepted')) bits.push(`<span class="tl-ok">${plural(n('fact_accepted'), 'fact')} added</span>`);
-      if (n('fact_rejected')) bits.push(`<span class="tl-no">${fmtNum(n('fact_rejected'))} rejected</span>`);
-      if (n('finalize')) bits.push('finished');
-      const rows = evs.map(e => {
-        switch (e.kind) {
-          case 'search': return `<li>Searched the web for “${escapeHtml((r.web_searches || [])[e.i] || '')}”</li>`;
-          case 'fetch': { const p = pages[e.i] || {}; return `<li>Read ${link(p.final_url || p.url, p.title)} <span class="mf-host">${escapeHtml(hostLink(p.url || ''))}${typeof p.chars === 'number' ? ` · ${fmtNum(p.chars)} characters` : ''}${p.cached ? ' · cached copy' : ''}</span></li>`; }
-          case 'repeat_fetch': return `<li class="mf-note">Asked again for a page it had already read; the app answered from its copy.</li>`;
-          case 'fetch_error': return `<li class="tl-no">Couldn't fetch a page: ${escapeHtml((r.fetch_errors || [])[e.i] || '')}</li>`;
-          case 'fact_accepted': { const f = acc[e.i] || {}; return `<li class="tl-fact"><span class="tl-ok">Added a fact</span> ${escapeHtml(f.fact || '')}<blockquote class="mf-quote">“${quoteHtml(f)}”</blockquote><span class="mf-host">${link(f.final_url || f.url, f.title)} · in “${escapeHtml(f.section || '')}”</span></li>`; }
-          case 'fact_rejected': { const f = rej[e.i] || {}; return `<li class="tl-fact"><span class="tl-no">Rejected</span> ${escapeHtml(f.fact || '')}<br><span class="mf-host">Why: ${escapeHtml(f.reason || '')}</span></li>`; }
-          case 'finalize': return `<li>Finished${r.summary ? ` and summed up: <blockquote class="mf-quote">${escapeHtml(r.summary)}</blockquote>` : ''}</li>`;
-          default: return '';
-        }
+    switch (e.kind) {
+      case 'search': return btEvent('search', `Searched the web for “${escapeHtml((r.web_searches || [])[e.i] || '')}”`);
+      case 'fetch': {
+        const p = (r.pages_read || [])[e.i] || {};
+        return btEvent('file', `<span class="bt-verb">Read</span> ${link(p.final_url || p.url, p.title)} <span class="bt-muted">· ${escapeHtml(hostLink(p.url || ''))}${p.cached ? ' · saved copy' : ''}</span>`);
+      }
+      case 'repeat_fetch': return btEvent('file', '<span class="bt-muted">Asked again for a page it had already read</span>');
+      case 'fetch_error': return btEvent('alert', `Couldn't open a page <span class="bt-muted">· ${escapeHtml((r.fetch_errors || [])[e.i] || '')}</span>`, 'warn');
+      case 'fact_accepted': {
+        const f = (r.facts_accepted || [])[e.i] || {};
+        return btEvent('added', `<div class="bt-ev-label">Fact added</div>
+          <p class="bt-fact">${escapeHtml(f.fact || '')}</p>
+          ${btQuote(f)}
+          <div class="bt-muted">${link(f.final_url || f.url, f.source_name || f.title)} · placed in ${escapeHtml(f.section || 'the book')}</div>`, 'ok');
+      }
+      case 'fact_rejected': {
+        const f = (r.facts_rejected || [])[e.i] || {};
+        return btEvent('rejected', `<div class="bt-ev-label">Fact rejected</div>
+          <p class="bt-fact">${escapeHtml(f.fact || '')}</p>
+          <div class="bt-reason">${escapeHtml(f.reason || '')}</div>`, 'no');
+      }
+      case 'finalize': return btEvent('flag', `Finished${r.summary ? `<blockquote class="bt-quote bt-summary-quote">${escapeHtml(r.summary)}</blockquote>` : ''}`, 'key');
+      default: return '';
+    }
+  }
+
+  function researchFeed(m, rel) {
+    const r = m.research || {};
+    if ((r.events || []).length) {
+      const calls = groupBy(r.model_calls || [], c => c.turn);
+      const events = groupBy(r.events, e => e.turn);
+      return [...new Set([...calls.keys(), ...events.keys()])].map(turn => {
+        const evs = events.get(turn) || [], mc = calls.get(turn) || [];
+        const first = Math.min(...[...mc, ...evs].map(x => x.t).filter(t => typeof t === 'number'));
+        return btBreak(turn === 'finalize' ? 'Extra turn to finish' : `Turn ${turn}`, rel(first))
+          + (evs.map(e => researchEvent(r, e)).join('') || btEvent('step', '<span class="bt-muted">Planned its next step</span>'));
       }).join('');
-      const body = (rows ? `<ul class="tl-events">${rows}</ul>` : '') + (fmtTokens(mc) ? `<p class="mf-host">${fmtTokens(mc)}</p>` : '');
-      const label = turn === 'finalize' ? 'Extra turn' : `Turn ${turn}`;
-      return tlTurn(clock, label, bits.join(' · ') || 'Thought it over', body);
-    }).join('');
+    }
+    // Older records: no order within the stage, so group by kind.
+    const group = (label, kind, list) => (list || []).length ? btBreak(label) + list.map((_, i) => researchEvent(r, { kind, i })).join('') : '';
+    return group('Searches', 'search', r.web_searches) + group('Pages read', 'fetch', r.pages_read)
+      + group('Facts added', 'fact_accepted', r.facts_accepted) + group('Rejected', 'fact_rejected', r.facts_rejected)
+      + (r.finalized ? researchEvent(r, { kind: 'finalize' }) : '');
   }
 
   const CITE_STEP = {
-    embedding_sources: 'Embedded the passages in your stories',
-    embedding_beatbook: "Embedded the book's sentences",
-    calibrating: 'Set the match cutoff for this corpus',
+    embedding_sources: 'Turned every passage in your stories into an embedding',
+    embedding_beatbook: "Turned the book's sentences into embeddings",
+    calibrating: 'Set the match cutoff for these stories',
     matching: 'Matched each claim to its closest passages',
     highlighting: 'Found the words that carry each match',
-    anchors: 'Looked for claims whose names, figures and dates appear together in a story',
+    anchors: 'Looked for claims whose names, figures and dates appear together in one story',
     sorting: 'Sorted unmatched claims into facts, analysis and suggestions',
   };
 
+  // ── The panel ──
   function renderTimeline(m) {
     const t0 = m.started_at;
     const rel = t => (typeof t === 'number' && isFinite(t) && t0) ? fmtClock(Math.max(0, t - t0)) : '';
-    const p = manifestParts(m);
     const agent = m.agent || {}, research = m.research || {}, stages = m.stages || {};
     const cites = m.citations || {}, stats = cites.stats || {}, corpus = m.corpus || {};
+    const cal = cites.calibration || {};
     const total = m.seconds;
-    const timed = (agent.model_calls || []).some(c => typeof c.t === 'number');
-    const nodes = [];
+    const webOff = research.skipped || m.web_research === false;
+    const accepted = research.facts_accepted || [], rejected = research.facts_rejected || [];
+    const read = agent.stories_read || [], scanned = agent.stories_scanned_only || [];
+    const problems = [...(m.errors || []), ...(m.draft_check && !m.draft_check.ok ? m.draft_check.problems : [])];
+    const failed = m.status === 'failed';
+    const startedAt = (k) => stages[k] && rel(stages[k].started_at);
+    const list = [];
 
-    nodes.push(tlStage({
-      kind: 'setup', title: 'Before generation',
-      summary: `${plural(corpus.num_stories, 'story', 'stories')} uploaded · ${escapeHtml((m.selected_topics || []).join(', '))} · ${escapeHtml(m.style || '')}, about ${fmtNum(m.target_words)} words · web research ${m.web_research === false ? 'off' : 'on'}`,
-      body: `<p class="mf-note">Your stories were split, grouped into topics and the topics named before this book was queued.</p>${egressLine(m, ['Parse PDFs and URLs', 'Read scanned PDFs', 'Find stories in documents', 'Group stories into topics', 'Name the topics'])}`,
+    // Stories and settings
+    list.push(btStage({
+      hue: 'neutral', icon: 'inbox', title: 'Stories and settings', sub: 'Before the build started',
+      chips: [btChip(plural(corpus.num_stories || 0, 'story', 'stories')), btChip(escapeHtml(m.style || '')),
+              btChip(`about ${fmtNum(m.target_words)} words`), btChip(webOff ? 'Web research off' : 'Web research on')],
+      body: btKv([
+        ['Topics', escapeHtml((m.selected_topics || []).join(', '))],
+        ['Stories in those topics', agent.stories_in_scope != null ? fmtNum(agent.stories_in_scope) : ''],
+        ['Sent', btEgress(m, ['Parse PDFs and URLs', 'Read scanned PDFs', 'Find stories in documents', 'Group stories into topics', 'Name the topics'])],
+        ['Note', (m.settings_from_shell || []).length ? `These settings came from the shell that started the server, not .env: ${m.settings_from_shell.map(escapeHtml).join(', ')}` : ''],
+      ]),
     }));
 
+    // Explore and write
     if (stages.write || (agent.model_calls || []).length) {
       const explore = (agent.model_calls || []).filter(c => c.phase !== 'write');
       const write = (agent.model_calls || []).filter(c => c.phase === 'write');
-      const scanned = agent.stories_scanned_only;
-      nodes.push(tlStage({
-        kind: 'write', clock: rel(stages.write && stages.write.started_at), title: 'Explore your stories and write the draft',
-        seconds: stages.write && stages.write.seconds, total,
-        meta: [explore.length ? [`${escapeHtml(agent.explore_model || '')} explored`, fmtTokens(explore)].filter(Boolean).join(' · ') : '',
-               write.length ? [`${escapeHtml(agent.write_model || '')} wrote`, fmtTokens(write)].filter(Boolean).join(' · ') : ''].filter(Boolean).join('<br>'),
-        summary: `${plural(agent.turns || 0, 'turn')} · read ${plural((agent.stories_read || []).length, 'story', 'stories')} in full${scanned && scanned.length ? `, ${fmtNum(scanned.length)} more as excerpts` : ''}`,
-        body: writerTurns(m, rel)
-          + (agent.write_system_prompt ? `<details class="mf-prompt"><summary>Instructions given to the writing model</summary><pre>${escapeHtml(agent.write_system_prompt)}</pre></details>` : '')
-          + egressLine(m, ['Write the beat book']),
+      list.push(btStage({
+        hue: 'write', icon: 'pen', title: 'Read your stories and write the draft',
+        sub: [startedAt('write') && `Started at ${startedAt('write')}`, escapeHtml(agent.write_model || '')].filter(Boolean).join(' · '),
+        seconds: stages.write && stages.write.seconds,
+        chips: [btChip(`${fmtNum(read.length)} read in full`), scanned.length ? btChip(`${fmtNum(scanned.length)} skimmed`) : '', btChip(plural(agent.turns || 0, 'turn'))],
+        body: btFeed(writerFeed(m, rel)) + btKv([
+          ['Explored with', explore.length ? `${escapeHtml(agent.explore_model || '')}${fmtTokens(explore) ? ` <span class="bt-muted">· ${fmtTokens(explore)} tokens</span>` : ''}` : ''],
+          ['Wrote with', write.length ? `${escapeHtml(agent.write_model || '')}${fmtTokens(write) ? ` <span class="bt-muted">· ${fmtTokens(write)} tokens</span>` : ''}` : ''],
+          ['Sent', btEgress(m, ['Write the beat book'])],
+        ]) + btPrompt('Instructions given to the writing model', agent.write_system_prompt),
       }));
     }
 
+    // Trim
     if (m.trim) {
       const tr = m.trim;
-      nodes.push(tlStage({
-        kind: 'trim', clock: rel(stages.trim && stages.trim.started_at), title: 'Trim the draft to length',
-        seconds: stages.trim && stages.trim.seconds, total,
-        summary: `${fmtNum(tr.words_before)} words against a target of ${fmtNum(tr.target_words)}${tr.used ? '' : ' · not used'}`,
-        body: `<p>${escapeHtml(tr.reason || '')}</p>${tr.used && (tr.removed || []).length ? `<details><summary>${tr.removed.length} removed passages</summary><ul class="mf-list">${tr.removed.map(r => `<li><span class="mf-host">${escapeHtml(r.section || '')}</span><br>${escapeHtml(r.text || '')}</li>`).join('')}</ul></details>` : ''}`,
+      list.push(btStage({
+        hue: 'neutral', icon: 'scissors', title: 'Trim the draft to length',
+        sub: startedAt('trim') ? `Started at ${startedAt('trim')}` : '', seconds: stages.trim && stages.trim.seconds,
+        chips: [btChip(`${fmtNum(tr.words_before)} words, target ${fmtNum(tr.target_words)}`), tr.used ? btChip(plural((tr.removed || []).length, 'passage') + ' cut') : btChip('Not used')],
+        body: `<p class="bt-p">${escapeHtml(tr.reason || '')}</p>`
+          + btFeed((tr.used ? (tr.removed || []) : []).map(x => btEvent('scissors', `${escapeHtml(x.text || '')} <span class="bt-muted">· ${escapeHtml(x.section || '')}</span>`)).join('')),
       }));
     }
 
-    if (research.skipped || m.web_research === false) {
-      nodes.push(tlStage({ kind: 'skipped', title: 'Web research', summary: 'Turned off for this book', body: p.researchBody }));
+    // Web research
+    if (webOff) {
+      list.push(btStage({ hue: 'neutral', status: 'skipped', icon: 'globe', title: 'Web research', sub: 'Turned off for this book',
+        body: '<p class="bt-p">Nothing was added from the web. Everything in the book comes from your stories and the writing model.</p>' }));
     } else if ((research.model_calls || []).length) {
-      const hasEvents = (research.events || []).length > 0;
-      nodes.push(tlStage({
-        kind: 'research', clock: rel(stages.research && stages.research.started_at), title: 'Web research',
-        seconds: stages.research && stages.research.seconds, total,
-        meta: [escapeHtml(research.model || ''), fmtTokens(research.model_calls)].filter(Boolean).join(' · '),
-        summary: `${plural(research.turns || 0, 'turn')} · ${plural((research.web_searches || []).length, 'search', 'searches')} · ${plural((research.pages_read || []).length, 'page')} read · <span class="tl-ok">${plural((research.facts_accepted || []).length, 'fact')} added</span> · <span class="tl-no">${fmtNum((research.facts_rejected || []).length)} rejected</span>`,
-        body: hasEvents
-          ? p.basisHtml + researchTurns(m, rel) + p.replacedHtml + egressLine(m, ['Add web research'])
-          : `<p class="mf-note">This book was built before research steps were recorded in order, so they are grouped by type.</p>${p.researchBody}`,
+      const diff = (m.research_changes || {}).unified_diff;
+      list.push(btStage({
+        hue: 'web', icon: 'globe', title: 'Web research',
+        sub: [startedAt('research') && `Started at ${startedAt('research')}`, escapeHtml(research.model || '')].filter(Boolean).join(' · '),
+        seconds: stages.research && stages.research.seconds,
+        chips: [btChip(plural((research.web_searches || []).length, 'search', 'searches')), btChip(`${plural((research.pages_read || []).length, 'page')} read`),
+                btChip(`${plural(accepted.length, 'fact')} added`, 'ok'), rejected.length ? btChip(`${fmtNum(rejected.length)} rejected`, 'no') : ''],
+        body: `<p class="bt-p bt-muted">The research model can't edit the book. It submits each fact with a quote from a page it read, and the app checks the quote before adding the fact.</p>`
+          + btFeed(researchFeed(m, rel)) + btKv([
+            ['Model', `${escapeHtml(research.model || '')}${fmtTokens(research.model_calls) ? ` <span class="bt-muted">· ${fmtTokens(research.model_calls)} tokens</span>` : ''}`],
+            ['Sent', btEgress(m, ['Add web research'])],
+          ]) + (diff ? `<details class="bt-more"><summary>Changes to the draft</summary><pre class="mf-diff">${diff.split('\n').map(l => `<span class="${l.startsWith('+') && !l.startsWith('+++') ? 'd-add' : l.startsWith('-') && !l.startsWith('---') ? 'd-del' : ''}">${escapeHtml(l)}</span>`).join('\n')}</pre></details>` : ''),
       }));
     } else {
-      nodes.push(tlStage({ kind: 'error', title: 'Web research', summary: 'Did not run, or failed', body: p.researchBody }));
+      list.push(btStage({ hue: 'neutral', status: 'error', icon: 'globe', title: 'Web research', sub: 'Did not run, or failed',
+        body: '<p class="bt-p">The book is the unrevised draft.</p>' }));
     }
 
+    // Citations
     if (stages.citations || stats.claims) {
-      const steps = cites.steps || [];
-      const stepRows = steps.map(s => tlTurn(rel(s.t), '', escapeHtml(CITE_STEP[s.stage] || s.stage), '')).join('');
-      nodes.push(tlStage({
-        kind: 'citations', clock: rel(stages.citations && stages.citations.started_at), title: 'Match claims to your stories',
-        seconds: stages.citations && stages.citations.seconds, total,
-        meta: escapeHtml([((m.providers || {}).embeddings || {}).model, (stats.claim_sorting || {}).model].filter(Boolean).join(' · ')),
-        summary: `${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched · ${fmtNum(stats.unsupported)} factual claims unmatched`,
-        body: stepRows + p.citeBody + egressLine(m, ['Match citations', 'Sort unsourced claims']),
+      const sorting = stats.claim_sorting || null;
+      list.push(btStage({
+        hue: 'cite', icon: 'link', title: 'Match claims to your stories',
+        sub: [startedAt('citations') && `Started at ${startedAt('citations')}`, escapeHtml(((m.providers || {}).embeddings || {}).model || '')].filter(Boolean).join(' · '),
+        seconds: stages.citations && stages.citations.seconds,
+        chips: [btChip(`${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} matched`, 'cite'), stats.unsupported ? btChip(`${fmtNum(stats.unsupported)} unsourced facts`, 'no') : '',
+                stats.analysis ? btChip(`${fmtNum(stats.analysis)} analysis`) : '', stats.guidance ? btChip(`${fmtNum(stats.guidance)} tips`) : ''],
+        body: btFeed((cites.steps || []).map(s => btEvent('step', `${escapeHtml(CITE_STEP[s.stage] || s.stage)}${rel(s.t) ? ` <span class="bt-muted">· ${rel(s.t)}</span>` : ''}`)).join('')) + btKv([
+          ['Matched', `${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}`],
+          ['Sorted', sorting ? `${escapeHtml(sorting.model || '')} labeled the rest: ${fmtNum(sorting.fact)} facts, ${fmtNum(sorting.analysis)} analysis, ${fmtNum(sorting.suggestion)} suggestions` : ''],
+          ['Cutoff', typeof cal.threshold === 'number' ? `${fmtSim(cal.threshold)}. <span class="bt-muted">A passage must be at least this similar to count as a match. It's set from how similar unrelated passages in your stories are.</span>` : ''],
+          ['Sent', btEgress(m, ['Match citations', 'Sort unsourced claims'])],
+        ]),
       }));
     }
 
-    const errors = [...(m.errors || []), ...(m.draft_check && !m.draft_check.ok ? m.draft_check.problems : [])];
-    nodes.push(tlStage({
-      kind: m.status === 'failed' || errors.length ? 'error' : 'done',
-      clock: rel(m.finished_at), title: m.status === 'failed' ? 'Build failed' : 'Book ready',
-      summary: `${fmtSeconds(total)} in all${m.started_at ? ` · started ${escapeHtml(new Date(m.started_at * 1000).toLocaleString())}` : ''}`,
-      body: errors.length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : '<p class="mf-note">No problems were recorded.</p>',
-      open: errors.length > 0,
+    // Outcome
+    list.push(btStage({
+      hue: failed || problems.length ? 'danger' : 'done', icon: failed ? 'x' : (problems.length ? 'alert' : 'check'),
+      title: failed ? 'Build failed' : (problems.length ? 'Book ready, with problems' : 'Book ready'),
+      sub: m.finished_at ? `Finished at ${rel(m.finished_at)}` : '',
+      body: problems.length ? `<ul class="bt-problems">${problems.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul>` : '<p class="bt-p bt-muted">No problems were recorded.</p>',
+      open: problems.length > 0,
     }));
 
-    return `${timed ? '' : '<p class="mf-note">This book was built before each step was timestamped, so steps are in order but without clock times.</p>'}<ol class="timeline">${nodes.join('')}</ol>`;
-  }
+    // Summary card with a waterfall of the stages on one time axis.
+    const bars = [['write', 'Write'], ['trim', 'Trim'], ['research', 'Research'], ['citations', 'Match']]
+      .filter(([k]) => stages[k] && typeof stages[k].started_at === 'number' && total && t0)
+      .map(([k, label]) => ({ k, label, left: ((stages[k].started_at - t0) / total) * 100, width: (stages[k].seconds / total) * 100, seconds: stages[k].seconds }));
+    const hue = { write: 'write', trim: 'neutral', research: 'web', citations: 'cite' };
+    const waterfall = bars.length ? `
+      <div class="bt-waterfall" role="img" aria-label="${escapeHtml(bars.map(b => `${b.label} ${fmtSeconds(b.seconds)}`).join(', '))}">
+        ${bars.map(b => `<span class="bt-seg bt-hue-${hue[b.k]}" style="left:${b.left.toFixed(2)}%;width:${Math.max(b.width, 0.8).toFixed(2)}%"></span>`).join('')}
+      </div>
+      <div class="bt-axis"><span>0:00</span><span>${escapeHtml(fmtClock(total))}</span></div>
+      <ul class="bt-legend">${bars.map(b => `<li class="bt-hue-${hue[b.k]}"><span class="bt-swatch"></span>${escapeHtml(b.label)} <span class="bt-muted">${escapeHtml(fmtSeconds(b.seconds))}</span></li>`).join('')}</ul>` : '';
+    const timed = (agent.model_calls || []).some(c => typeof c.t === 'number');
+    const stat = (value, label) => `<div><dd>${value}</dd><dt>${escapeHtml(label)}</dt></div>`;
+    const summary = `<section class="bt-summary">
+      <div class="bt-status bt-status-${failed ? 'failed' : problems.length ? 'warn' : 'ok'}">${btIcon(failed ? 'x' : problems.length ? 'alert' : 'check')}${failed ? 'Build failed' : problems.length ? 'Ready, with problems' : 'Ready'}</div>
+      <p class="bt-when">${m.started_at ? `Built ${escapeHtml(new Date(m.started_at * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))}` : ''}${total ? ` · took ${escapeHtml(fmtSeconds(total))}` : ''}</p>
+      <dl class="bt-stats">
+        ${stat(`${fmtNum(read.length)}<small> / ${fmtNum(agent.stories_in_scope)}</small>`, 'stories read in full')}
+        ${stat(webOff ? '—' : fmtNum(accepted.length), webOff ? 'web research off' : 'web facts added')}
+        ${stats.claims ? stat(`${fmtNum(stats.cited)}<small> / ${fmtNum(stats.claims)}</small>`, 'claims matched to stories') : ''}
+      </dl>
+      ${waterfall}
+      ${timed ? '' : '<p class="bt-note">This book was built before each step was timed, so steps are in order without times.</p>'}
+    </section>`;
 
-  let manifestView = 'timeline';
-  try { manifestView = localStorage.getItem('beatbook.manifestView') || 'timeline'; } catch (e) { /* storage blocked */ }
-
-  function renderManifestView(m) {
-    const tab = (key, label) => `<button type="button" class="mf-tab${manifestView === key ? ' current' : ''}" aria-pressed="${manifestView === key}" onclick="Reader.setManifestView('${key}')">${label}</button>`;
-    return `<div class="mf-tabs" role="group" aria-label="Arrange by">${tab('timeline', 'Timeline')}${tab('type', 'By type')}</div>`
-      + (manifestView === 'type' ? renderManifest(m) : renderTimeline(m));
-  }
-
-  function setManifestView(view) {
-    manifestView = view;
-    try { localStorage.setItem('beatbook.manifestView', view); } catch (e) { /* storage blocked */ }
-    if (manifestCache) $('articleContent').innerHTML = `<div class="manifest">${renderManifestView(manifestCache)}</div>`;
+    return `<div class="bt">${summary}<ol class="bt-stages">${list.join('')}</ol></div>`;
   }
 
   async function openManifest() {
@@ -741,7 +715,7 @@
         if (!r.ok) throw new Error(r.status === 404 ? 'missing' : `HTTP ${r.status}`);
         manifestCache = await r.json();
       }
-      el.innerHTML = `<div class="manifest fade-in">${renderManifestView(manifestCache)}</div>`;
+      el.innerHTML = `<div class="fade-in">${renderTimeline(manifestCache)}</div>`;
     } catch (e) {
       el.innerHTML = e.message === 'missing'
         ? '<p class="mf-note">This book was made before build records were kept, so there is no record of how it was made.</p>'
@@ -1272,7 +1246,7 @@
     document.addEventListener('click', (e) => {
       const split = $('reader-split'), panel = $('articlePanel');
       if (split && split.classList.contains('split-view') && panel && !panel.contains(e.target)
-        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade, .web-badge, .mf-tab')) {
+        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade, .web-badge')) {
         closeArticle();
       }
       const nav = $('sectionNavigator');
@@ -1286,6 +1260,6 @@
     });
   }
 
-  window.Reader = { open, openCitation, openSupport, openManifest, setManifestView, openWebFact, toggleSourcing, showPreview, hidePreview };
+  window.Reader = { open, openCitation, openSupport, openManifest, toggleQuote, openWebFact, toggleSourcing, showPreview, hidePreview };
   initStaticBindings();
 })();
