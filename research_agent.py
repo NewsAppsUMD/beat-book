@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
@@ -419,6 +420,14 @@ def _block_get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
+def _event(trace: Dict[str, Any], turn: int, kind: str, i: Optional[int] = None, **extra: Any) -> None:
+    """Log one research action, in order, for the build timeline."""
+    ev: Dict[str, Any] = {"t": round(time.time(), 1), "turn": turn, "kind": kind}
+    if i is not None:
+        ev["i"] = i
+    trace.setdefault("events", []).append({**ev, **extra})
+
+
 def _record_web_activity(content: Any, trace: Dict[str, Any]) -> List[tuple]:
     """Record server-side web searches and their results from one assistant
     turn. Returns (tool_name, description, detail) tuples for the progress
@@ -640,6 +649,10 @@ async def run_research_agent(
         "web_searches": [], "web_results": [], "web_fetches": [], "pages_read": [],
         "fetch_errors": [], "facts_accepted": [], "facts_rejected": [],
         "finalized": False, "summary": "", "stop": "",
+        # Every action in the order it happened: {t, turn, kind, i}, where i
+        # indexes the list that holds its details (web_searches, pages_read,
+        # facts_accepted, ...). The reader draws the build timeline from it.
+        "events": [],
     })
 
     sandbox_dir = Path(sandbox_dir)
@@ -696,10 +709,13 @@ async def run_research_agent(
         elif getattr(response, "container", None) is not None:
             container_id = response.container.id
 
-        trace["model_calls"].append({"turn": turn + 1, "stop_reason": response.stop_reason,
-                                     "usage": _usage_of(response)})
+        trace["model_calls"].append({"t": round(time.time(), 1), "turn": turn + 1,
+                                     "stop_reason": response.stop_reason, "usage": _usage_of(response)})
+        n_searches = len(trace["web_searches"])
         for status in _record_web_activity(response.content, trace):
             await _emit(on_tool_status, *status)
+        for i in range(n_searches, len(trace["web_searches"])):
+            _event(trace, turn + 1, "search", i)
         for r in trace["web_results"]:
             fetcher.allow(r["url"])
 
@@ -736,15 +752,24 @@ async def run_research_agent(
                 rec = fetched.get("record")
                 if fetched.get("repeat"):
                     trace["repeat_fetches"] = trace.get("repeat_fetches", 0) + 1
+                    _event(trace, turn + 1, "repeat_fetch", url=url)
                 elif rec is not None:
                     trace["pages_read"].append({k: v for k, v in rec.items() if k != "text"})
+                    _event(trace, turn + 1, "fetch", len(trace["pages_read"]) - 1)
                 else:
                     trace["fetch_errors"].append(result[:300])
+                    _event(trace, turn + 1, "fetch_error", len(trace["fetch_errors"]) - 1)
             elif name == SUBMIT_TOOL_NAME:
+                n_accepted = len(trace["facts_accepted"])
                 result = desk.submit(inp)
+                if len(trace["facts_accepted"]) > n_accepted:
+                    _event(trace, turn + 1, "fact_accepted", n_accepted)
+                else:
+                    _event(trace, turn + 1, "fact_rejected", len(trace["facts_rejected"]) - 1)
             elif name == FINALIZE_TOOL_NAME:
                 trace["summary"] = str(inp.get("summary") or "").strip()
                 trace["finalized"] = finalized = True
+                _event(trace, turn + 1, "finalize")
                 result = "Research finalized."
                 await _emit(on_progress, "finalizing", trace["summary"] or "Finalized.")
             else:
@@ -799,11 +824,12 @@ async def _finalize_only_turn(client: Anthropic, system_prompt: str, tools: List
     except Exception as e:
         trace["finalize_turn_error"] = f"{type(e).__name__}: {e}"
         return ""
-    trace["model_calls"].append({"turn": "finalize", "stop_reason": response.stop_reason,
-                                 "usage": _usage_of(response)})
+    trace["model_calls"].append({"t": round(time.time(), 1), "turn": "finalize",
+                                 "stop_reason": response.stop_reason, "usage": _usage_of(response)})
     for block in response.content:
         if getattr(block, "type", None) == "tool_use" and block.name == FINALIZE_TOOL_NAME:
             trace["summary"] = str((block.input or {}).get("summary") or "").strip()
             trace["finalized"] = True
+            _event(trace, "finalize", "finalize")
             return trace["summary"]
     return ""

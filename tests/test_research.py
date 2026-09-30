@@ -183,6 +183,13 @@ def test_loop_inserts_only_verified_facts(tmp_path, monkeypatch):
     assert any("does not appear" in r for r in reasons) and any("not been fetched" in r for r in reasons)
     assert trace["finalized"] and trace["summary"] == "Added Pettigrew's start date."
     assert json.loads((tmp_path / "facts.json").read_text())[0]["quote"] == GOOD_QUOTE
+    # The build timeline: every action, in order, pointing at its record.
+    assert [(e["turn"], e["kind"], e.get("i")) for e in trace["events"]] == [
+        (1, "search", 0), (1, "fetch", 0),
+        (2, "fact_accepted", 0), (2, "fact_rejected", 0), (2, "fact_rejected", 1), (2, "finalize", None),
+    ]
+    times = [e["t"] for e in trace["events"]]
+    assert times == sorted(times) and all(isinstance(c["t"], float) for c in trace["model_calls"])
     assert (tmp_path / "book.md").read_text() == out
     names = [t["name"] for t in sent[0]["tools"]]
     assert names == ["web_search", "fetch_page", "submit_fact", "finalize_research"]

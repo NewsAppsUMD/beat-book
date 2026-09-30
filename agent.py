@@ -8,6 +8,7 @@ topics and produces a beat book without an interview stage.
 import asyncio
 import json
 import re
+import time
 from typing import Awaitable, Callable, Dict, List
 
 from pipeline import PipelineResult
@@ -788,6 +789,7 @@ async def run_agent(
                       f"messages={len(request_kwargs['messages'])})", flush=True)
                 response = await _api_call_with_heartbeat(**request_kwargs)
                 trace["model_calls"].append({
+                    "t": round(time.time(), 1),
                     "turn": _turn,
                     "model": request_kwargs["model"],
                     "phase": "write" if force_generate else "explore",
@@ -1195,6 +1197,7 @@ async def run_agent(
                         pass
 
             trace["tool_calls"].append({
+                "t": round(time.time(), 1),
                 "turn": _turn,
                 "tool": tool_name,
                 "input": {k: v for k, v in tool_input.items() if k != "markdown_content"},

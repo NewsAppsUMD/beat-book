@@ -2153,3 +2153,53 @@ button.web-badge:hover { border-color: var(--prov-web); }
 .book-warning { color: var(--danger); font-size: 0.8rem; margin-left: 0.3rem; flex-shrink: 0; }
 .library-card-warning { margin-top: 0.4rem; font-size: 0.78rem; color: var(--danger); }
 .book-damaged + .sourcing-summary { margin-top: 0; }
+
+/* ── "How this book was made": timeline view ─────────────────────────────── */
+.mf-tabs { display: inline-flex; gap: 2px; padding: 2px; margin-bottom: 0.9rem; background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); }
+.mf-tab { font: inherit; font-size: 0.82rem; padding: 0.25rem 0.75rem; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-muted); cursor: pointer; }
+.mf-tab.current { background: var(--surface); color: var(--text); font-weight: 700; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); }
+
+.timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+.timeline::before { content: ""; position: absolute; left: 5px; top: 0.6rem; bottom: 0.6rem; width: 2px; background: var(--border); }
+.tl-stage { position: relative; padding: 0 0 1rem 1.6rem; }
+.tl-dot { position: absolute; left: 0; top: 0.35rem; width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 2px solid var(--accent); box-sizing: border-box; }
+.tl-setup .tl-dot, .tl-skipped .tl-dot { border-color: var(--border-strong); }
+.tl-done .tl-dot { background: var(--success); border-color: var(--success); }
+.tl-error .tl-dot { background: var(--danger); border-color: var(--danger); }
+.tl-stage > details > summary { cursor: pointer; list-style: none; display: block; }
+.tl-stage > details > summary::-webkit-details-marker { display: none; }
+.tl-head { display: flex; align-items: baseline; gap: 0.5rem; }
+.tl-title { font-family: var(--serif); font-weight: 700; font-size: 0.98rem; }
+.tl-stage > details > summary .tl-title::after { content: " ▸"; color: var(--text-faint); font-weight: 400; font-size: 0.8em; }
+.tl-stage > details[open] > summary .tl-title::after { content: " ▾"; }
+.tl-dur { margin-left: auto; color: var(--text-muted); font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tl-clock { color: var(--text-faint); font-size: 0.78rem; font-variant-numeric: tabular-nums; min-width: 2.4rem; }
+.tl-clock:empty { display: none; }
+.tl-bar { display: block; height: 4px; margin: 0.3rem 0 0.25rem; background: var(--bg); border-radius: 2px; overflow: hidden; }
+.tl-bar > span { display: block; height: 100%; background: color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 2px; }
+.tl-meta, .tl-summary { display: block; font-size: 0.8rem; line-height: 1.45; }
+.tl-meta { color: var(--text-faint); }
+.tl-summary { color: var(--text-muted); margin-top: 0.1rem; }
+.tl-body { padding: 0.6rem 0 0.2rem; }
+.tl-body > p { margin: 0 0 0.6rem; }
+.tl-ok { color: var(--success); font-weight: 700; }
+.tl-no { color: var(--danger); }
+
+.tl-turn { border-top: 1px solid var(--border); font-size: 0.85rem; }
+.tl-turn:last-of-type { border-bottom: 1px solid var(--border); }
+.tl-turn > summary, .tl-turn-flat { display: flex; gap: 0.5rem; align-items: baseline; padding: 0.4rem 0; }
+.tl-turn > summary { cursor: pointer; list-style: none; }
+.tl-turn > summary::-webkit-details-marker { display: none; }
+.tl-turn > summary:hover .tl-turn-summary { color: var(--text); }
+.tl-turn-label { color: var(--text-faint); white-space: nowrap; min-width: 3.4rem; }
+.tl-turn-label:empty { display: none; }
+.tl-turn-summary { color: var(--text-muted); flex: 1; }
+.tl-turn > summary .tl-turn-summary::after { content: " ▸"; color: var(--text-faint); font-size: 0.85em; }
+.tl-turn[open] > summary .tl-turn-summary::after { content: " ▾"; }
+.tl-turn-body { padding: 0 0 0.6rem 2.9rem; }
+.tl-turn-body .mf-list { margin-top: 0; }
+.tl-events { list-style: none; margin: 0; padding: 0; }
+.tl-events li { margin-bottom: 0.45rem; }
+.tl-events .mf-quote { margin: 0.3rem 0; font-size: 0.82rem; }
+.tl-egress { font-size: 0.8rem; color: var(--text-muted); margin: 0.5rem 0 0 !important; }
+.tl-egress-label { font-size: 0.68rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); margin-right: 0.2rem; }

@@ -3,7 +3,7 @@
 // SPA's #view-reader column (not a full window). Parameterized by stem, resets
 // its citation state on every open, and binds scroll to #reader-main.
 //
-// Exposes window.Reader = { open, openCitation, openSupport, openManifest,
+// Exposes window.Reader = { open, openCitation, openSupport, openManifest, setManifestView,
 // toggleSourcing, showPreview, hidePreview }.
 // Only these are referenced from generated HTML (citation chips / footnotes);
 // everything else is wired with addEventListener.
@@ -379,6 +379,17 @@
   }
 
   function renderManifest(m) {
+    const p = manifestParts(m);
+    return manifestSection('Overview', p.overview, true)
+      + manifestSection('Models, tokens and time', p.models, false)
+      + manifestSection('Where your material went', p.egress, true)
+      + manifestSection('What the writing agent read', p.agentBody, false)
+      + manifestSection('What web research added', p.researchBody, false)
+      + manifestSection('How citations were matched', p.citeBody, false);
+  }
+
+  // The "By type" view's sections. The timeline reuses some of them.
+  function manifestParts(m) {
     const prov = m.providers || {};
     const chat = prov.chat || {}, emb = prov.embeddings || {}, res = prov.research || {};
     const agent = m.agent || {}, research = m.research || {};
@@ -488,12 +499,232 @@
         ${stats.list_items_cited ? ` ${fmtNum(stats.list_items_cited)} bullets and ${fmtNum(stats.table_rows_cited || 0)} table rows are cited.` : ''}</p>
       <p class="mf-note">The cutoff is ${fmtSim(cal.threshold)}: the typical similarity of random, unrelated pairs in this corpus (${fmtSim(cal.noise_median)}) plus ${escapeHtml(String(cal.sigma || 3))} spreads, kept between ${fmtSim(0.40)} and ${fmtSim(cal.ceiling)}.${typeof cal.raw_threshold === 'number' && cal.raw_threshold > cal.threshold ? ' The upper limit clamped it, which happens with narrow single-topic corpora.' : ''}</p>`;
 
-    return manifestSection('Overview', overview, true)
-      + manifestSection('Models, tokens and time', models, false)
-      + manifestSection('Where your material went', egress, true)
-      + manifestSection('What the writing agent read', agentBody, false)
-      + manifestSection('What web research added', researchBody, false)
-      + manifestSection('How citations were matched', citeBody, false);
+    return { overview, models, egress, agentBody, researchBody, citeBody, basisHtml, replacedHtml, finishNote };
+  }
+
+  // ── Timeline view: the same build record, in the order things happened ──
+  // Stages are nodes on a line; inside each, one row per model turn. Records
+  // made before steps were timestamped still get the order, without clocks.
+  function fmtClock(sec) {
+    if (typeof sec !== 'number' || sec < 0) return '';
+    const s = Math.round(sec);
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+  function fmtTokens(calls) {
+    const u = sumUsage(calls);
+    if (!u.input && !u.cacheRead && !u.output) return '';
+    return `${fmtNum(u.input + u.cacheRead)} tokens in / ${fmtNum(u.output)} out`;
+  }
+  function plural(n, one, many) { return `${fmtNum(n)} ${n === 1 ? one : (many || one + 's')}`; }
+  function groupBy(items, key) {
+    const out = new Map();
+    items.forEach(x => { const k = key(x); if (!out.has(k)) out.set(k, []); out.get(k).push(x); });
+    return out;
+  }
+
+  // One row per turn: a one-line summary that opens to the details.
+  function tlTurn(clock, label, summary, body) {
+    const head = `<span class="tl-clock">${escapeHtml(clock)}</span><span class="tl-turn-label">${escapeHtml(label)}</span><span class="tl-turn-summary">${summary}</span>`;
+    return body
+      ? `<details class="tl-turn"><summary>${head}</summary><div class="tl-turn-body">${body}</div></details>`
+      : `<div class="tl-turn tl-turn-flat">${head}</div>`;
+  }
+
+  function tlStage({ clock, title, seconds, total, meta, summary, body, kind, open }) {
+    const share = typeof seconds === 'number' && total ? Math.max(1, Math.round((seconds / total) * 100)) : 0;
+    return `<li class="tl-stage tl-${kind || 'step'}">
+      <span class="tl-dot" aria-hidden="true"></span>
+      <details${open ? ' open' : ''}>
+        <summary>
+          <span class="tl-head"><span class="tl-clock">${escapeHtml(clock || '')}</span><span class="tl-title">${escapeHtml(title)}</span>${typeof seconds === 'number' ? `<span class="tl-dur">${escapeHtml(fmtSeconds(seconds))}</span>` : ''}</span>
+          ${share ? `<span class="tl-bar" aria-hidden="true"><span style="width:${share}%"></span></span>` : ''}
+          ${meta ? `<span class="tl-meta">${meta}</span>` : ''}
+          ${summary ? `<span class="tl-summary">${summary}</span>` : ''}
+        </summary>
+        <div class="tl-body">${body || ''}</div>
+      </details>
+    </li>`;
+  }
+
+  function egressLine(m, stageNames) {
+    const rows = ((m.egress || {}).rows || []).filter(r => stageNames.includes(r.stage));
+    return rows.map(r => `<p class="tl-egress"><span class="tl-egress-label">Sent</span> ${escapeHtml(r.sends)} → ${r.to && r.to.local ? '<span class="mf-local">stays on this machine</span>' : escapeHtml((r.to && r.to.service) || '')}</p>`).join('');
+  }
+
+  const WRITER_TOOL = {
+    view_topics: () => 'Looked at the topic list',
+    list_stories_in_topic: (i) => `Listed the stories in “${escapeHtml(i.topic || '')}”`,
+    read_stories_in_topic: (i) => `Skimmed 2,000-character excerpts of the stories in “${escapeHtml(i.topic || '')}”`,
+    search_stories: (i) => `Searched your stories for “${escapeHtml(i.query || '')}”`,
+    generate_beat_book: () => 'Wrote the draft',
+  };
+
+  function writerTurns(m, rel) {
+    const agent = m.agent || {};
+    const titles = {};
+    [...(agent.stories_read || []), ...(agent.stories_scanned_only || [])].forEach(s => { titles[s.index] = s.title; });
+    const calls = groupBy(agent.model_calls || [], c => c.turn);
+    const tools = groupBy(agent.tool_calls || [], c => c.turn);
+    const turns = [...new Set([...calls.keys(), ...tools.keys()])].sort((a, b) => a - b);
+    return turns.map(turn => {
+      const mc = calls.get(turn) || [], tc = tools.get(turn) || [];
+      const clock = rel(Math.min(...[...mc, ...tc].map(x => x.t).filter(t => typeof t === 'number')));
+      const writes = mc.some(c => c.phase === 'write');
+      const reads = tc.filter(t => t.tool === 'read_story');
+      const lines = tc.filter(t => t.tool !== 'read_story').map(t => (WRITER_TOOL[t.tool] || (() => escapeHtml(t.tool)))(t.input || {}));
+      if (reads.length) lines.unshift(`Read ${plural(reads.length, 'story', 'stories')} in full`);
+      if (writes && !tc.some(t => t.tool === 'generate_beat_book')) lines.push('Wrote the draft');
+      const fw = agent.final_write || {};
+      const body = [
+        reads.length ? `<ol class="mf-list">${reads.map(r => `<li>${escapeHtml(titles[(r.input || {}).index] || `Story ${(r.input || {}).index}`)}</li>`).join('')}</ol>` : '',
+        writes && fw.chars ? `<p class="mf-note">The draft came to ${fmtNum(fw.chars)} characters${fw.continuation_rounds ? `, written over ${plural(fw.continuation_rounds + 1, 'request')}` : ''}.${fw.truncated ? ' <strong>It hit the output limit and may be cut off.</strong>' : ''}</p>` : '',
+        fmtTokens(mc) ? `<p class="mf-host">${escapeHtml(mc.map(c => c.model).filter(Boolean)[0] || '')} · ${fmtTokens(mc)}</p>` : '',
+      ].join('');
+      return tlTurn(clock, `Turn ${turn + 1}`, lines.join(' · ') || 'Thought it over', body);
+    }).join('');
+  }
+
+  function researchTurns(m, rel) {
+    const r = m.research || {};
+    const pages = r.pages_read || [], acc = r.facts_accepted || [], rej = r.facts_rejected || [];
+    const link = (url, title) => `<a href="${safeHref(url)}" target="_blank" rel="noopener">${escapeHtml(title || hostLink(url))}</a>`;
+    const calls = groupBy(r.model_calls || [], c => c.turn);
+    const events = groupBy(r.events || [], e => e.turn);
+    const turns = [...new Set([...calls.keys(), ...events.keys()])];
+    return turns.map(turn => {
+      const evs = events.get(turn) || [], mc = calls.get(turn) || [];
+      const clock = rel(Math.min(...[...mc, ...evs].map(x => x.t).filter(t => typeof t === 'number')));
+      const n = k => evs.filter(e => e.kind === k).length;
+      const bits = [];
+      if (n('search')) bits.push(`${plural(n('search'), 'search', 'searches')}`);
+      if (n('fetch')) bits.push(`read ${plural(n('fetch'), 'page')}`);
+      if (n('fact_accepted')) bits.push(`<span class="tl-ok">${plural(n('fact_accepted'), 'fact')} added</span>`);
+      if (n('fact_rejected')) bits.push(`<span class="tl-no">${fmtNum(n('fact_rejected'))} rejected</span>`);
+      if (n('finalize')) bits.push('finished');
+      const rows = evs.map(e => {
+        switch (e.kind) {
+          case 'search': return `<li>Searched the web for “${escapeHtml((r.web_searches || [])[e.i] || '')}”</li>`;
+          case 'fetch': { const p = pages[e.i] || {}; return `<li>Read ${link(p.final_url || p.url, p.title)} <span class="mf-host">${escapeHtml(hostLink(p.url || ''))}${typeof p.chars === 'number' ? ` · ${fmtNum(p.chars)} characters` : ''}${p.cached ? ' · cached copy' : ''}</span></li>`; }
+          case 'repeat_fetch': return `<li class="mf-note">Asked again for a page it had already read; the app answered from its copy.</li>`;
+          case 'fetch_error': return `<li class="tl-no">Couldn't fetch a page: ${escapeHtml((r.fetch_errors || [])[e.i] || '')}</li>`;
+          case 'fact_accepted': { const f = acc[e.i] || {}; return `<li class="tl-fact"><span class="tl-ok">Added a fact</span> ${escapeHtml(f.fact || '')}<blockquote class="mf-quote">“${quoteHtml(f)}”</blockquote><span class="mf-host">${link(f.final_url || f.url, f.title)} · in “${escapeHtml(f.section || '')}”</span></li>`; }
+          case 'fact_rejected': { const f = rej[e.i] || {}; return `<li class="tl-fact"><span class="tl-no">Rejected</span> ${escapeHtml(f.fact || '')}<br><span class="mf-host">Why: ${escapeHtml(f.reason || '')}</span></li>`; }
+          case 'finalize': return `<li>Finished${r.summary ? ` and summed up: <blockquote class="mf-quote">${escapeHtml(r.summary)}</blockquote>` : ''}</li>`;
+          default: return '';
+        }
+      }).join('');
+      const body = (rows ? `<ul class="tl-events">${rows}</ul>` : '') + (fmtTokens(mc) ? `<p class="mf-host">${fmtTokens(mc)}</p>` : '');
+      const label = turn === 'finalize' ? 'Extra turn' : `Turn ${turn}`;
+      return tlTurn(clock, label, bits.join(' · ') || 'Thought it over', body);
+    }).join('');
+  }
+
+  const CITE_STEP = {
+    embedding_sources: 'Embedded the passages in your stories',
+    embedding_beatbook: "Embedded the book's sentences",
+    calibrating: 'Set the match cutoff for this corpus',
+    matching: 'Matched each claim to its closest passages',
+    highlighting: 'Found the words that carry each match',
+    anchors: 'Looked for claims whose names, figures and dates appear together in a story',
+    sorting: 'Sorted unmatched claims into facts, analysis and suggestions',
+  };
+
+  function renderTimeline(m) {
+    const t0 = m.started_at;
+    const rel = t => (typeof t === 'number' && isFinite(t) && t0) ? fmtClock(Math.max(0, t - t0)) : '';
+    const p = manifestParts(m);
+    const agent = m.agent || {}, research = m.research || {}, stages = m.stages || {};
+    const cites = m.citations || {}, stats = cites.stats || {}, corpus = m.corpus || {};
+    const total = m.seconds;
+    const timed = (agent.model_calls || []).some(c => typeof c.t === 'number');
+    const nodes = [];
+
+    nodes.push(tlStage({
+      kind: 'setup', title: 'Before generation',
+      summary: `${plural(corpus.num_stories, 'story', 'stories')} uploaded · ${escapeHtml((m.selected_topics || []).join(', '))} · ${escapeHtml(m.style || '')}, about ${fmtNum(m.target_words)} words · web research ${m.web_research === false ? 'off' : 'on'}`,
+      body: `<p class="mf-note">Your stories were split, grouped into topics and the topics named before this book was queued.</p>${egressLine(m, ['Parse PDFs and URLs', 'Read scanned PDFs', 'Find stories in documents', 'Group stories into topics', 'Name the topics'])}`,
+    }));
+
+    if (stages.write || (agent.model_calls || []).length) {
+      const explore = (agent.model_calls || []).filter(c => c.phase !== 'write');
+      const write = (agent.model_calls || []).filter(c => c.phase === 'write');
+      const scanned = agent.stories_scanned_only;
+      nodes.push(tlStage({
+        kind: 'write', clock: rel(stages.write && stages.write.started_at), title: 'Explore your stories and write the draft',
+        seconds: stages.write && stages.write.seconds, total,
+        meta: [explore.length ? [`${escapeHtml(agent.explore_model || '')} explored`, fmtTokens(explore)].filter(Boolean).join(' · ') : '',
+               write.length ? [`${escapeHtml(agent.write_model || '')} wrote`, fmtTokens(write)].filter(Boolean).join(' · ') : ''].filter(Boolean).join('<br>'),
+        summary: `${plural(agent.turns || 0, 'turn')} · read ${plural((agent.stories_read || []).length, 'story', 'stories')} in full${scanned && scanned.length ? `, ${fmtNum(scanned.length)} more as excerpts` : ''}`,
+        body: writerTurns(m, rel)
+          + (agent.write_system_prompt ? `<details class="mf-prompt"><summary>Instructions given to the writing model</summary><pre>${escapeHtml(agent.write_system_prompt)}</pre></details>` : '')
+          + egressLine(m, ['Write the beat book']),
+      }));
+    }
+
+    if (m.trim) {
+      const tr = m.trim;
+      nodes.push(tlStage({
+        kind: 'trim', clock: rel(stages.trim && stages.trim.started_at), title: 'Trim the draft to length',
+        seconds: stages.trim && stages.trim.seconds, total,
+        summary: `${fmtNum(tr.words_before)} words against a target of ${fmtNum(tr.target_words)}${tr.used ? '' : ' · not used'}`,
+        body: `<p>${escapeHtml(tr.reason || '')}</p>${tr.used && (tr.removed || []).length ? `<details><summary>${tr.removed.length} removed passages</summary><ul class="mf-list">${tr.removed.map(r => `<li><span class="mf-host">${escapeHtml(r.section || '')}</span><br>${escapeHtml(r.text || '')}</li>`).join('')}</ul></details>` : ''}`,
+      }));
+    }
+
+    if (research.skipped || m.web_research === false) {
+      nodes.push(tlStage({ kind: 'skipped', title: 'Web research', summary: 'Turned off for this book', body: p.researchBody }));
+    } else if ((research.model_calls || []).length) {
+      const hasEvents = (research.events || []).length > 0;
+      nodes.push(tlStage({
+        kind: 'research', clock: rel(stages.research && stages.research.started_at), title: 'Web research',
+        seconds: stages.research && stages.research.seconds, total,
+        meta: [escapeHtml(research.model || ''), fmtTokens(research.model_calls)].filter(Boolean).join(' · '),
+        summary: `${plural(research.turns || 0, 'turn')} · ${plural((research.web_searches || []).length, 'search', 'searches')} · ${plural((research.pages_read || []).length, 'page')} read · <span class="tl-ok">${plural((research.facts_accepted || []).length, 'fact')} added</span> · <span class="tl-no">${fmtNum((research.facts_rejected || []).length)} rejected</span>`,
+        body: hasEvents
+          ? p.basisHtml + researchTurns(m, rel) + p.replacedHtml + egressLine(m, ['Add web research'])
+          : `<p class="mf-note">This book was built before research steps were recorded in order, so they are grouped by type.</p>${p.researchBody}`,
+      }));
+    } else {
+      nodes.push(tlStage({ kind: 'error', title: 'Web research', summary: 'Did not run, or failed', body: p.researchBody }));
+    }
+
+    if (stages.citations || stats.claims) {
+      const steps = cites.steps || [];
+      const stepRows = steps.map(s => tlTurn(rel(s.t), '', escapeHtml(CITE_STEP[s.stage] || s.stage), '')).join('');
+      nodes.push(tlStage({
+        kind: 'citations', clock: rel(stages.citations && stages.citations.started_at), title: 'Match claims to your stories',
+        seconds: stages.citations && stages.citations.seconds, total,
+        meta: escapeHtml([((m.providers || {}).embeddings || {}).model, (stats.claim_sorting || {}).model].filter(Boolean).join(' · ')),
+        summary: `${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims matched · ${fmtNum(stats.unsupported)} factual claims unmatched`,
+        body: stepRows + p.citeBody + egressLine(m, ['Match citations', 'Sort unsourced claims']),
+      }));
+    }
+
+    const errors = [...(m.errors || []), ...(m.draft_check && !m.draft_check.ok ? m.draft_check.problems : [])];
+    nodes.push(tlStage({
+      kind: m.status === 'failed' || errors.length ? 'error' : 'done',
+      clock: rel(m.finished_at), title: m.status === 'failed' ? 'Build failed' : 'Book ready',
+      summary: `${fmtSeconds(total)} in all${m.started_at ? ` · started ${escapeHtml(new Date(m.started_at * 1000).toLocaleString())}` : ''}`,
+      body: errors.length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : '<p class="mf-note">No problems were recorded.</p>',
+      open: errors.length > 0,
+    }));
+
+    return `${timed ? '' : '<p class="mf-note">This book was built before each step was timestamped, so steps are in order but without clock times.</p>'}<ol class="timeline">${nodes.join('')}</ol>`;
+  }
+
+  let manifestView = 'timeline';
+  try { manifestView = localStorage.getItem('beatbook.manifestView') || 'timeline'; } catch (e) { /* storage blocked */ }
+
+  function renderManifestView(m) {
+    const tab = (key, label) => `<button type="button" class="mf-tab${manifestView === key ? ' current' : ''}" aria-pressed="${manifestView === key}" onclick="Reader.setManifestView('${key}')">${label}</button>`;
+    return `<div class="mf-tabs" role="group" aria-label="Arrange by">${tab('timeline', 'Timeline')}${tab('type', 'By type')}</div>`
+      + (manifestView === 'type' ? renderManifest(m) : renderTimeline(m));
+  }
+
+  function setManifestView(view) {
+    manifestView = view;
+    try { localStorage.setItem('beatbook.manifestView', view); } catch (e) { /* storage blocked */ }
+    if (manifestCache) $('articleContent').innerHTML = `<div class="manifest">${renderManifestView(manifestCache)}</div>`;
   }
 
   async function openManifest() {
@@ -510,7 +741,7 @@
         if (!r.ok) throw new Error(r.status === 404 ? 'missing' : `HTTP ${r.status}`);
         manifestCache = await r.json();
       }
-      el.innerHTML = `<div class="manifest fade-in">${renderManifest(manifestCache)}</div>`;
+      el.innerHTML = `<div class="manifest fade-in">${renderManifestView(manifestCache)}</div>`;
     } catch (e) {
       el.innerHTML = e.message === 'missing'
         ? '<p class="mf-note">This book was made before build records were kept, so there is no record of how it was made.</p>'
@@ -1041,7 +1272,7 @@
     document.addEventListener('click', (e) => {
       const split = $('reader-split'), panel = $('articlePanel');
       if (split && split.classList.contains('split-view') && panel && !panel.contains(e.target)
-        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade, .web-badge')) {
+        && !e.target.closest('.footnote-ref, .footnote-link, .footnote-item, .reader-article-panel, .sourcing-summary, #reader-howmade, .web-badge, .mf-tab')) {
         closeArticle();
       }
       const nav = $('sectionNavigator');
@@ -1055,6 +1286,6 @@
     });
   }
 
-  window.Reader = { open, openCitation, openSupport, openManifest, openWebFact, toggleSourcing, showPreview, hidePreview };
+  window.Reader = { open, openCitation, openSupport, openManifest, setManifestView, openWebFact, toggleSourcing, showPreview, hidePreview };
   initStaticBindings();
 })();

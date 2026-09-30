@@ -435,8 +435,15 @@ async def run_generation(
         stories = pipeline_result.stories
         cpq: _queue.Queue = _queue.Queue()
         t_cite = time.time()
+        # Each matcher step, when it began and its last message, for the
+        # build timeline.
+        cite_steps: list = []
 
         def on_matcher_progress(stage, fraction, detail):
+            if not cite_steps or cite_steps[-1]["stage"] != stage:
+                cite_steps.append({"t": round(time.time(), 1), "stage": stage, "detail": detail})
+            else:
+                cite_steps[-1]["detail"] = detail
             cpq.put({"stage": stage, "fraction": fraction, "detail": detail})
 
         def run_matcher():
@@ -516,6 +523,7 @@ async def run_generation(
         manifest["citations"] = {
             "calibration": entries.get("calibration", {}),
             "stats": entries.get("stats", {}),
+            "steps": cite_steps,
         }
         if hasattr(embed_client, "stats"):
             # How many embeddings came from the disk cache (embed_cache.py).

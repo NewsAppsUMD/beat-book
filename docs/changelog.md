@@ -1,5 +1,12 @@
 # Beat Book Builder — Changelog
 
+## Session: September 30, 2026 — Build timeline
+
+- "How this book was made" opens as a timeline. Stages are nodes in the order they ran (before generation, explore and write, trim, web research, citation matching, finished), each with its start time, duration, share of the build, model and tokens. Inside each stage, one row per model turn says what the agent did, and opens to the details: story titles, search queries, pages, facts with their quotes, and rejections with their reasons. The writing prompt, what was sent where, and the citation cutoff sit under the stage they belong to. "By type" switches to the earlier grouped view; the choice is remembered.
+- The writing agent's model and tool calls, the research agent's model calls, and the citation matcher's steps now carry a timestamp (`t`). The research trace gains `events`, an ordered log of searches, fetches, submitted facts and the finalize call, each pointing into the list that holds its details.
+- Exploring and writing now report tokens separately. The "By type" table showed them as one merged cell.
+- Books built before this change still get the timeline, ordered by turn and without clock times.
+
 ## Session: September 26, 2026 — Sourcing transparency (Phase 1)
 
 ### Reader
