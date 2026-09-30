@@ -8,7 +8,7 @@ topics and produces a beat book without an interview stage.
 import asyncio
 import json
 import re
-from typing import Callable, Awaitable
+from typing import Awaitable, Callable, Dict, List
 
 from pipeline import PipelineResult
 from chat_provider import (
@@ -368,13 +368,53 @@ acknowledgement, no tool calls. Start directly with the title (`# ...`).
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _target_for_topic(topic_size: int) -> int:
-    """Per-topic minimum read count. Deliberately light — the agent only needs
-    enough grounding to write, not to read the whole corpus. Read every story
-    for small topics (<8), otherwise a third (rounded up), capped at 10. This
-    keeps the exploration phase to far fewer LLM turns."""
+    """A topic's starting read count: every story for small topics (<8),
+    otherwise a third (rounded up), capped at 10. read_targets adjusts these
+    to a budget for the whole book."""
     if topic_size < 8:
         return topic_size
     return min(10, (topic_size + 2) // 3)
+
+
+# Full reads for the whole book: at least a quarter of the stories (and at
+# least READ_BUDGET_MIN), at most READ_BUDGET_MAX. Per-topic targets alone
+# gave a 73-story corpus that clustered into one topic just 10 reads, and
+# nine small topics would ask for about 40, more than an Ollama model's
+# 64K-token context holds alongside the topic scans.
+READ_BUDGET_MIN = 10
+READ_BUDGET_MAX = 20
+
+
+def read_targets(topics: Dict[str, List[int]]) -> Dict[str, int]:
+    """Read target per topic. The per-topic starting counts are scaled to
+    the book's budget, shared out by topic size, never above a topic's size
+    and never below one read per topic."""
+    sizes = {t: len(ix) for t, ix in topics.items() if ix}
+    if not sizes:
+        return {}
+    base = {t: _target_for_topic(n) for t, n in sizes.items()}
+    stories = len({i for ix in topics.values() for i in ix})
+    floor = min(stories, max(READ_BUDGET_MIN, -(-stories // 4)))
+    budget = min(READ_BUDGET_MAX, max(sum(base.values()), floor))
+    budget = min(budget, sum(sizes.values()))
+    if sum(base.values()) == budget:
+        return base
+    # Share the budget by size (largest remainder), capped by each topic's size.
+    total = sum(sizes.values())
+    raw = {t: budget * n / total for t, n in sizes.items()}
+    out = {t: max(1, min(sizes[t], int(raw[t]))) for t in sizes}
+    order = sorted(sizes, key=lambda t: raw[t] - int(raw[t]), reverse=True)
+    while sum(out.values()) < budget:
+        grew = False
+        for t in order:
+            if sum(out.values()) >= budget:
+                break
+            if out[t] < sizes[t]:
+                out[t] += 1
+                grew = True
+        if not grew:
+            break
+    return out
 
 
 # The draft must start at its "# Title" line. Some models on Ollama (GLM-5.3)
@@ -486,13 +526,14 @@ def _progress_report(
 
     lines = ["[Research progress]"]
     all_met = True
+    targets = read_targets(pipeline_result.topics)
     for topic in sorted(listed_topics):
         indices = pipeline_result.topics.get(topic, [])
         if not indices:
             continue
         total = len(indices)
         read = sum(1 for i in indices if i in read_indices)
-        target = _target_for_topic(total)
+        target = targets.get(topic, _target_for_topic(total))
         met = read >= target
         if not met:
             all_met = False
@@ -502,9 +543,11 @@ def _progress_report(
         )
     lines.append(
         f"Total stories read (unique): {len(read_indices)}. "
-        "Targets: every story in topics with fewer than 8 stories, otherwise a "
-        "third (max 10). Only full reads with read_story count; scanning a "
-        "topic with read_stories_in_topic shows excerpts and does not count."
+        f"Targets add up to {sum(targets.values())} full reads for the book: about "
+        f"a quarter of the stories, at least {READ_BUDGET_MIN} and at most "
+        f"{READ_BUDGET_MAX}, shared across topics by size. Only full reads with "
+        "read_story count; scanning a topic with read_stories_in_topic shows "
+        "excerpts and does not count."
     )
     if not all_met:
         lines.append(
@@ -794,6 +837,7 @@ async def run_agent(
         n_stories = len(pipeline_result.stories)
     trace["selected_topics"] = list(pipeline_result.topics.keys())
     trace["stories_in_scope"] = n_stories
+    trace["read_targets"] = read_targets(pipeline_result.topics)
     n_topics  = len(pipeline_result.topics)
 
     messages: list[dict] = [
@@ -1113,10 +1157,11 @@ async def run_agent(
                 if on_agent_progress:
                     total_topics = len(pipeline_result.topics) or 1
                     topic_pct = 0.0
+                    targets = read_targets(pipeline_result.topics)
                     for topic, indices in pipeline_result.topics.items():
                         if not indices:
                             continue
-                        target = _target_for_topic(len(indices))
+                        target = targets.get(topic) or 1
                         read = sum(1 for i in indices if i in read_indices)
                         topic_pct += min(1.0, read / target) / total_topics
                     pct = round(topic_pct * 100)

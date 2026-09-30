@@ -162,8 +162,27 @@ def test_progress_text_matches_target_rule():
     from agent import _progress_report, _target_for_topic
     pr = _pipeline_result()
     text, _ = _progress_report(pr, {"Parks"}, set())
-    assert "fewer than 8" in text and "max 10" in text
+    assert "a quarter of the stories" in text and "at most 20" in text
     assert _target_for_topic(7) == 7 and _target_for_topic(30) == 10
+
+
+def test_read_budget_scales_with_the_corpus_and_is_capped():
+    from agent import read_targets
+    # One broad topic of 73 stories: a quarter of them, not the old cap of 10.
+    assert read_targets({"Immigration": list(range(73))}) == {"Immigration": 19}
+    # Nine small topics would have asked for about 40 reads; capped at 20,
+    # at least one per topic, never more than a topic holds.
+    sizes = [8, 11, 4, 10, 5, 13, 7, 10, 5]
+    topics, start = {}, 0
+    for i, n in enumerate(sizes):
+        topics[f"t{i}"] = list(range(start, start + n)); start += n
+    t = read_targets(topics)
+    assert sum(t.values()) == 20 and all(1 <= t[k] <= len(topics[k]) for k in t)
+    assert t["t5"] >= t["t2"]           # bigger topics get more
+    # Topics whose own targets already pass a quarter of the stories keep them.
+    assert read_targets({"a": list(range(30)), "b": list(range(30, 52))}) == {"a": 10, "b": 8}
+    # A small corpus reads everything it can.
+    assert read_targets({"x": [0, 1, 2], "y": [3, 4]}) == {"x": 3, "y": 2}
 
 
 # ── Ingest metadata ────────────────────────────────────────────────────────

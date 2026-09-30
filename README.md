@@ -373,7 +373,7 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 ### Agent Loop
 
 1. The agent surveys the topic landscape with `view_topics`, restricted to the topics you selected.
-2. It reads representative stories (favoring `read_stories_in_topic` for coverage) until it has read enough of each selected topic to meet per-topic read targets.
+2. It reads representative stories (favoring `read_stories_in_topic` for coverage) until it meets each selected topic's read target. The targets add up to a budget for the whole book: at least a quarter of the stories (and at least 10), at most 20 full reads, shared across topics by size. The cap keeps the reading within an Ollama model's context window. Scans don't count as reads.
 3. It calls `generate_beat_book` with a complete Markdown document — which is gated until the read targets are met, pushing the agent to actually ground itself in the corpus.
 
 - **Models:** `claude-sonnet-4-6` for writing; `claude-haiku-4-5` for the lightweight coverage-exploration pass.
