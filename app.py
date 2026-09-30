@@ -41,17 +41,31 @@ load_env(Path(__file__).parent / ".env")
 
 
 def _check_existing_books() -> int:
-    """Run the damaged-draft check once on ready books built before it
-    existed (records with no "warning" field). Returns how many it flagged."""
+    """Run the damaged-draft check on ready books built before it existed
+    (records with no "warning" field), and again on flagged books so a
+    corrected check can clear them. Returns how many it flagged."""
     from draft_check import check_draft
     flagged = 0
     for rec in store.list_books():
-        if rec.get("status") != "ready" or "warning" in rec:
+        if rec.get("status") != "ready" or rec.get("warning") == "":
             continue
-        md = OUTPUT_DIR / f"{rec.get('stem', '')}.md"
+        stem = rec.get("stem", "")
+        md = OUTPUT_DIR / f"{stem}.md"
         if not md.exists():
             continue
-        verdict = check_draft(md.read_text(encoding="utf-8"), int(rec.get("target_words") or 2000))
+        continuations, record = None, None
+        manifest = OUTPUT_DIR / f"{stem}.manifest.json"
+        if manifest.exists():
+            try:
+                record = json.loads(manifest.read_text(encoding="utf-8"))
+                continuations = ((record.get("agent") or {}).get("final_write") or {}).get("continuation_rounds")
+            except (OSError, ValueError):
+                record = None
+        verdict = check_draft(md.read_text(encoding="utf-8"), int(rec.get("target_words") or 2000),
+                              continuations=continuations)
+        if record is not None and "draft_check" in record:
+            record["draft_check"] = verdict      # the build record shows the same verdict
+            manifest.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
         store.update_book(rec["id"], warning=" ".join(verdict["problems"]))
         flagged += 0 if verdict["ok"] else 1
     return flagged

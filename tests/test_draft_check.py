@@ -68,3 +68,30 @@ def test_existing_books_are_checked_once_at_startup(tmp_path, monkeypatch):
     by_id = {r["id"]: r for r in store.list_books()}
     assert by_id["good"]["warning"] == "" and "no title" in by_id["bad"]["warning"]
     assert by_id["done"]["warning"] == ""          # already checked: left alone
+
+
+def test_long_in_one_pass_is_a_note_not_damage():
+    long_book = GOOD.replace("The CHA board voted 6-4 in March. " * 60, "The CHA board voted 6-4 in March. " * 400)
+    r = dc.check_draft(long_book, 1000, continuations=0)
+    assert r["ok"] and r["problems"] == []
+    assert "times the 1,000-word target" in r["notes"][0] and "one pass" in r["notes"][0]
+    # After continuations, the same length points to a rewrite.
+    r = dc.check_draft(long_book, 1000, continuations=2)
+    assert not r["ok"] and "asked to continue" in r["problems"][0]
+
+
+def test_a_length_only_warning_is_cleared_at_startup(tmp_path, monkeypatch):
+    import json
+    import app
+    import store
+    monkeypatch.setattr(store, "OUTPUT_DIR", tmp_path)
+    monkeypatch.setattr(store, "LIBRARY_PATH", tmp_path / "library.json")
+    monkeypatch.setattr(app, "OUTPUT_DIR", tmp_path)
+    (tmp_path / "library.json").write_text(json.dumps([
+        {"id": "long", "stem": "long_book", "status": "ready", "title": "Long", "target_words": 1000,
+         "warning": "It is 2,775 words against a target of about 1,000, which usually means ..."}]))
+    (tmp_path / "long_book.md").write_text(GOOD.replace("The CHA board voted 6-4 in March. " * 60,
+                                                        "The CHA board voted 6-4 in March. " * 400))
+    (tmp_path / "long_book.manifest.json").write_text(json.dumps({"agent": {"final_write": {"continuation_rounds": 0}}}))
+    assert app._check_existing_books() == 0
+    assert store.list_books()[0]["warning"] == ""

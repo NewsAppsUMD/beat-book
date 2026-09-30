@@ -13,7 +13,7 @@ them. This check does: it never blocks a book, it labels it.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 # Far past the requested length: continuations that restarted the book.
 LENGTH_FACTOR = 2.5
@@ -36,20 +36,23 @@ def _headings(markdown: str, level: int) -> List[str]:
             if line.strip().startswith(prefix) and not line.strip().startswith(prefix + "#")]
 
 
-def check_draft(markdown: str, target_words: int) -> Dict[str, Any]:
-    """{"ok": bool, "problems": [plain-language reasons], "details": {...}}."""
+def check_draft(markdown: str, target_words: int,
+                continuations: Optional[int] = None) -> Dict[str, Any]:
+    """{"ok": bool, "problems": [plain-language reasons], "notes": [...],
+    "details": {...}}. `continuations` is how many times the model was asked
+    to continue the draft, when known. Length alone isn't damage: a model
+    that writes long in one pass (DeepSeek) gets a note, not a problem."""
     text = markdown or ""
     words = len(text.split())
     problems: List[str] = []
+    notes: List[str] = []
     details: Dict[str, Any] = {"words": words, "target_words": target_words}
 
     if not _headings(text, 1):
         problems.append("It has no title, so text before the book may not have been removed.")
 
     limit = max(int(target_words * LENGTH_FACTOR), target_words + LENGTH_SLACK_WORDS)
-    if target_words and words > limit:
-        problems.append(f"It is {words:,} words against a target of about {target_words:,}, "
-                        "which usually means the model rewrote the book when asked to continue it.")
+    too_long = bool(target_words) and words > limit
 
     sections = [h.lower() for h in _headings(text, 2)]
     repeated = sorted({h for h in sections if sections.count(h) > 1})
@@ -64,4 +67,12 @@ def check_draft(markdown: str, target_words: int) -> Dict[str, Any]:
         problems.append(f"{len(reasoning)} lines read like the model's own reasoning, not the book "
                         f"(for example: “{reasoning[0][:90]}”).")
 
-    return {"ok": not problems, "problems": problems, "details": details}
+    if too_long:
+        if problems or continuations:
+            problems.append(f"It is {words:,} words against a target of about {target_words:,}, "
+                            "which usually means the model rewrote the book when asked to continue it.")
+        else:
+            notes.append(f"It is {words:,} words, about {words / target_words:.1f} times the "
+                         f"{target_words:,}-word target. The model wrote past the length it was "
+                         "given, in one pass.")
+    return {"ok": not problems, "problems": problems, "notes": notes, "details": details}

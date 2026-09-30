@@ -395,6 +395,7 @@
       </dl>
       ${(m.errors || []).length ? `<div class="mf-errors"><strong>Problems during the run</strong><ul>${m.errors.map(e => `<li>${escapeHtml(e)}</li>`).join('')}</ul></div>` : ''}
       ${m.draft_check && !m.draft_check.ok ? `<div class="mf-errors"><strong>The draft looks damaged</strong><ul>${m.draft_check.problems.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul></div>` : ''}
+      ${m.draft_check && (m.draft_check.notes || []).length ? `<p class="mf-note">${m.draft_check.notes.map(escapeHtml).join(' ')}</p>` : ''}
       ${(m.settings_from_shell || []).length ? `<p class="mf-note">These settings came from the shell that started the server, overriding .env: ${m.settings_from_shell.map(escapeHtml).join(', ')}.</p>` : ''}`;
 
     const stageRows = [['write', 'Explore stories and write the draft'], ['research', 'Web research'], ['citations', 'Match citations']]

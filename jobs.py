@@ -366,7 +366,8 @@ async def run_generation(
 
         # Label a damaged draft (reasoning left in, the book written twice)
         # instead of presenting it as an ordinary finished book.
-        verdict = check_draft(revised_markdown, target_words)
+        verdict = check_draft(revised_markdown, target_words,
+                              continuations=(agent_trace.get("final_write") or {}).get("continuation_rounds"))
         manifest["draft_check"] = verdict
         store.update_book(book_id, warning=" ".join(verdict["problems"]))
         if not verdict["ok"]:
