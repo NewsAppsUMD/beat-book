@@ -113,3 +113,20 @@ def test_word_export_names_the_outcome():
     text = "\n".join(p.text for p in Document(io.BytesIO(_markdown_to_docx("", entries, stats))).paragraphs)
     assert "1 state an outcome that no matching passage reports" in text
     assert "Outcome it states: “turned back”." in text
+
+
+def test_claim_naming_no_one_can_use_a_cited_story():
+    # A sub-bullet under "**Debra Parker**" says "she". The cited story
+    # reports the outcome in a sentence sharing the claim's key words.
+    story = {"article_id": "p", "title": "Parker drops suit",
+             "content": ("The commissioner has served since 2018. Longtime CHA Board Commissioner Debra Parker "
+                         "dropped her lawsuit Friday against the housing authority over her voucher.")}
+    e = _cited("She dropped her lawsuit over the voucher on March 27.",
+               {"article_id": "p", "passage_text": story["content"][:40], "passage_offset": 0,
+                "passage_length": 40, "similarity": 0.8})
+    assert ce.check_outcomes(e, {"articles": [story]}) == 0
+    assert e["entries"][0]["supports"][0]["match_type"] == "outcome"
+    # Without shared key words, a nameless claim isn't rescued.
+    e = _cited("She dropped it.", {"article_id": "p", "passage_text": story["content"][:40],
+                                   "passage_offset": 0, "passage_length": 40, "similarity": 0.8})
+    assert ce.check_outcomes(e, {"articles": [story]}) == 1

@@ -265,14 +265,20 @@ def _outcome_support(kinds: set, article: Dict[str, Any], claim: str, min_names:
     names = [t.lower() for t in re.findall(r"\b[A-Z][a-z'’-]{2,}", re.sub(r"[*_`]+", "", claim or ""))
              if t.lower() not in _NOT_NAMES and t.lower() not in _STOPWORDS
              and t.lower() not in _INSTITUTION_WORDS]
-    if not names:
+    # A claim that names no one ("She dropped her lawsuit", a sub-bullet
+    # under the person's name) can use a cited story, if the sentence
+    # shares at least two of the claim's key words.
+    if not names and min_names > 1:
         return None
+    claim_words = set(key_words(claim)) if not names else set()
     claim_years = set(_YEAR_RE.findall(claim or ""))
     content = article.get("content", "")
     for m in _SENTENCE_RE.finditer(content):
         sent = m.group(0)
         norm = normalize_for_quote(sent)
-        if sum(1 for n in dict.fromkeys(names) if _has_word(norm, n)) < min(min_names, len(set(names))):
+        if names and sum(1 for n in dict.fromkeys(names) if _has_word(norm, n)) < min(min_names, len(set(names))):
+            continue
+        if not names and len(claim_words & set(key_words(sent))) < 2:
             continue
         if _sentence_kinds(kinds, sent, claim_years) != kinds:
             continue
