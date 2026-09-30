@@ -317,7 +317,7 @@ The pipeline lives in `pipeline.py` (called by `/process`). It takes the confirm
 
 ### 1. Embedding
 
-Each story is reduced to its title + a section line + the first 400 words, sent to the **OpenAI Embeddings API** (`text-embedding-3-small`, 1536-d) in batches of 100. Embeddings are cached to `.cache/embeddings.pkl`, keyed by a hash of the texts + model name (switching models invalidates the cache).
+Each story is reduced to its title + a section line + the first 400 words, sent to the **OpenAI Embeddings API** (`text-embedding-3-small`, 1536-d) in batches of 100. Every embedding the app makes (stories for clustering, source passages, the book's sentences and the highlight windows) goes through a disk cache in `.cache/embeddings/`, one SQLite file per model (`embed_cache.py`). Each vector is keyed by a hash of the model name and the exact text, so another model or changed text is always embedded fresh. A rebuild from the same stories skips most embedding: on a 73-story corpus with `qwen3-embedding:0.6b`, the citation step went from 80 seconds to under one, with identical citations. The build record shows the cache hits. The cache holds vectors, not story text. Set `EMBED_CACHE=off` to turn it off; `make clean` deletes it.
 
 ### 2. Dimensionality Reduction
 
@@ -468,7 +468,7 @@ beat-book/
 ├── egress.py               # What each stage sends off the machine, from config
 ├── tests/                  # pytest suite: install pytest into .venv, then .venv/bin/python -m pytest tests
 ├── output/                 # Generated beat books + library.json + sandboxes/ (gitignored)
-└── .cache/                 # Embedding cache (auto-generated)
+└── .cache/                 # Embedding and web page caches (auto-generated)
 ```
 
 ---

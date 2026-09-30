@@ -7,10 +7,8 @@ Reusable module — called by the web app after file upload.
 Returns a PipelineResult with stories, topics, and helper lookups.
 """
 
-import hashlib
 import json
 import logging
-import pickle
 import re
 import time
 from pathlib import Path
@@ -37,7 +35,6 @@ from embed_client import EmbedClient
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-CACHE_DIR   = Path(".cache")
 SAMPLE_SIZE_FOR_LABEL = 8
 # Ceiling for hosted providers (fast per-call, so fewer/bigger requests is
 # better). Actually applied size is min(this, client.batch_size) — a local/
@@ -134,27 +131,12 @@ def _embed_batch(client: EmbedClient, texts: List[str],
     return np.array(all_vectors, dtype=np.float32)
 
 
-def _cache_key(texts: List[str], model_name: str) -> str:
-    combined = "\n---\n".join(texts)
-    return hashlib.md5((combined + model_name).encode()).hexdigest()
-
-
 def _load_or_embed(client: EmbedClient, texts: List[str],
                     on_progress: Optional[ProgressCallback] = None) -> np.ndarray:
-    CACHE_DIR.mkdir(exist_ok=True)
-    cache_file = CACHE_DIR / "embeddings.pkl"
-    key = _cache_key(texts, client.model_name)
-    if cache_file.exists():
-        with open(cache_file, "rb") as f:
-            cached = pickle.load(f)
-        if cached.get("key") == key and len(cached.get("vectors", [])) == len(texts):
-            print("✓ Loaded embeddings from cache.")
-            return cached["vectors"]
-    print(f"Generating embeddings for {len(texts)} stories…")
-    vectors = _embed_batch(client, texts, on_progress)
-    with open(cache_file, "wb") as f:
-        pickle.dump({"key": key, "vectors": vectors}, f)
-    return vectors
+    """Embed the stories. Repeat runs on the same stories are served from
+    the embedding client's disk cache (embed_cache.py)."""
+    print(f"Embedding {len(texts)} stories…")
+    return _embed_batch(client, texts, on_progress)
 
 
 def _umap_params(n: int) -> dict:

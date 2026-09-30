@@ -503,6 +503,9 @@ async def run_generation(
             "calibration": entries.get("calibration", {}),
             "stats": entries.get("stats", {}),
         }
+        if hasattr(embed_client, "stats"):
+            # How many embeddings came from the disk cache (embed_cache.py).
+            manifest["citations"]["embedding_cache"] = {k: v for k, v in embed_client.stats().items() if k != "file"}
         manifest["research_changes"]["replaced_claims"] = entries.get("replaced_draft_claims", [])
 
         _finish_ready()
