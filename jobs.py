@@ -322,10 +322,10 @@ async def run_generation(
             t_trim = time.time()
             await emit({"type": "message", "text": f"The draft is {len(markdown.split()):,} words "
                         f"against a target of {target_words:,}. Asking the model to trim it…"})
-            (OUTPUT_DIR / f"{stem}.untrimmed.md").write_text(markdown, encoding="utf-8")
             trimmed, trim_record = await loop.run_in_executor(
                 None, trim_draft, markdown, target_words, chat_provider, _final_max_tokens(target_words))
             if trim_record.get("used"):
+                (OUTPUT_DIR / f"{stem}.untrimmed.md").write_text(markdown, encoding="utf-8")
                 trim_record["changes"] = _draft_diff(markdown, trimmed)
                 markdown = trimmed
             manifest["trim"] = trim_record
