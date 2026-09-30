@@ -2140,12 +2140,8 @@ button.web-badge:hover { border-color: var(--prov-web); }
 /* ── "How this book was made": the build timeline ──────────────────────────
    Stages as a vertical timeline (large icon badges on a
    rail), each opening to an activity feed (small icons, turn dividers).
-   Stage hues follow the reader: web research is amber like the "web" badge,
-   citation matching is blue like the citation chips. */
+   Stages share one neutral color; only the outcome is colored. */
 .bt { --bt-rail: 15px; font-size: 0.9rem; line-height: 1.5; color: var(--text); }
-.bt-hue-write   { --hue: var(--accent);   --hue-soft: var(--accent-soft); }
-.bt-hue-web     { --hue: var(--prov-web); --hue-soft: var(--prov-web-soft); }
-.bt-hue-cite    { --hue: var(--citation); --hue-soft: var(--citation-soft); }
 .bt-hue-neutral { --hue: var(--text-muted); --hue-soft: var(--bg); }
 .bt-hue-done    { --hue: var(--success);  --hue-soft: var(--success-soft); }
 .bt-hue-danger  { --hue: var(--danger);   --hue-soft: color-mix(in srgb, var(--danger) 8%, white); }
@@ -2173,9 +2169,6 @@ button.web-badge:hover { border-color: var(--prov-web); }
 details[open] > .bt-stage-head .bt-chevron { transform: rotate(180deg); }
 .bt-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
 .bt-chip { padding: 0.05rem 0.5rem; border-radius: 999px; font-size: 0.75rem; line-height: 1.5; color: var(--text-muted); background: var(--bg); border: 1px solid var(--border); white-space: nowrap; }
-.bt-chip-ok { color: var(--success); background: var(--success-soft); border-color: color-mix(in srgb, var(--success) 25%, transparent); }
-.bt-chip-no { color: var(--danger); background: color-mix(in srgb, var(--danger) 6%, white); border-color: color-mix(in srgb, var(--danger) 22%, transparent); }
-.bt-chip-cite { color: var(--citation); background: var(--citation-soft); border-color: var(--citation-border); }
 
 /* Stage body: activity feed, then key facts */
 .bt-stage-body { padding: 0.35rem 0.5rem 1rem calc(32px + 0.75rem); }

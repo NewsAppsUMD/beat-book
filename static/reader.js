@@ -419,7 +419,7 @@
   }
 
   // ── Building blocks ──
-  function btChip(text, tone) { return `<span class="bt-chip${tone ? ' bt-chip-' + tone : ''}">${text}</span>`; }
+  function btChip(text) { return `<span class="bt-chip">${text}</span>`; }
 
   function btKv(rows) {
     const items = rows.filter(r => r && r[1]).map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${v}</dd></div>`).join('');
@@ -597,7 +597,7 @@
       const explore = (agent.model_calls || []).filter(c => c.phase !== 'write');
       const write = (agent.model_calls || []).filter(c => c.phase === 'write');
       list.push(btStage({
-        hue: 'write', icon: 'pen', title: 'Read your stories and write the draft',
+        hue: 'neutral', icon: 'pen', title: 'Read your stories and write the draft',
         sub: [startedAt('write') && `Started at ${startedAt('write')}`, escapeHtml(agent.write_model || '')].filter(Boolean).join(' · '),
         seconds: stages.write && stages.write.seconds,
         chips: [btChip(`${fmtNum(read.length)} read in full`), scanned.length ? btChip(`${fmtNum(scanned.length)} skimmed`) : '', btChip(plural(agent.turns || 0, 'turn'))],
@@ -628,11 +628,11 @@
     } else if ((research.model_calls || []).length) {
       const diff = (m.research_changes || {}).unified_diff;
       list.push(btStage({
-        hue: 'web', icon: 'globe', title: 'Web research',
+        hue: 'neutral', icon: 'globe', title: 'Web research',
         sub: [startedAt('research') && `Started at ${startedAt('research')}`, escapeHtml(research.model || '')].filter(Boolean).join(' · '),
         seconds: stages.research && stages.research.seconds,
         chips: [btChip(plural((research.web_searches || []).length, 'search', 'searches')), btChip(`${plural((research.pages_read || []).length, 'page')} read`),
-                btChip(`${plural(accepted.length, 'fact')} added`, 'ok'), rejected.length ? btChip(`${fmtNum(rejected.length)} rejected`, 'no') : ''],
+                btChip(`${plural(accepted.length, 'fact')} added`), rejected.length ? btChip(`${fmtNum(rejected.length)} rejected`) : ''],
         body: `<p class="bt-p bt-muted">The research model can't edit the book. It submits each fact with a quote from a page it read, and the app checks the quote before adding the fact.</p>`
           + btFeed(researchFeed(m, rel)) + btKv([
             ['Model', `${escapeHtml(research.model || '')}${fmtTokens(research.model_calls) ? ` <span class="bt-muted">· ${fmtTokens(research.model_calls)} tokens</span>` : ''}`],
@@ -648,10 +648,10 @@
     if (stages.citations || stats.claims) {
       const sorting = stats.claim_sorting || null;
       list.push(btStage({
-        hue: 'cite', icon: 'link', title: 'Match claims to your stories',
+        hue: 'neutral', icon: 'link', title: 'Match claims to your stories',
         sub: [startedAt('citations') && `Started at ${startedAt('citations')}`, escapeHtml(((m.providers || {}).embeddings || {}).model || '')].filter(Boolean).join(' · '),
         seconds: stages.citations && stages.citations.seconds,
-        chips: [btChip(`${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} matched`, 'cite'), stats.unsupported ? btChip(`${fmtNum(stats.unsupported)} unsourced facts`, 'no') : '',
+        chips: [btChip(`${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} matched`), stats.unsupported ? btChip(`${fmtNum(stats.unsupported)} unsourced facts`) : '',
                 stats.analysis ? btChip(`${fmtNum(stats.analysis)} analysis`) : '', stats.guidance ? btChip(`${fmtNum(stats.guidance)} tips`) : ''],
         body: btFeed((cites.steps || []).map(s => btEvent('step', `${escapeHtml(CITE_STEP[s.stage] || s.stage)}${rel(s.t) ? ` <span class="bt-muted">· ${rel(s.t)}</span>` : ''}`)).join('')) + btKv([
           ['Matched', `${fmtNum(stats.cited)} of ${fmtNum(stats.claims)} claims${stats.cited_by_anchors ? `, ${fmtNum(stats.cited_by_anchors)} of them on the names, figures and dates they state` : ''}`],
