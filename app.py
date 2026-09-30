@@ -832,6 +832,7 @@ async def get_book_endpoint(book_id: str):
 _BOOK_FILES = {
     "markdown": (".md", "text/markdown; charset=utf-8"),
     "draft": (".draft.md", "text/markdown; charset=utf-8"),
+    "untrimmed": (".untrimmed.md", "text/markdown; charset=utf-8"),
     "entries": (".json", "application/json"),
     "sources": ("_sources.json", "application/json"),
     "manifest": (".manifest.json", "application/json"),

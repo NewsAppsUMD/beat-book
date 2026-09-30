@@ -296,15 +296,38 @@ def _clamp_target_words(target_words: int | None) -> int:
     return max(500, min(6000, int(target_words)))
 
 
+# Each section's share of the word target. Models hold to a budget per
+# section far better than to one total: DeepSeek wrote 1.5 to 2.8 times the
+# target when given only the total.
+SECTION_SHARES = [
+    ("Beat Overview", 0.12),
+    ("Key Topics & Themes", 0.30),
+    ("Key Sources & Players", 0.15),
+    ("Story Ideas & Angles", 0.13),
+    ("Background & Context", 0.13),
+    ("Reporting Tips", 0.09),
+    ("Calendar & Recurring Events", 0.08),
+]
+
+
+def section_budgets(target_words: int) -> List[tuple]:
+    """(section, words) for each section, rounded to 10 words."""
+    return [(name, max(30, int(round(target_words * share / 10.0)) * 10)) for name, share in SECTION_SHARES]
+
+
 def _length_directive(target_words: int) -> str:
     max_words = int(target_words * 1.3)
+    budgets = "; ".join(f"{name} about {words:,}" for name, words in section_budgets(target_words))
     return (
         f"**Length.** Aim for roughly {target_words:,} words across the whole "
         f"document — treat this as a target to hit, not a floor to exceed. Be "
         f"concise: cover the beat well within that budget rather than exhausting "
         f"every detail, and if the corpus is thin it is fine to come in under. "
         f"Prioritize what a reporter most needs and cut anything that reads as "
-        f"filler. Do not exceed {max_words:,} words under any circumstances."
+        f"filler. Do not exceed {max_words:,} words under any circumstances. "
+        f"Word budget by section: {budgets}. Keep each section within its "
+        f"budget; when a section runs long, cut its least important details "
+        f"rather than taking words from another section."
     )
 
 

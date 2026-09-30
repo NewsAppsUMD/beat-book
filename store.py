@@ -213,7 +213,7 @@ def adopt_orphan_files() -> int:
         known_stems = {r.get("stem") for r in records}
         adopted = 0
         for md in sorted(OUTPUT_DIR.glob("*.md")):
-            if md.name.endswith(".draft.md"):
+            if md.name.endswith((".draft.md", ".untrimmed.md")):
                 continue
             stem = md.stem
             if stem in known_stems:

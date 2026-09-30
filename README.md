@@ -184,11 +184,13 @@ A variable exported in your shell overrides the same one in `.env`. At startup t
 **Damaged drafts.** Some models write out their reasoning in the answer, or rewrite the whole book when asked to continue it. After each build the app checks the draft for:
 
 - a missing title
-- a length far past the target
+- a length far past the target, when the model was asked to continue or another sign is present
 - repeated sections
 - lines that read like the model's reasoning
 
-A book that fails gets a ⚠ in the sidebar and the library, and a banner in the reader that explains what was found. The result is saved in the build record. Books built before this check are checked once at startup.
+A book that fails gets a ⚠ in the sidebar and the library, and a banner in the reader that explains what was found. The result is saved in the build record. Books built before this check are checked once at startup, and flagged books are checked again at each startup. A book that is only long, written in one pass, gets a note in the build record instead.
+
+**Length.** The writing prompt gives each section a word budget: Overview 12% of the target, Key Topics 30%, Sources 15%, Story Ideas 13%, Background 13%, Tips 9% and Calendar 8%. Some models still run long; DeepSeek wrote 1.5 to 2.8 times the target. When a draft is more than 1.4 times the target, the writing model is asked once to cut it to length (`trim.py`). The cut is kept only if it has the same title and sections, is at least 10% shorter, passes the damaged-draft check and adds no figure or date the draft didn't have. Otherwise the draft stands. The build record says which happened and lists the names, figures and dates the cut removed. The untrimmed draft is saved as `<stem>.untrimmed.md`. Research and citation matching run on the result.
 
 ### What stays on Anthropic
 

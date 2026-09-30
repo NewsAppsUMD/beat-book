@@ -36,7 +36,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Optional
 from urllib.parse import quote
 
 import store
-from agent import run_agent
+from agent import _final_max_tokens, run_agent
 from research_agent import run_research_agent
 from citation_matcher import (
     _claim_key,
@@ -51,6 +51,7 @@ from egress import egress_summary
 from claim_evidence import (add_anchor_evidence, add_near_evidence, check_outcomes, classify_claims,
                             explain_unsourced, recount)
 from draft_check import check_draft
+from trim import needs_trim, trim_draft
 from env_settings import ENV_OVERRIDES
 import research_agent as _research_mod
 
@@ -315,6 +316,21 @@ async def run_generation(
 
         # 1. Persist the raw draft.
         _stage("write", t_agent)
+        # A draft far over its word target gets one editing pass. The
+        # untrimmed text is kept, and the build record says what was cut.
+        if needs_trim(markdown, target_words):
+            t_trim = time.time()
+            await emit({"type": "message", "text": f"The draft is {len(markdown.split()):,} words "
+                        f"against a target of {target_words:,}. Asking the model to trim it…"})
+            (OUTPUT_DIR / f"{stem}.untrimmed.md").write_text(markdown, encoding="utf-8")
+            trimmed, trim_record = await loop.run_in_executor(
+                None, trim_draft, markdown, target_words, chat_provider, _final_max_tokens(target_words))
+            if trim_record.get("used"):
+                trim_record["changes"] = _draft_diff(markdown, trimmed)
+                markdown = trimmed
+            manifest["trim"] = trim_record
+            _stage("trim", t_trim)
+            await emit({"type": "message", "text": trim_record.get("reason", "")})
         (OUTPUT_DIR / f"{stem}.draft.md").write_text(markdown, encoding="utf-8")
         t_research = time.time()
 
