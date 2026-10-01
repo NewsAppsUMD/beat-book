@@ -55,7 +55,7 @@ def egress_plan(web_research: bool = True) -> List[Dict[str, Any]]:
     from research_agent import research_provider
     research = research_provider()
     if research["provider"] == "ollama":
-        research_to = _destination(_host_of(os.environ.get("OLLAMA_CHAT_HOST", "https://ollama.com")), "Ollama")
+        research_to = _destination(_host_of(research.get("host") or "https://ollama.com"), "Ollama")
         from web_search import ollama_search_host
         research_search_note = (f"Searches run through Ollama's search service ({_host_of(ollama_search_host())})"
                                 if research["search"] else "Web search is off (no OLLAMA_API_KEY)")

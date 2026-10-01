@@ -63,7 +63,7 @@ MODEL = "claude-sonnet-4-6"
 
 # Which model runs research: "anthropic" (default, MODEL above) or "ollama".
 # With "ollama", the model is RESEARCH_OLLAMA_MODEL, else OLLAMA_CHAT_MODEL,
-# served from OLLAMA_CHAT_HOST; search goes through Ollama's search service
+# served from RESEARCH_OLLAMA_HOST, else OLLAMA_CHAT_HOST; search goes through Ollama's search service
 # and needs OLLAMA_API_KEY. The quote checks are the same either way.
 SEARCH_TOOL_NAME = "web_search"
 # Ollama's chat provider runs a 64k-token context. Each page shown to the
@@ -77,7 +77,10 @@ def research_provider() -> Dict[str, Any]:
     if name == "ollama":
         model = (os.environ.get("RESEARCH_OLLAMA_MODEL") or os.environ.get("OLLAMA_CHAT_MODEL")
                  or "qwen3:8b").strip()
-        return {"provider": "ollama", "model": model,
+        # Research can run on a local Ollama while writing uses Ollama's cloud.
+        host = (os.environ.get("RESEARCH_OLLAMA_HOST") or os.environ.get("OLLAMA_CHAT_HOST")
+                or "https://ollama.com").strip()
+        return {"provider": "ollama", "model": model, "host": host,
                 "search": "ollama" if ollama_search_available() else None}
     return {"provider": "anthropic", "model": MODEL, "search": "anthropic"}
 MAX_TOKENS_PER_TURN = 16000
@@ -584,9 +587,9 @@ class _OllamaBackend:
     provider = "ollama"
     ATTEMPTS = 3
 
-    def __init__(self, model: str):
+    def __init__(self, model: str, host: Optional[str] = None):
         from chat_provider import OllamaChatProvider
-        self.chat = OllamaChatProvider()
+        self.chat = OllamaChatProvider(host=host)
         self.model = model
 
     async def ask(self, system_prompt: str, tools: List[Dict[str, Any]], messages: List[Dict[str, Any]],
@@ -623,7 +626,7 @@ def _without_old_prose(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def _make_backend(anthropic_api_key: str):
     choice = research_provider()
     if choice["provider"] == "ollama":
-        return _OllamaBackend(choice["model"])
+        return _OllamaBackend(choice["model"], choice.get("host"))
     return _AnthropicBackend(anthropic_api_key)
 
 

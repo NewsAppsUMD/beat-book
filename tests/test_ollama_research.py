@@ -196,3 +196,21 @@ def test_turn_at_the_output_limit_without_a_tool_call_gets_a_firm_nudge(tmp_path
     nudge = [m for m in chat["chat"][1]["messages"] if m["role"] == "user"][-1]["content"]
     assert "without calling a tool" in nudge and trace["turns_at_output_limit"] == 1
     assert trace["finalized"]
+
+
+def test_research_can_run_on_a_local_ollama_while_writing_uses_the_cloud(monkeypatch):
+    import egress
+    import research_agent as ra
+    monkeypatch.setenv("RESEARCH_PROVIDER", "ollama")
+    monkeypatch.setenv("CHAT_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_CHAT_HOST", "https://ollama.com")
+    monkeypatch.setenv("RESEARCH_OLLAMA_MODEL", "gpt-oss:120b")
+    monkeypatch.setenv("RESEARCH_OLLAMA_HOST", "http://localhost:11434")
+    choice = ra.research_provider()
+    assert choice["host"] == "http://localhost:11434" and choice["model"] == "gpt-oss:120b"
+    assert ra._OllamaBackend(choice["model"], choice["host"]).chat._host == "http://localhost:11434"
+    row = next(r for r in egress.egress_plan() if r["stage"] == "Add web research")
+    assert row["to"]["local"] is True
+    # Without the override, research uses the writing model's host.
+    monkeypatch.delenv("RESEARCH_OLLAMA_HOST")
+    assert ra.research_provider()["host"] == "https://ollama.com"
