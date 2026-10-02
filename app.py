@@ -35,14 +35,65 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-# Load .env
-_env_file = Path(__file__).parent / ".env"
-if _env_file.exists():
-    for line in _env_file.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, v = line.split("=", 1)
-            os.environ.setdefault(k.strip(), v.strip())
+# Load .env (a shell variable wins; differences are recorded, see env_settings).
+from env_settings import ENV_OVERRIDES, is_secret as _is_secret, load_env
+load_env(Path(__file__).parent / ".env")
+
+
+def _check_existing_books() -> int:
+    """Run the damaged-draft check on ready books built before it existed
+    (records with no "warning" field), and again on flagged books so a
+    corrected check can clear them. Returns how many it flagged."""
+    from draft_check import check_draft
+    flagged = 0
+    for rec in store.list_books():
+        if rec.get("status") != "ready" or rec.get("warning") == "":
+            continue
+        stem = rec.get("stem", "")
+        md = OUTPUT_DIR / f"{stem}.md"
+        if not md.exists():
+            continue
+        continuations, record = None, None
+        manifest = OUTPUT_DIR / f"{stem}.manifest.json"
+        if manifest.exists():
+            try:
+                record = json.loads(manifest.read_text(encoding="utf-8"))
+                continuations = ((record.get("agent") or {}).get("final_write") or {}).get("continuation_rounds")
+            except (OSError, ValueError):
+                record = None
+        verdict = check_draft(md.read_text(encoding="utf-8"), int(rec.get("target_words") or 2000),
+                              continuations=continuations)
+        if record is not None and "draft_check" in record:
+            record["draft_check"] = verdict      # the build record shows the same verdict
+            manifest.write_text(json.dumps(record, indent=2, ensure_ascii=False), encoding="utf-8")
+        store.update_book(rec["id"], warning=" ".join(verdict["problems"]))
+        flagged += 0 if verdict["ok"] else 1
+    return flagged
+
+
+def log_model_settings() -> None:
+    """Print the models this server will use, and any .env setting a shell
+    variable is overriding (values shown only for non-secrets)."""
+    try:
+        chat = get_chat_provider()
+        print(f"[startup] chat: {type(chat).__name__} (writing {chat.agent_model}, exploring "
+              f"{chat.explore_model}, labels {chat.label_model})", flush=True)
+    except Exception as e:
+        print(f"[startup] chat provider not configured: {e}", flush=True)
+    try:
+        emb = get_embed_client()
+        print(f"[startup] embeddings: {get_embed_provider()} {getattr(emb, 'model_name', '')}", flush=True)
+    except Exception as e:
+        print(f"[startup] embeddings not configured: {e}", flush=True)
+    try:
+        from research_agent import MODEL as _research_model
+        print(f"[startup] research: anthropic {_research_model}", flush=True)
+    except Exception:
+        pass
+    for name in ENV_OVERRIDES:
+        shown = "" if _is_secret(name) else f" ({os.environ.get(name)!r})"
+        print(f"[startup] WARNING: {name} is set in the shell{shown} and overrides the "
+              f"different value in .env. Unset it in this shell to use .env.", flush=True)
 
 from pipeline import run_pipeline, PipelineResult
 from agent import _derive_filename, LENGTH_PRESETS, DEFAULT_TARGET_WORDS
@@ -54,6 +105,7 @@ from embed_client import (
     list_ollama_models,
 )
 from chat_provider import ChatProvider, get_chat_provider
+from egress import egress_summary
 import store
 from jobs import BookJob, generation_worker
 
@@ -77,6 +129,10 @@ async def lifespan(app: FastAPI):
     adopted = store.adopt_orphan_files()
     if adopted:
         print(f"[startup] adopted {adopted} pre-existing beat book(s) into library", flush=True)
+    log_model_settings()
+    flagged = _check_existing_books()
+    if flagged:
+        print(f"[startup] {flagged} existing beat book(s) look damaged; they are marked in the library", flush=True)
     job_queue = asyncio.Queue()
     _worker_task = asyncio.create_task(generation_worker(job_queue, book_jobs))
     print("[startup] generation worker started (single process — do not use "
@@ -157,7 +213,27 @@ SANDBOX_ROOT.mkdir(exist_ok=True)
 
 @app.get("/")
 async def root():
-    return FileResponse("static/index.html")
+    # Never cached: the page names the script versions to load, so a reload
+    # must always get the current one.
+    return FileResponse("static/index.html", headers={"Cache-Control": "no-cache"})
+
+
+def _frontend_version() -> str:
+    """A fingerprint of the frontend files. An open tab compares it with the
+    one it loaded, so it can tell the user to reload after an update (a
+    single-page app keeps running its old scripts until it's reloaded)."""
+    import hashlib
+    h = hashlib.sha256()
+    for f in sorted(Path("static").glob("*.*")):
+        if f.suffix in (".js", ".css", ".html"):
+            h.update(f.name.encode())
+            h.update(str(f.stat().st_mtime_ns).encode())
+    return h.hexdigest()[:12]
+
+
+@app.get("/api/version")
+async def frontend_version():
+    return JSONResponse({"frontend": _frontend_version()}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/embed-config")
@@ -175,6 +251,14 @@ async def embed_config():
         result["models"] = [{"name": model}]
         result["default_model"] = model
     return JSONResponse(result)
+
+
+@app.get("/api/egress-plan")
+async def egress_plan_endpoint(web_research: bool = True):
+    """What each stage sends off this machine, and where, under the current
+    configuration. Shown on the create screen before generation starts;
+    ?web_research=false leaves out the research step."""
+    return JSONResponse(egress_summary(web_research))
 
 
 async def _run_ingest_job(
@@ -495,7 +579,8 @@ def _citation_numbering(entries: List[Dict[str, Any]]) -> tuple[Dict[int, int], 
     primary_by_idx: List[Optional[Dict[str, Any]]] = []
     for entry in entries:
         content = entry.get("content", "")
-        if content.lstrip().startswith("|"):
+        # Older books never cited table rows; their rows have no `kind`.
+        if content.lstrip().startswith("|") and entry.get("kind") != "table_row":
             primary_by_idx.append(None)
             continue
         primary = None
@@ -561,7 +646,64 @@ def _docx_add_sources_section(doc, sources_by_key: Dict[str, Dict[str, Any]]) ->
             doc.add_paragraph(primary["passage_text"], style="Intense Quote")
 
 
-def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]] = None) -> bytes:
+def _docx_add_sourcing_section(doc, entries: List[Dict[str, Any]], stats: Dict[str, Any]) -> None:
+    """"About the sourcing": the book's counts, why some facts have no
+    source, and each unsourced factual claim with its reason. A printed or
+    shared copy can't show the reader's hover notes, so it says it here."""
+    from claim_evidence import UNSOURCED_REASONS
+    claims = [e for e in entries if not e.get("passthrough")]
+    if not claims:
+        return
+    unsourced = [e for e in claims if e.get("provenance") == "unsupported"]
+    count = lambda prov: sum(1 for e in claims if e.get("provenance") == prov)
+    doc.add_heading("About the sourcing", level=1)
+    doc.add_paragraph(
+        f"{count('corpus')} of {len(claims)} claims match a passage in the stories this book was "
+        f"built from; the superscript numbers point to them. {count('web')} were added from web "
+        f"pages and quote those pages. {count('analysis')} are analysis or interpretation, which no "
+        f"record could confirm. {count('guidance')} are tips and story ideas. {len(unsourced)} "
+        "factual claims have no matching source.")
+    if not unsourced:
+        return
+    doc.add_paragraph(
+        "Why some facts have no source: the writing model drafted this book from the stories, and "
+        "along the way it sometimes joins details from different stories, rewords them, or adds "
+        "background from its own training, which isn't tied to any source. Treat the claims below "
+        "as leads to verify, not as reported facts.")
+    reasons = stats.get("unsourced_reasons") or {}
+    if reasons:
+        bits = []
+        if reasons.get("outside_stories"):
+            bits.append(f"{reasons['outside_stories']} mention details found in none of the stories")
+        if reasons.get("in_stories"):
+            bits.append(f"{reasons['in_stories']} use details from the stories that no single passage states together")
+        if reasons.get("contradicted"):
+            n = reasons["contradicted"]
+            bits.append(f"{n} {'is' if n == 1 else 'are'} contradicted by a story")
+        if reasons.get("outcome_not_stated"):
+            bits.append(f"{reasons['outcome_not_stated']} state an outcome that no matching passage reports")
+        if reasons.get("no_details"):
+            bits.append(f"{reasons['no_details']} name nothing specific to look up")
+        doc.add_paragraph("Of these, " + "; ".join(bits) + ".")
+    doc.add_heading("Claims to check", level=2)
+    for e in unsourced:
+        p = doc.add_paragraph(style="List Bullet")
+        _docx_add_inline(p, re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", e.get("content", "")).strip())
+        why = UNSOURCED_REASONS.get(e.get("unsourced_reason", ""), "No passage in the stories matches it.")
+        missing = e.get("details_not_in_stories") or []
+        note = why.replace("your stories", "the stories") + (f" Not in any story: {', '.join(missing)}." if missing else "")
+        if e.get("unsourced_reason") == "contradicted" and e.get("contradicted_by"):
+            c = e["contradicted_by"]
+            where = ", ".join(x for x in (c.get("article_title"), c.get("article_date")) if x)
+            note = f"Contradicted by the stories. {where + ': ' if where else ''}“{c.get('sentence', '')}”"
+        if e.get("unsourced_reason") == "outcome_not_stated" and e.get("outcome_not_stated"):
+            note += " Outcome it states: " + ", ".join(f"“{w}”" for w in e["outcome_not_stated"]) + "."
+        run = p.add_run(f" — {note}")
+        run.italic = True
+
+
+def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]] = None,
+                      stats: Optional[Dict[str, Any]] = None) -> bytes:
     """Render beat-book Markdown to .docx bytes. When `entries` (the
     citation-matcher's per-sentence entry list, from `{stem}.json`) is given,
     cited sentences get a superscript marker and a "Sources" section is
@@ -583,8 +725,11 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
         line = entry.get("content", "").rstrip()
         stripped = line.strip()
         is_passthrough = entry.get("passthrough", True)
+        marker = number_by_idx.get(i)
 
-        if not is_passthrough:
+        # Cited bullets and table rows are non-passthrough but must still
+        # render as bullets and rows, with the marker at the end.
+        if not is_passthrough and entry.get("kind", "sentence") == "sentence":
             if current_p is None:
                 current_p = doc.add_paragraph()
             else:
@@ -623,12 +768,16 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
         if bullet:
             p = doc.add_paragraph(style="List Bullet")
             _docx_add_inline(p, bullet.group(1))
+            if marker:
+                _docx_add_citation_marker(p, marker)
             continue
 
         numbered = re.match(r"^\d+[.)]\s+(.*)$", stripped)
         if numbered:
             p = doc.add_paragraph(style="List Number")
             _docx_add_inline(p, numbered.group(1))
+            if marker:
+                _docx_add_citation_marker(p, marker)
             continue
 
         if stripped.startswith("|") and stripped.endswith("|"):
@@ -637,11 +786,15 @@ def _markdown_to_docx(markdown_text: str, entries: Optional[List[Dict[str, Any]]
                 continue   # table separator row
             p = doc.add_paragraph()
             _docx_add_inline(p, "  |  ".join(cells))
+            if marker:
+                _docx_add_citation_marker(p, marker)
             continue
 
         p = doc.add_paragraph()
         _docx_add_inline(p, stripped)
 
+    if stats is not None:
+        _docx_add_sourcing_section(doc, entries, stats)
     _docx_add_sources_section(doc, sources_by_key)
 
     buf = io.BytesIO()
@@ -658,6 +811,7 @@ class CreateBookRequest(BaseModel):
     title: Optional[str] = None
     style: str = "narrative"
     length: str = "standard"        # brief | standard | indepth (see LENGTH_PRESETS)
+    web_research: bool = True       # add checked facts from the web (Claude)
 
 
 class PatchBookRequest(BaseModel):
@@ -682,6 +836,38 @@ async def get_book_endpoint(book_id: str):
     return JSONResponse(rec)
 
 
+# Files a book's reader may load, by name. Everything else under output/
+# (other books' files, library.json, research sandboxes) stays unserved.
+_BOOK_FILES = {
+    "markdown": (".md", "text/markdown; charset=utf-8"),
+    "draft": (".draft.md", "text/markdown; charset=utf-8"),
+    "untrimmed": (".untrimmed.md", "text/markdown; charset=utf-8"),
+    "entries": (".json", "application/json"),
+    "sources": ("_sources.json", "application/json"),
+    "manifest": (".manifest.json", "application/json"),
+}
+BOOK_FILE_SUFFIXES = tuple(v[0] for v in _BOOK_FILES.values())
+
+
+@app.get("/books/{book_id}/files/{kind}")
+async def get_book_file(book_id: str, kind: str):
+    """Serve one of a book's output files by book id. Replaces the old static
+    mount of the whole output/ directory, which let any client that could
+    reach the server list-guess stems and read full source text, library.json,
+    and the research agent's sandbox. The app still has no authentication, so
+    keep it bound to 127.0.0.1."""
+    rec = store.get_book(book_id)
+    if not rec:
+        return JSONResponse({"error": "Beat book not found."}, status_code=404)
+    spec = _BOOK_FILES.get(kind)
+    if spec is None:
+        return JSONResponse({"error": f"Unknown file '{kind}'."}, status_code=404)
+    path = OUTPUT_DIR / f"{rec['stem']}{spec[0]}"
+    if not path.is_file():
+        return JSONResponse({"error": "Not available for this beat book."}, status_code=404)
+    return FileResponse(path, media_type=spec[1], headers={"Cache-Control": "no-store"})
+
+
 @app.get("/books/{book_id}/docx")
 async def download_book_docx(book_id: str):
     """Convert the canonical beat-book Markdown to a Word document on demand."""
@@ -694,14 +880,16 @@ async def download_book_docx(book_id: str):
         return JSONResponse(
             {"error": "This beat book isn't ready to download yet."}, status_code=409)
     entries = None
+    stats = None
     citations_path = OUTPUT_DIR / f"{stem}.json"
     if citations_path.exists():
         try:
-            entries = json.loads(citations_path.read_text(encoding="utf-8")).get("entries")
+            payload = json.loads(citations_path.read_text(encoding="utf-8"))
+            entries, stats = payload.get("entries"), payload.get("stats") or {}
         except Exception:
-            entries = None
+            entries, stats = None, None
     try:
-        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"), entries)
+        data = _markdown_to_docx(md_path.read_text(encoding="utf-8"), entries, stats)
     except Exception as e:
         return JSONResponse(
             {"error": f"Could not build the Word document: {type(e).__name__}: {e}"},
@@ -746,7 +934,8 @@ async def create_book_endpoint(body: CreateBookRequest):
         style=style,
     )
 
-    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style, target_words=target_words, embed_model=sess.embed_model)
+    job = BookJob(book_id=rec["id"], pipeline_result=pr, selected_topics=selected, style=style,
+                  target_words=target_words, embed_model=sess.embed_model, web_research=body.web_research)
     book_jobs[rec["id"]] = job
     if job_queue is not None:
         await job_queue.put(rec["id"])
@@ -780,7 +969,7 @@ async def delete_book_endpoint(book_id: str):
     removed = store.delete_book(book_id)
     if removed:
         stem = removed.get("stem", "")
-        for suffix in (".draft.md", ".md", ".json", "_sources.json"):
+        for suffix in BOOK_FILE_SUFFIXES:
             try:
                 (OUTPUT_DIR / f"{stem}{suffix}").unlink(missing_ok=True)
             except OSError:
@@ -841,7 +1030,7 @@ async def book_ws(ws: WebSocket, book_id: str):
             await ws.send_json({
                 "type": "beat_book",
                 "filename": filename,
-                "markdown_path": f"/output/{quote(filename)}",
+                "markdown_path": f"/books/{quote(book_id)}/files/markdown",
                 "stem": stem,
             })
         elif rec["status"] == "failed":
@@ -854,4 +1043,3 @@ async def book_ws(ws: WebSocket, book_id: str):
 # ─────────────────────────────────────────────────────────────────────────────
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/output", StaticFiles(directory="output"), name="output")

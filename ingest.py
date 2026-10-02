@@ -399,10 +399,25 @@ def _map_json_item(item: dict, link_hint: str) -> Optional["Story"]:
     author = ""
     for k in _STORY_AUTHOR_KEYS:
         v = item.get(k)
+        if isinstance(v, dict):
+            v = v.get("name")
+        # WordPress REST exports carry `author` as a numeric user id (e.g. 23).
+        # A number is not a byline; leave the author blank rather than
+        # showing "23" to the reporter and the writing agent.
+        if isinstance(v, bool) or isinstance(v, (int, float)):
+            continue
         if v:
-            author = str(v.get("name") if isinstance(v, dict) else v).strip()
-            if author:
+            candidate = str(v).strip()
+            if candidate and not candidate.isdigit():
+                author = candidate
                 break
+    if not author:
+        # WordPress with `_embed` puts the display name here.
+        embedded = item.get("_embedded")
+        if isinstance(embedded, dict):
+            authors = embedded.get("author")
+            if isinstance(authors, list) and authors and isinstance(authors[0], dict):
+                author = str(authors[0].get("name") or "").strip()
 
     link = link_hint
     for k in _STORY_LINK_KEYS:
@@ -413,13 +428,42 @@ def _map_json_item(item: dict, link_hint: str) -> Optional["Story"]:
             link = v.strip()
             break
 
+    metadata: dict = {}
+    tags = _string_tags(item.get("tags")) + _string_tags(item.get("categories"))
+    if tags:
+        # De-duplicate while keeping the feed's order.
+        metadata["tags"] = list(dict.fromkeys(tags))
+
     return Story(
         title=title, content=content, date=date, author=author, link=link,
         organization=_publication_from_link(link),
         language=_detect_language(content),
         content_type="article",
+        metadata=metadata,
         reasoning="Mapped directly from structured JSON fields.",
     )
+
+
+def _string_tags(value) -> list[str]:
+    """Tag names from an RSS/JSON `tags` value. Accepts strings, feedparser
+    dicts ({"term": ...}), or WP-style {"name": ...}. Numeric ids (WordPress
+    REST tag/category ids) are dropped because they carry no meaning without
+    a lookup."""
+    if not value:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[str] = []
+    for t in value:
+        if isinstance(t, dict):
+            t = t.get("term") or t.get("name") or t.get("label")
+        if isinstance(t, str):
+            t = t.strip()
+            if t and not t.isdigit():
+                out.append(t)
+    return out
 
 
 def _fast_json_stories(
@@ -474,6 +518,7 @@ def _fast_feed_stories(
             "summary": content_value,
             "published": date_str,
             "author": getattr(entry, "author", ""),
+            "tags": getattr(entry, "tags", None) or [],
         }
         story = _map_json_item(item, "")
         if story is not None:

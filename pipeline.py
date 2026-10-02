@@ -7,9 +7,9 @@ Reusable module — called by the web app after file upload.
 Returns a PipelineResult with stories, topics, and helper lookups.
 """
 
-import hashlib
+import json
 import logging
-import pickle
+import re
 import time
 from pathlib import Path
 from dataclasses import dataclass
@@ -35,7 +35,6 @@ from embed_client import EmbedClient
 # CONFIG
 # ─────────────────────────────────────────────────────────────────────────────
 
-CACHE_DIR   = Path(".cache")
 SAMPLE_SIZE_FOR_LABEL = 8
 # Ceiling for hosted providers (fast per-call, so fewer/bigger requests is
 # better). Actually applied size is min(this, client.batch_size) — a local/
@@ -58,6 +57,12 @@ class PipelineResult:
     story_topics: List[List[str]]                # per-story list of topic labels
     broad_topics: Dict[str, List[int]]           # broad topic → [story indices]
     specific_topics: Dict[str, List[int]]        # specific topic → [story indices]
+    # When set, the agent may only see these story indices (the stories in the
+    # reporter's selected topics). None means the whole corpus is in scope.
+    allowed_indices: Optional[frozenset] = None
+
+    def in_scope(self, idx: int) -> bool:
+        return self.allowed_indices is None or idx in self.allowed_indices
 
     def topic_summary(self) -> str:
         """Human-readable summary of the broad topics the agent should explore."""
@@ -67,7 +72,7 @@ class PipelineResult:
         return "\n".join(lines)
 
     def get_story(self, idx: int) -> Optional[dict]:
-        if 0 <= idx < len(self.stories):
+        if 0 <= idx < len(self.stories) and self.in_scope(idx):
             return self.stories[idx]
         return None
 
@@ -75,6 +80,8 @@ class PipelineResult:
         q = query.lower()
         results = []
         for i, s in enumerate(self.stories):
+            if not self.in_scope(i):
+                continue
             text = f"{s.get('title','')} {s.get('content','')}".lower()
             if q in text:
                 results.append({"index": i, "title": s["title"], "date": s.get("date", "")})
@@ -124,27 +131,12 @@ def _embed_batch(client: EmbedClient, texts: List[str],
     return np.array(all_vectors, dtype=np.float32)
 
 
-def _cache_key(texts: List[str], model_name: str) -> str:
-    combined = "\n---\n".join(texts)
-    return hashlib.md5((combined + model_name).encode()).hexdigest()
-
-
 def _load_or_embed(client: EmbedClient, texts: List[str],
                     on_progress: Optional[ProgressCallback] = None) -> np.ndarray:
-    CACHE_DIR.mkdir(exist_ok=True)
-    cache_file = CACHE_DIR / "embeddings.pkl"
-    key = _cache_key(texts, client.model_name)
-    if cache_file.exists():
-        with open(cache_file, "rb") as f:
-            cached = pickle.load(f)
-        if cached.get("key") == key and len(cached.get("vectors", [])) == len(texts):
-            print("✓ Loaded embeddings from cache.")
-            return cached["vectors"]
-    print(f"Generating embeddings for {len(texts)} stories…")
-    vectors = _embed_batch(client, texts, on_progress)
-    with open(cache_file, "wb") as f:
-        pickle.dump({"key": key, "vectors": vectors}, f)
-    return vectors
+    """Embed the stories. Repeat runs on the same stories are served from
+    the embedding client's disk cache (embed_cache.py)."""
+    print(f"Embedding {len(texts)} stories…")
+    return _embed_batch(client, texts, on_progress)
 
 
 def _umap_params(n: int) -> dict:
@@ -217,6 +209,134 @@ def _assign_outliers(reduced: np.ndarray, labels: np.ndarray) -> np.ndarray:
     return labels
 
 
+# Labels are requested through a forced tool call, which the Anthropic API
+# answers with structured input and Ollama answers under a JSON-schema
+# constraint. Asking for bare text or a JSON object in prose broke with
+# reasoning models (GLM on Ollama): they wrote out their deliberation,
+# the JSON parse failed, and the fallback returned that deliberation,
+# cut off mid-sentence, as the topic label.
+_LABEL_INSTRUCTIONS = (
+    "Each label is a concise topic label of 2 to 5 words describing the SUBJECT "
+    "MATTER the articles share. Focus on WHAT happens, not WHERE: avoid labels like "
+    "'Chicago news', 'local community news' or 'Illinois news' unless the geography "
+    "itself is the distinguishing feature (e.g. 'Lake Michigan environment'). Good "
+    "labels: 'High School Basketball', 'City Budget Disputes', 'Immigration Policy', "
+    "'Crime and Sentencing', 'City Council', 'Transit'. Give only the label, with no "
+    "explanation."
+)
+
+_ONE_LABEL_TOOL = {
+    "name": "name_topic",
+    "description": "Give the topic label for this cluster of articles.",
+    "input_schema": {
+        "type": "object",
+        "properties": {"label": {"type": "string", "description": "2 to 5 words."}},
+        "required": ["label"],
+    },
+}
+
+_ALL_LABELS_TOOL = {
+    "name": "name_topics",
+    "description": "Give a topic label for every cluster.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "labels": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "cluster": {"type": "integer"},
+                        "label": {"type": "string", "description": "2 to 5 words."},
+                    },
+                    "required": ["cluster", "label"],
+                },
+            }
+        },
+        "required": ["labels"],
+    },
+}
+
+MAX_LABEL_WORDS = 6
+MAX_LABEL_CHARS = 60
+_LABEL_STOPWORDS = set("""a an and are as at be by for from has have he her his in into is it its
+of on or over says she that the their they this to was were will with after amid about new
+more than what who how why when where says said""".split())
+
+
+def clean_label(text: object) -> Optional[str]:
+    """A usable topic label from a model's answer, or None.
+
+    A label is at most MAX_LABEL_WORDS words and MAX_LABEL_CHARS
+    characters on one line. When the answer is prose (a model reasoning out
+    loud), the last short quoted phrase in it is taken, since reasoning
+    models usually quote the label they settle on."""
+    if not isinstance(text, str):
+        return None
+    t = re.sub(r"\s+", " ", text).strip().strip("*").strip().strip('"\'\u201c\u201d').strip()
+    t = re.sub(r"^(?:label|topic)\s*:\s*", "", t, flags=re.I).rstrip(".").strip()
+    if t and len(t) <= MAX_LABEL_CHARS and len(t.split()) <= MAX_LABEL_WORDS:
+        return t
+    quoted = [q.strip() for q in re.findall(r"[\"\u201c]([^\"\u201c\u201d\n]{3,60})[\"\u201d]", text)]
+    quoted = [q for q in quoted if len(q.split()) <= MAX_LABEL_WORDS]
+    return quoted[-1] if quoted else None
+
+
+def _fallback_label(stories: List[dict], indices: List[int]) -> str:
+    """A label from the cluster's headlines when the model gave none that
+    works: up to three words that recur across its headlines, favoring
+    capitalized words (names, agencies) over verbs like "faces"."""
+    counts: Dict[str, float] = {}
+    shown: Dict[str, str] = {}
+    for i in indices:
+        words = re.findall(r"[A-Za-z][A-Za-z'-]{2,}", stories[i].get("title", ""))
+        for pos, w in enumerate(words):
+            k = w.lower().removesuffix("'s")
+            if k in _LABEL_STOPWORDS:
+                continue
+            capitalized = w[0].isupper() and pos > 0     # the first word is capitalized anyway
+            counts[k] = counts.get(k, 0) + 1 + (0.5 if capitalized else 0)
+            if capitalized or k not in shown:
+                shown[k] = w.removesuffix("'s") if w[0].isupper() else w.capitalize()
+    ranked = sorted(counts, key=lambda k: (-counts[k], k))
+    recurring = [k for k in ranked if counts[k] >= 2]
+    top = (recurring if len(recurring) >= 2 else ranked)[:3]
+    return " ".join(shown[k] for k in top) or "Other Stories"
+
+
+def _tool_input(resp) -> Optional[dict]:
+    for block in getattr(resp, "content", []) or []:
+        if isinstance(block, dict) and block.get("type") == "tool_use":
+            data = block.get("input")
+            if isinstance(data, str):
+                try:
+                    data = json.loads(data)
+                except json.JSONDecodeError:
+                    return None
+            return data if isinstance(data, dict) else None
+    return None
+
+
+def _call_labeler(provider: ChatProvider, prompt: str, tool: dict, max_tokens: int):
+    for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            return provider.create(
+                model=provider.label_model,
+                system="",
+                messages=[{"role": "user", "content": prompt}],
+                tools=[tool],
+                tool_choice={"type": "tool", "name": tool["name"]},
+                max_tokens=max_tokens,
+            )
+        except ChatRateLimitError as e:
+            if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
+                raise
+            pause = retry_pause(rl_attempt, e)
+            logging.warning("Topic labeling rate limited; waiting %.0fs (attempt %d/%d).",
+                            pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
+            time.sleep(pause)
+
+
 def _label_cluster(provider: ChatProvider, stories: List[dict], indices: List[int], reduced: np.ndarray) -> str:
     cluster_vecs = reduced[indices]
     centroid     = cluster_vecs.mean(axis=0)
@@ -232,35 +352,21 @@ def _label_cluster(provider: ChatProvider, stories: List[dict], indices: List[in
         snippets.append(f"• {s['title']} — {excerpt}")
 
     prompt = (
-        "You are labeling clusters of news articles from a local newspaper.\n"
-        "Below are the most representative headlines and excerpts from one cluster.\n\n"
+        "You are labeling a cluster of news articles from a local newspaper.\n"
+        "Below are its most representative headlines and excerpts.\n\n"
         + "\n".join(snippets)
-        + "\n\nReturn ONLY a concise topic label (2–5 words) describing the SUBJECT MATTER "
-        "these articles share. Focus on WHAT happens, not WHERE — avoid labels like "
-        "'Chicago news', 'local community news', or 'Illinois news' unless the "
-        "geography itself is the distinguishing feature (e.g. 'Lake Michigan environment'). "
-        "Good labels: 'High School Basketball', 'City Budget Disputes', "
-        "'Immigration Policy', 'Crime and Sentencing', 'City Council', 'Transit'."
+        + f"\n\nCall name_topic with the label. {_LABEL_INSTRUCTIONS}"
     )
-
-    for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
-        try:
-            resp = provider.create(
-                model=provider.label_model,
-                system="",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=LABEL_MAX_TOKENS,
-            )
-            break
-        except ChatRateLimitError as e:
-            if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
-                raise
-            pause = retry_pause(rl_attempt, e)
-            logging.warning("Pipeline label rate limited; waiting %.0fs (attempt %d/%d).",
-                            pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
-            time.sleep(pause)
-
-    return resp.text.strip().strip('"').strip("'")
+    try:
+        resp = _call_labeler(provider, prompt, _ONE_LABEL_TOOL, LABEL_MAX_TOKENS)
+    except ChatRateLimitError:
+        raise
+    except Exception as e:     # a failed label call must not fail the pipeline
+        logging.warning("Topic label call failed (%s); using headline words.", e)
+        return _fallback_label(stories, indices)
+    data = _tool_input(resp) or {}
+    return (clean_label(data.get("label")) or clean_label(getattr(resp, "text", ""))
+            or _fallback_label(stories, indices))
 
 
 def _cluster_snippets(stories, indices, reduced):
@@ -281,11 +387,9 @@ def _cluster_snippets(stories, indices, reduced):
 def _label_all(provider: ChatProvider, stories, labels, reduced, level_name, on_progress=None):
     """Label all clusters at this level in a single LLM call.
 
-    Falls back to per-cluster labeling if the batched call's JSON parse fails.
-    """
-    import json
-    import re
-
+    Clusters the batched call leaves unlabeled, or labels with something
+    unusable, are labeled one at a time. Labels are made distinct so two
+    clusters never merge under one name."""
     unique = sorted(c for c in np.unique(labels) if c != -1)
     print(f"Labeling {len(unique)} {level_name} clusters\u2026")
     if not unique:
@@ -300,51 +404,30 @@ def _label_all(provider: ChatProvider, stories, labels, reduced, level_name, on_
         f"There are {len(unique)} clusters below. Each cluster shows its most "
         "representative headlines and excerpts.\n\n"
         + "\n\n".join(blocks)
-        + "\n\nReturn ONLY a JSON object mapping each cluster id (as a string) "
-        "to a concise topic label (2\u20135 words) describing the SUBJECT MATTER. "
-        "Focus on WHAT happens, not WHERE \u2014 avoid labels like 'Chicago news', "
-        "'local community news', or 'Illinois news' unless the geography itself "
-        "is the distinguishing feature. Good labels: 'High School Basketball', "
-        "'City Budget Disputes', 'Immigration Policy'. "
-        'Example output: {"0": "City Council", "1": "Transit", ...}'
+        + f"\n\nCall name_topics with one label for every cluster id. {_LABEL_INSTRUCTIONS}"
     )
 
     if on_progress:
         on_progress(f"labeling_{level_name}", 0.0,
                     f"Labeling {len(unique)} {level_name} topics in one batch\u2026")
 
-    for rl_attempt in range(RATE_LIMIT_MAX_RETRIES + 1):
-        try:
-            resp = provider.create(
-                model=provider.label_model,
-                system="",
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=min(2048, 128 + 32 * len(unique)),
-            )
-            break
-        except ChatRateLimitError as e:
-            if rl_attempt >= RATE_LIMIT_MAX_RETRIES:
-                raise
-            pause = retry_pause(rl_attempt, e)
-            logging.warning("Batch label rate limited; waiting %.0fs (attempt %d/%d).",
-                            pause, rl_attempt + 1, RATE_LIMIT_MAX_RETRIES)
-            time.sleep(pause)
-
-    text = resp.text
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    parsed = None
-    if match:
-        try:
-            parsed = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            parsed = None
-
-    result = {}
-    if isinstance(parsed, dict):
-        for cid in unique:
-            label = parsed.get(str(cid)) or parsed.get(int(cid)) if isinstance(parsed, dict) else None
-            if isinstance(label, str) and label.strip():
-                result[cid] = label.strip().strip('"').strip("'")
+    result: Dict[int, str] = {}
+    try:
+        resp = _call_labeler(provider, prompt, _ALL_LABELS_TOOL, min(2048, 128 + 32 * len(unique)))
+        for item in (_tool_input(resp) or {}).get("labels", []) or []:
+            if not isinstance(item, dict):
+                continue
+            try:
+                cid = int(item.get("cluster"))
+            except (TypeError, ValueError):
+                continue
+            label = clean_label(item.get("label"))
+            if cid in unique and label:
+                result[cid] = label
+    except ChatRateLimitError:
+        raise
+    except Exception as e:
+        logging.warning("Batch topic labeling failed (%s); labeling clusters one at a time.", e)
 
     missing = [cid for cid in unique if cid not in result]
     if missing:
@@ -353,6 +436,15 @@ def _label_all(provider: ChatProvider, stories, labels, reduced, level_name, on_
         for cid in missing:
             indices = list(np.where(labels == cid)[0])
             result[cid] = _label_cluster(provider, stories, indices, reduced)
+
+    # Distinct names: stories are grouped by label downstream, so a repeated
+    # label would silently merge two clusters.
+    seen: Dict[str, int] = {}
+    for cid in unique:
+        key = result[cid].lower()
+        seen[key] = seen.get(key, 0) + 1
+        if seen[key] > 1:
+            result[cid] = f"{result[cid]} ({seen[key]})"
 
     if on_progress:
         on_progress(f"labeling_{level_name}", 1.0,

@@ -139,6 +139,14 @@ def list_ollama_models(host: str | None = None) -> list[dict]:
 
 
 def get_embed_client(model_override: str | None = None) -> EmbedClient:
+    """The configured embedding client, behind the disk cache in
+    embed_cache.py unless EMBED_CACHE=off."""
+    client = _make_embed_client(model_override)
+    from embed_cache import CachingEmbedClient, cache_enabled
+    return CachingEmbedClient(client) if cache_enabled() else client
+
+
+def _make_embed_client(model_override: str | None = None) -> EmbedClient:
     provider = get_embed_provider()
     if provider == "ollama":
         host = get_ollama_host()

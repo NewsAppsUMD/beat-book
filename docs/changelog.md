@@ -1,5 +1,134 @@
 # Beat Book Builder — Changelog
 
+## Session: October 1, 2026 — Contradicted outcomes
+
+- A housing book written by Qwen 3.6 on this machine said "Steele won the primary". The stories say she lost to Liz Nicholson. The outcome check accepted three sentences as evidence: "Steele lost reelection…", which says the opposite; "she unseated an incumbent", about her first election years earlier; and "justice prevailed", about her trial. It checked only that a passage reported the same kind of outcome.
+- `claim_evidence.check_contradictions` ties an outcome to the person it happens to, with a direction: won or lost, acquitted or convicted. The person can be the subject ("Steele lost") or the object of a defeat ("Nicholson defeated Steele"). A claim that pins one direction on a name, where a story pins the opposite on the same name and no story agrees, loses its citation and is marked `contradicted`. The reader and the Word export quote the story's sentence. Sentences dated to another year, and conditional ones, don't count. Across the saved books, it flags only the Steele claim.
+- Election evidence now needs a sentence naming someone the claim names, and "prevailed" counts only with an election word ("prevailed in the primary").
+- Sentences for these checks no longer split after a title or initial. "Larry Rogers Jr., won his sixth term in 2024" had been cut at "Jr.".
+- The build record's egress table leaves out web research when it was turned off.
+
+## Session: September 30, 2026 — Build timeline
+
+- "How this book was made" is now a timeline, replacing the grouped sections. Each stage is a row with an icon badge, how long it took, its model, and chips with its outcome counts. A row opens to a feed of what the stage's agent did, divided by turn: stories read, searches, pages fetched, facts added (with their quotes, long ones shortened until opened) and facts rejected (with the reason). The writing prompt, what was sent where, token counts and the citation cutoff sit under the stage they belong to. Stages share one neutral color; only the outcome is colored.
+- The writing agent's model and tool calls, the research agent's model calls, and the citation matcher's steps now carry a timestamp (`t`). The research trace gains `events`, an ordered log of searches, fetches, submitted facts and the finalize call, each pointing into the list that holds its details.
+- Exploring and writing now report tokens separately; the old table showed them as one merged cell.
+- Books built before this change still get the timeline, in turn order without step times. Their research steps are grouped by kind.
+
+## Session: September 26, 2026 — Sourcing transparency (Phase 1)
+
+### Reader
+- **Sourcing summary** under the title: claims matched to the corpus, added by web research, and unsourced, plus the match cutoff and a toggle that highlights unsourced and web-added claims.
+- **Match strength** on every citation chip, banded against the book's own cutoff, and stated in the source panel with a reminder that similarity is not a fact check.
+- **Alternate passages**: the source panel lists all (up to five) supporting passages per claim.
+- **Key-phrase highlights**: the leave-one-out sub-spans, computed since the embeddings rewrite but never shown, are now painted darker inside the passage.
+- **"Web" badge** on claims the research agent added.
+- **"How this book was made" panel** reading the new build record.
+
+### Citations
+- Bullets and body table rows with at least six words are now citable, one claim each, and are kept out of neighbor context blending. Headings, table headers and short labels still pass through.
+- Each claim carries `kind`, `origin` (draft or research, from comparing against the draft) and `provenance` (corpus, web or unsupported). The entries file gains a `stats` block.
+- The Word export renders cited bullets and rows as bullets and rows, with their markers.
+- `_sources.json` keeps organization, language, content type and metadata.
+
+### Build record
+- New `<stem>.manifest.json` per book: models and providers per stage, token usage, stage timings, the egress table, corpus topic assignments, every writing-agent tool call, the stories it read, its system prompts, the research agent's searches, results, fetched pages, cited pages, shell commands, edits and summary, the draft-to-final diff, citation calibration and stats, and any errors.
+- `library.json` records `target_words`.
+
+### Fixes
+- The writing agent no longer sees deselected topics. `view_topics` used the unfiltered topic list, and `read_story` and `search_stories` reached the whole corpus.
+- The read-target text shown to the model now matches the rule the code enforces.
+- `output/` is no longer mounted as a static directory; book files are served by id from `/books/{id}/files/{kind}`.
+- The research agent's shell runs with a minimal environment (no API keys), a sandbox home directory, and CPU and file-size limits. `RESEARCH_BASH=off` removes it. Server-side web searches and fetches now appear in the progress feed.
+- Numeric WordPress author ids are no longer used as bylines. RSS and JSON tag names are kept in story metadata. The detected language is now sent to the pipeline.
+- New `GET /api/egress-plan` and a "Where your material goes" table on the topic screen.
+- Static assets carry a version query so browsers pick up the new reader.
+- Added a pytest suite in `tests/`.
+
+### Follow-ups after the first real runs
+- The research agent's turn ceiling was 4. Runs spent three turns reading the file, searched on the last turn, and stopped before editing: research changed only 4 of 13 saved books. The ceiling is now 8, the model is told two turns before the end (and again on the last) to stop researching and write its edits, and it is told not to list the folder or `sleep`.
+- If the agent ends without calling `finalize_beat_book`, one extra request forced to that tool records its summary. A failure there loses only the summary.
+- Unmatched lines under Reporting Tips are `guidance`, not `unsupported`. Entries carry their `section`.
+- All-bold subheads and short lines ending in a colon are no longer counted as claims.
+
+### Research safeguards
+- The research shell runs under an OS sandbox (`sandbox-exec` on macOS, bubblewrap on Linux) that blocks writes outside the book's folder. A startup probe checks it; with no working sandbox the shell is withheld, never run unconfined. A run had left `/tmp/search.py` behind.
+- The agent is told its working folder in its first message, and a refused text-editor path now names the folder.
+- Topic scans no longer count as story reads. A run had written a 20,000-character book from 2,000-character excerpts without one full read. The build record lists full reads and excerpt-only stories separately.
+- Web-added claims carry `web_basis`: the source they name was a page the agent read, only a search snippet, not in its research record, or not named. The reader badge and build record show it.
+- Web searches, fetches and results are counted once per block id. Pages the agent read are recorded with titles. Edits the agent makes through shell scripts are now counted.
+
+### Checking web claims against the pages read
+- The research agent mostly stopped naming sources inline, so judging web claims by their attributions labeled 13 of 16 "no source" even when they came from pages it read. Fetched page text is now kept in memory for the run, never written to disk, and each web-added claim is matched against it. The check uses the book's citation cutoff, and every figure in the claim must appear on the page. `web_basis` is now `read`, `snippet`, `unconfirmed` or `unattributed`, with `web_support` naming the page.
+- An attribution at the end of a paragraph now covers every sentence in that paragraph.
+- When an edit adds lines with no source named, the research agent is told which lines and asked to add one. Reporting Tips are exempt. The build record counts the warnings.
+- Draft claims that research rewrote or removed are listed as `replaced_draft_claims`, counted in the sourcing summary, and shown in the build record.
+- The prompt tells the agent not to re-fetch pages.
+
+### App-side page fetching
+- The research agent's `web_fetch` (Anthropic server tool) is replaced by `fetch_page`, run by the app in `page_fetcher.py`. The server tool could not be cached, and its text came back for only some pages. Repeats within a run return a note, and pages are cached on disk for 7 days (`.cache/web_pages/`). Only URLs already seen in the run can be fetched, every redirect hop is checked against private addresses, page text is marked untrusted, and there are at most 8 network fetches per run. The build record lists characters fetched, cached copies, repeat requests and refused fetches.
+- A web claim now counts as supported by a page when every figure is present and either the similarity cutoff is met or at least 60% of its key words appear in one passage. Each checked claim records its closest passage and scores (`web_best`).
+- "Snippet" now means the named source was only seen in search results. A named source that was read but doesn't back the claim is "unconfirmed".
+- Date fragments like "Apr. 20" are no longer read as source names.
+- Draft-versus-final comparison ignores inline attributions, so sourcing a draft sentence doesn't make it a research claim or a replaced one.
+
+### Research rebuilt around quoted facts
+Six runs showed the same pattern: prompts reduced problems but never ended them. The agent dropped story details, cited pages it never opened, and skipped attributions. So the design changed from asking the model to behave to making those outcomes impossible:
+- The research agent no longer edits the beat book and has no shell or text editor. Its tools are `web_search` (at Anthropic), `fetch_page`, `submit_fact` and `finalize_research`.
+- `submit_fact` takes a fact, a verbatim quote, the page URL and a placement. `research_facts.check_fact` checks three things: the quote is on the fetched page after normalization, every figure in the fact is in the quote, and most of its key words are. Rejections go back to the model with the reason.
+- The app writes each attribution from the page. It keeps the model's source name only if it matches the page, and it uses a stated publication date or labels the retrieval month.
+- `insert_facts` adds sub-bullets, paragraphs or section-end lines, and never changes an existing line.
+- Web lines map back to their facts (`web_basis: quoted` with the quote). The reader's web badge opens the quote and page. Accepted facts and rejections are in the build record, and `facts.json` sits in the book's sandbox.
+- Removed: the shell sandbox (`shell_sandbox.py`), `RESEARCH_BASH`, attribution warnings, and similarity matching of web claims against pages.
+- New `evals/research_eval.py` builds fixed corpora several times and checks hard targets. Every book must finish, every web line must be quoted, no draft claims may be lost, every quote must re-verify against the cached page, and research must finalize. It also checks a soft target of at least 2 facts per book. `--dry-run` uses scripted models. A negative control, which slipped an unchecked line into the book and dropped a draft line, failed both targets as intended.
+
+### After the first real evaluation run
+- One housing run added 6 checked facts, rejected 13 submissions and lost no story claims. It missed one target: a two-sentence fact placed as a sub-bullet was reported as unverified. The mapping now indexes whole facts as well as their sentences, and all 6 map to their quotes.
+- Dates and years in a fact may come from anywhere on the page, not just the quote. Four good facts had been rejected because they took the year from the dateline. Every other figure must still be in the quote.
+- Facts made of figures and names pass at a 25% key-word overlap, down from 50%, when every figure and name is in the quote. Results-table rows had been rejected for lacking verbs.
+- Rejections now record the submitted quote.
+- The evaluation reuses the first run's draft for later runs of the same corpus, or an earlier evaluation's drafts with `--drafts-from`.
+
+### After the full evaluation
+- All six runs, three corpora twice each, met every hard target, adding 28 checked facts. But 71 submissions were rejected, and every run used all its turns. All 19 "quote not on the page" rejections turned out to be text that was on the page.
+- Quotes may now join several verbatim passages, split on ellipses and then on sentences, as long as each passage is at least 20 characters and appears on the page. Edge punctuation and quote marks are trimmed. Accepted facts store `quote_parts`, and the reader joins them with "…".
+- Spaces that page extraction leaves before closing punctuation, as in "the Bears ' board", are ignored.
+- Facts can be placed under ### subsections. The first message and placement errors list them.
+- A date in the page's URL, such as /2026/03/17/, counts as a date on the page.
+- Replaying the evaluation's 71 rejections: 15 are now accepted, 5 now place correctly but fail a content check, and 39 are content failures the checks should catch.
+
+### Facts versus analysis
+- A Bears book had 63 unsourced claims. About 10 were interpretive ("one of the most consequential … disputes in Illinois in a generation"), 5 were story ideas, and about 48 were factual claims the embedding match missed.
+- New `claim_evidence.py`, run after citation matching:
+  - **Anchor evidence.** An unsupported claim is cited when all its names, figures and dates appear in one stretch of a story, about two 100-word passages. At least two anchors must be distinctive: a figure, a date, or a name in no more than 30% of the stories. The stretch must share at least 30% of the claim's other key words, and the best stretch across all stories wins. Supports carry `match_type: anchors` and highlight each anchor. On the Bears book this cites 11 more claims, and each points to a story on the same subject. A first version without the distinctiveness and context rules cited 22, including the wrong "board voted June 5" and matches found in related-link blocks.
+  - **Claim sorting.** The remaining unsupported claims go in one batch to the label model, which sorts each into fact, analysis or suggestion. Analysis becomes `provenance: analysis` and suggestions become `guidance`. Facts stay `unsupported`. On any failure, claims stay flagged.
+- The reader counts analysis separately and gives it a dotted underline. Anchor citations have a dotted chip, and the panel explains what matched. The build record reports the sorting model and counts. The egress table lists the sorting step.
+
+### Explaining unsourced facts in the book
+- `claim_evidence.explain_unsourced` gives each remaining unsupported fact a reason. `outside_stories` means some of its names, figures or dates appear in none of the stories; it lists them as `details_not_in_stories`, with the claim's own spelling. `in_stories` means every detail appears somewhere, but no passage states the claim. `no_details` means there's nothing specific to look up. Only absence is a strong signal: in a single-subject corpus nearly every name turns up somewhere, and even the wrong "board voted June 5" claim passes that test. So `in_stories` is worded as "check it", never as supported.
+- The reader's sourcing summary now explains how unsourced facts get into a book and gives the counts by reason. Each unsourced claim shows its reason on hover.
+- The Word export adds "About the sourcing", with counts, the explanation and a "Claims to check" list with reasons, before the Sources section. Books without citation stats are unchanged.
+- On the Bears book: 3 facts have details in no story ("since 1920", "Giants-Jets", "Guaranteed Rate Field"), 43 use details from the stories that no passage states, and 2 name nothing specific.
+
+### Preamble cut: quoted titles and sketched outlines
+- A GLM-5.3 housing draft started with reasoning. The cut had treated a quoted `"# Title"` in GLM's deliberation as the book's title. Past it came a section outline sketched in the reasoning ("# Title / ## subtitle line maybe / ## Beat Overview …"), then the real book.
+- A title glued onto a sentence no longer counts after a quote mark or backtick. A candidate title must also be at most 120 characters, and it must reach a prose line of 25 or more characters within three headings, which an outline with nothing under its headings fails. On that draft, the cut now lands on "# Beat Book: Chicago Housing Authority & Cook County Government" and removes 4,573 characters.
+- Not handled: a model that restarts the book when asked to continue a draft that hit the length limit. GLM did this, so repeated sections after the title remain.
+
+### Stale browser tabs
+- A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.
+- The reader now removes any marker it doesn't recognize. The app page is served with `Cache-Control: no-cache`. New `GET /api/version` fingerprints the frontend files, and an open tab checks it on focus, showing "Beat Book has been updated. Reload to use the new version" when it changes.
+
+### Dates tied to the quote
+- The next evaluation doubled output (58 facts, 44 rejections), but three facts said the Bears board voted June 5. It voted Thursday, June 4. The pages were published Friday, June 5, and the earlier "date anywhere on the page" rule let the dateline stand in for the event date.
+- A date in a fact must now be in the quote, or follow from a weekday, "today" or "yesterday" in the quote, counted from the publication date. The publication date comes from the URL, a "Published" line, or a date right after the byline, never the site header. When a quote names several days, the one whose nearby words best match the fact is used. A fact about two events with one date is refused as ambiguous. "As of" the publication date is allowed. A year must be in the quote, belong to a date the quote pins down, or be the publication year for a pinned date.
+- If `after_line` matches no line, the fact is placed at the end of the section, not rejected.
+- Replaying that evaluation's 58 accepted facts: 47 still pass, and all three wrong Bears dates are rejected. The other eight carry dates or years their quotes don't give. Two of the nine placement rejections are now accepted.
+- The evaluation after that (12:49 run): 6 of 6 runs met every hard target, with 48 facts and 42 rejections. No wrong dates got through; the model resubmitted the Bears vote as "early June 2026". All nine facts with inferred dates were checked by hand, and every one is correct. Of the 19 date and year rejections, 13 were recovered on resubmission. Placement rejections fell from 9 to 0.
+- A bare month and year matching the publication month, as in "in August 2026" in a story published August 13, 2026, is now allowed. Replaying that run recovers one fact, submitted twice. Two other August facts now pass the date check but still fail the key-word check.
+
+---
+
 ## Session: June 5, 2026 — App shell + background library
 
 ### From a linear wizard to a persistent app

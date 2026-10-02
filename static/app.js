@@ -147,6 +147,7 @@
       item.innerHTML =
         `<span class="status-dot ${dotClass(b)}" title="${escapeHtml(b.status)}"></span>` +
         `<span class="book-title">${escapeHtml(b.title || "Untitled")}</span>` +
+        (b.warning ? `<span class="book-warning" title="${escapeHtml("May be damaged: " + b.warning)}">⚠</span>` : "") +
         `<button class="book-item-menu" aria-label="More actions">⋯</button>`;
       item.addEventListener("click", () => activateBook(b.id));
       item.querySelector(".book-item-menu").addEventListener("click", (e) => openBookMenu(b.id, e));
@@ -181,7 +182,8 @@
           statusHtml +
           (created ? `<span>${created}</span>` : "") +
           (counts.length ? `<span>${counts.join(" · ")}</span>` : "") +
-        `</div>`;
+        `</div>` +
+        (b.warning ? `<div class="library-card-warning" title="${escapeHtml(b.warning)}">⚠ May be damaged. Open it to see why.</div>` : "");
       card.addEventListener("click", () => activateBook(b.id));
       libraryGrid.appendChild(card);
     }
@@ -208,7 +210,7 @@
     if (!b || b.status !== "ready" || !b.stem) return;
     currentBookId = id;
     showView("reader");
-    window.Reader.open(b.stem, { title: b.title, id });
+    window.Reader.open(b.stem, { title: b.title, id, warning: b.warning || "" });
     if (isUnread(b)) {
       b.opened_at = Date.now() / 1000;       // optimistic
       renderSidebar(); renderLibrary();
@@ -311,6 +313,9 @@
             setGenerating(`${msg.label || "Reviewing coverage"} — ${pct}%`, "");
             setStage("review"); setShimmerDeterminate(pct / 100);
           }
+          break;
+        case "research_skipped":
+          if (drive) markResearchSkipped();
           break;
         case "research_started":
           if (drive) { setGenerating("Researching context", "Opening the sandbox for the research agent…"); setStage("research"); setShimmerIndeterminate(); }
@@ -710,7 +715,7 @@
     const stories = [];
     for (const src of previewState) for (const s of src.stories) {
       if (!s.included) continue;
-      stories.push({ title: s.title, content: s.content, date: s.date, author: s.author, organization: s.organization, link: s.link, content_type: s.content_type || "article", metadata: s.metadata || {} });
+      stories.push({ title: s.title, content: s.content, date: s.date, author: s.author, organization: s.organization, language: s.language || "", link: s.link, content_type: s.content_type || "article", metadata: s.metadata || {} });
     }
     if (stories.length === 0) return;
 
@@ -776,8 +781,49 @@
       list.appendChild(item);
     });
     updateTopicBtn();
+    renderEgressPlan();
     switchScreen("topic");
     $("create-scroll").scrollTo({ top: 0 });
+  }
+
+  // Web research on/off: the viewer's last choice is remembered in this
+  // browser, and the egress table follows it.
+  const researchToggle = $("web-research-toggle");
+  function webResearchOn() { return !researchToggle || researchToggle.checked; }
+  if (researchToggle) {
+    try {
+      const saved = localStorage.getItem("beatbook.webResearch");
+      if (saved !== null) researchToggle.checked = saved === "on";
+    } catch (e) { /* storage unavailable: keep the default */ }
+    researchToggle.addEventListener("change", () => {
+      try { localStorage.setItem("beatbook.webResearch", researchToggle.checked ? "on" : "off"); } catch (e) {}
+      renderEgressPlan();
+    });
+  }
+
+  // Show, from the server's current configuration, what each stage sends off
+  // this machine and where — before the reporter commits to generating.
+  async function renderEgressPlan() {
+    const box = $("egress-plan");
+    if (!box) return;
+    let plan;
+    try {
+      const r = await fetch(`/api/egress-plan?web_research=${webResearchOn()}`);
+      if (!r.ok) throw new Error();
+      plan = await r.json();
+    } catch (e) { box.hidden = true; return; }
+    const hosts = plan.full_text_leaves_machine_to || [];
+    $("egress-plan-summary").textContent = hosts.length
+      ? `Where your material goes: story text is sent to ${hosts.join(", ")}`
+      : "Where your material goes: story text stays on this machine";
+    $("egress-plan-lede").textContent = "Each step below uses the providers set in the server's .env file. The upload steps have already run.";
+    const rows = (plan.rows || []).map(r => {
+      const where = r.to && r.to.local ? '<span class="mf-local">This machine</span>' : escapeHtml(`${r.to.service} · ${r.to.host}`);
+      const done = r.phase === "ingest" || r.phase === "analyze";
+      return `<tr class="${done ? "egress-phase-done" : ""}"><td>${escapeHtml(r.stage)}${done ? " (done)" : ""}</td><td>${escapeHtml(r.sends)}</td><td>${where}</td></tr>`;
+    }).join("");
+    $("egress-plan-table").innerHTML = `<table class="mf-table"><thead><tr><th>Step</th><th>What is sent</th><th>Where</th></tr></thead><tbody>${rows}</tbody></table>`;
+    box.hidden = false;
   }
 
   function updateTopicBtn() {
@@ -816,7 +862,7 @@
       const style = styleRadio ? styleRadio.value : "narrative";
       const lengthRadio = document.querySelector('input[name="length"]:checked');
       const length = lengthRadio ? lengthRadio.value : "standard";
-      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style, length }) });
+      const resp = await fetch("/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: pendingSession.session_id, selected_topics: selected, style, length, web_research: webResearchOn() }) });
       const data = await resp.json();
       if (!resp.ok) { setGenerating("Couldn't start", data.error || "Failed to enqueue generation."); setShimmerIndeterminate(); return; }
       setWorking(false);                          // generation is server-side now
@@ -872,15 +918,46 @@
     });
   }
   function markAllStagesDone() { if (stepperEl) stepperEl.querySelectorAll(".step").forEach(el => { el.classList.remove("active"); el.classList.add("done"); }); }
-  function resetStages() { stagesReached.clear(); }
+  const RESEARCH_SUB = "Browsing the web for additional reporting context";
+  function markResearchSkipped() {
+    const el = stepperEl && stepperEl.querySelector('.step[data-step="research"]');
+    if (el) el.classList.add("skipped");
+    const sub = $("research-step-sub");
+    if (sub) sub.textContent = "Turned off for this book";
+  }
+  function resetStages() {
+    stagesReached.clear();
+    const el = stepperEl && stepperEl.querySelector('.step[data-step="research"]');
+    if (el) el.classList.remove("skipped");
+    const sub = $("research-step-sub");
+    if (sub) sub.textContent = RESEARCH_SUB;
+  }
   function setShimmerDeterminate(fraction) { if (shimmerBar && shimmerFill) { shimmerBar.classList.add("determinate"); shimmerFill.style.width = `${Math.min(Math.max(fraction, 0), 1) * 100}%`; } }
   function setShimmerIndeterminate() { if (shimmerBar && shimmerFill) { shimmerBar.classList.remove("determinate"); shimmerFill.style.width = ""; } }
 
   // ═══════════════════════════════════════════════════════════════════════
   // Boot
   // ═══════════════════════════════════════════════════════════════════════
-  window.addEventListener("focus", () => fetchBooks());
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) fetchBooks(); });
+  // An open tab keeps running the scripts it loaded. When the app has been
+  // updated since, say so, instead of rendering new books with old code.
+  let loadedVersion = null;
+  async function checkVersion() {
+    try {
+      const v = (await (await fetch("/api/version", { cache: "no-store" })).json()).frontend;
+      if (loadedVersion === null) { loadedVersion = v; return; }
+      if (v !== loadedVersion && !document.getElementById("update-banner")) {
+        const bar = document.createElement("div");
+        bar.id = "update-banner";
+        bar.className = "update-banner";
+        bar.innerHTML = 'Beat Book has been updated. <button type="button" class="btn-link">Reload to use the new version</button>';
+        bar.querySelector("button").addEventListener("click", () => location.reload());
+        document.body.prepend(bar);
+      }
+    } catch (e) { /* offline or server restarting: try again on next focus */ }
+  }
+  checkVersion();
+  window.addEventListener("focus", () => { fetchBooks(); checkVersion(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) { fetchBooks(); checkVersion(); } });
 
   // Fetch embedding provider config (shows model selector when Ollama is active)
   fetch("/api/embed-config").then(r => r.json()).then(cfg => {
