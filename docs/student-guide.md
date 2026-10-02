@@ -59,6 +59,8 @@ OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
 
 Leave `OPENAI_API_KEY` commented out — it isn't used in this option. (Optional) confirm the local model is ready: `ollama list` should show `qwen3-embedding:0.6b`. If it's missing, see Troubleshooting.
 
+`.env.example` also has an **Option C** that runs everything on your own computer with no API keys. It needs a large model and a fast laptop with plenty of memory, so it won't work in a Codespace; skip it unless your instructor says otherwise.
+
 ---
 
 **No quotes, no extra spaces**, either option. `ANTHROPIC_API_KEY="sk-ant-..."` (with quotes) will not work. Save the file when done — `.env` is already set up to be ignored by git, so your keys won't accidentally get committed or shared.
@@ -71,6 +73,8 @@ In the terminal panel at the bottom of the Codespace, run:
 make run
 ```
 
+The terminal prints which models the app will use, such as `[startup] chat: …` and `[startup] research: anthropic claude-sonnet-4-6`. If it shows a `WARNING` that a setting "is set in the shell", see Troubleshooting.
+
 A popup should appear saying a port was forwarded — click **Open in Browser**. If you miss it, click the **Ports** tab (next to the terminal) and click the globe icon next to port `8000`.
 
 **Don't use `make dev`.** That mode auto-restarts the server whenever files change, which will kill any beat book that's currently generating. Stick to `make run`.
@@ -81,26 +85,41 @@ A popup should appear saying a port was forwarded — click **Open in Browser**.
 2. Add source material — either drag in files (Word, PDF, HTML, etc.) or paste article URLs. For your first run, try one of the NOTUS collections here: https://github.com/NewsAppsUMD/beat_book_work/tree/main/notus - copy the "raw" URL of a JSON file (like [this one](https://raw.githubusercontent.com/NewsAppsUMD/beat_book_work/refs/heads/main/notus/notus_congress.json)) and paste it into the URL box.
 3. Wait for the preview to load, then review the detected stories — you can edit titles/dates/authors or deselect anything that isn't a real story.
 4. Click to run the pipeline (this groups stories into topics).
-5. Pick the topics you want covered and a writing style, then generate. This runs in the background — you can navigate elsewhere in the app while it works, but **keep the browser tab open** (see the note on idle timeouts below).
+5. Pick the topics you want covered, a writing style and a length. **Web research** (on by default) adds newer facts from the web, each with a quote the app checked; turn it off to build only from your stories, which is faster and cheaper. Open **Where your material goes** to see which services each step sends your stories to. Then generate. This runs in the background — you can navigate elsewhere in the app while it works, but **keep the browser tab open** (see the note on idle timeouts below).
 6. When it's ready, open it in the reader. Click any citation number to see the source passage it's based on.
+
+### Reading the sourcing
+
+The box under the book's title shows how each claim is sourced:
+
+- **Matched to your stories:** the numbered citations. A match means a passage in your stories is similar or shares the claim's names, figures and dates. It's not a fact check.
+- **Added by web research:** marked "web". Click the badge to see the quote from the page.
+- **No matching source:** hover over the claim to see why. A story may say something different, or the detail may come from the model's general knowledge. Check these before you rely on them.
+- **Analysis** and **tips** are counted separately, because they have no source to match.
+
+**How this book was made**, in the reader's header, shows each step as a timeline: which stories the writer read, what research searched for, and which facts it added or rejected. A ⚠ next to a book means the draft looks damaged; the reader's banner explains why. Try building it again.
 
 ## 6. Save your work
 
 **Do this at the end of every session.** Generated beat books live in the `output/` folder inside your Codespace, but they are *not* saved to git and Codespaces get automatically deleted after about 30 days of inactivity.
 
-To download a finished book: in the file explorer, find `output/<your-book-name>.md`, right-click it, and choose **Download**. If you want the citation data too, download the matching `.json` and `_sources.json` files alongside it. The `.manifest.json` file records how the book was made.
+The easiest way to save a book is the **Word** button in the reader's header. The Word file includes an "About the sourcing" section and a list of the claims to check.
+
+To keep the raw files too: in the file explorer, find `output/<your-book-name>.md`, right-click it, and choose **Download**. If you want the citation data too, download the matching `.json` and `_sources.json` files alongside it. The `.manifest.json` file records how the book was made.
 
 ## 7. Ground rules (you're sharing API keys)
 
 - You're sharing keys with 1–2 classmates — Anthropic + OpenAI (Option A) or Anthropic + Ollama Cloud (Option B). If generation seems unusually slow, someone else on your key is probably generating at the same time — the app automatically retries rather than erroring out, so slow is normal; try again shortly if it seems stuck.
 - Don't upload huge batches of files at once — each one costs an API call just to detect stories in it.
-- Avoid regenerating the same book repeatedly "just to see" — regeneration re-does the citation matching from scratch every time, which is the most expensive step. On Option B, this also runs on your Codespace's own (fairly limited) CPU rather than a fast hosted API, so expect it to take noticeably longer than Option A's hosted embeddings.
+- Avoid regenerating the same book repeatedly "just to see". Each build pays again for writing, and for web research if it's on. Embeddings are saved, so rebuilding from the same stories skips most of the citation matching. On Option B, embedding runs on your Codespace's own (fairly limited) CPU, so the first build from a set of stories takes noticeably longer than on Option A.
+- Turn off **Web research** when you don't need newer facts from the web. It's the slowest step, and it uses the Anthropic key.
 - Leave the optional `ENABLE_THINKING` setting alone (commented out) — it's slower and not needed for this class.
 
 ## Troubleshooting
 
 - **A book got stuck on "generating" or shows as failed after I stepped away.** Codespaces suspend after about 30 minutes idle, and any book still generating when that happens is marked failed on restart. Keep the tab open (or check back within that window) while a book is generating, and just start it again if it fails.
-- **Error: "ANTHROPIC_API_KEY not configured."** Double-check your `.env` file — no quotes, correct variable names, no typos — then stop the server (Ctrl+C in the terminal) and run `make run` again.
+- **Error: "ANTHROPIC_API_KEY not configured."** The message says what needs the key, such as "(web research needs it)". Double-check your `.env` file — no quotes, correct variable names, no typos — then stop the server (Ctrl+C in the terminal) and run `make run` again.
+- **The startup log shows `WARNING: … is set in the shell`.** A setting typed into this terminal earlier is overriding your `.env`. Stop the server, run `unset` with the name it gives (for example `unset OLLAMA_CHAT_MODEL`), then `make run` again, or open a new terminal.
 - **(Option B) Errors mentioning `localhost:11434`, "connection refused," or topic clustering/citation matching failing.** The Codespace normally starts the Ollama server for you automatically, but if that didn't happen (or you're not sure), run `ollama serve > /tmp/ollama.log 2>&1 &` in the terminal (no need to re-pull the model), then try again.
 - **(Option B) `ollama: command not found`, or `ollama list` doesn't show `qwen3-embedding:0.6b`.** The one-time Ollama install/model-download during Codespace creation didn't finish — rerun it manually: `curl -fsSL https://ollama.com/install.sh | sh && ollama pull qwen3-embedding:0.6b`.
 - **The Ports/browser tab is blank.** Go to the **Ports** tab, right-click port 8000, and choose **Open in Browser** (or **Preview in Editor**).
