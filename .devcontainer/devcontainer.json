@@ -1,8 +1,9 @@
 {
   "name": "Beat Book Builder",
   "image": "mcr.microsoft.com/devcontainers/python:3.13",
-  "postCreateCommand": "make install && (sh .devcontainer/setup-ollama.sh || echo 'Ollama setup failed - see docs/student-guide.md Troubleshooting to install it manually. The rest of the app will still work once you do.')",
-  "postStartCommand": "pgrep -x ollama > /dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 &)",
+  // Installs Python packages (with uv) and Ollama at the same time.
+  "postCreateCommand": "sh .devcontainer/setup.sh",
+  "postStartCommand": "command -v ollama > /dev/null && (pgrep -x ollama > /dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 &)) || true",
   "postAttachCommand": {
     "terminal": "echo 'Codespace ready. See docs/student-guide.md — next: cp .env.example .env, fill in your keys, then make run.'"
   },
@@ -14,7 +15,10 @@
     }
   },
   "containerEnv": {
-    "HOST": "0.0.0.0"
+    "HOST": "0.0.0.0",
+    // Set to "false" for a class using Option A (Anthropic + OpenAI), which
+    // never uses Ollama; it skips the Ollama install and model download.
+    "INSTALL_OLLAMA": "true"
   },
   "customizations": {
     "vscode": {
