@@ -4,6 +4,7 @@
 
 - Qwen 3.6, run locally, met every hard target in the research evaluation but added 1 fact of 9 submitted. Three were rejected because the quote it typed wasn't on the page, and three because the date wasn't in the quote.
 - On Ollama, `fetch_page` now shows each sentence with a number, and `submit_fact` takes `sentences` (up to 3) in place of `quote`. The app copies those sentences from the page as the quote: neighbors joined with a space, others with " … ". A number past the page's last sentence is rejected with the page's sentence count. The figure, date and key-word checks are unchanged. Claude keeps typed quotes.
+- Rerun on the same housing draft: 2 facts added, 6 rejected, none for a quote not on the page. The remaining rejections are years or dates the quoted sentences don't state. This time the trim kept the full draft (Qwen's cut would have saved too little), so the run had more to research than the first.
 
 ## Session: October 1, 2026 — Contradicted outcomes
 
