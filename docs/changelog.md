@@ -1,5 +1,10 @@
 # Beat Book Builder — Changelog
 
+## Session: October 2, 2026 — Quoting by pointing on Ollama
+
+- Qwen 3.6, run locally, met every hard target in the research evaluation but added 1 fact of 9 submitted. Three were rejected because the quote it typed wasn't on the page, and three because the date wasn't in the quote.
+- On Ollama, `fetch_page` now shows each sentence with a number, and `submit_fact` takes `sentences` (up to 3) in place of `quote`. The app copies those sentences from the page as the quote: neighbors joined with a space, others with " … ". A number past the page's last sentence is rejected with the page's sentence count. The figure, date and key-word checks are unchanged. Claude keeps typed quotes.
+
 ## Session: October 1, 2026 — Contradicted outcomes
 
 - A housing book written by Qwen 3.6 on this machine said "Steele won the primary". The stories say she lost to Liz Nicholson. The outcome check accepted three sentences as evidence: "Steele lost reelection…", which says the opposite; "she unseated an incumbent", about her first election years earlier; and "justice prevailed", about her trial. It checked only that a passage reported the same kind of outcome.

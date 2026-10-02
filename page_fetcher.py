@@ -157,12 +157,33 @@ def _download(url: str) -> Dict[str, Any]:
             "via": "direct"}
 
 
+def number_sentences(text: str):
+    """(the text with "[n] " before each sentence, [sentence texts]). Sentence
+    n is the n-th item (1-based); whitespace between sentences is kept, so
+    paragraphs stay where they were."""
+    from claim_evidence import _sentences
+    out, sentences, prev = [], [], 0
+    for span in _sentences(text or ""):
+        raw = span.group(0)
+        lead = len(raw) - len(raw.lstrip())
+        body = raw.strip()
+        if not body:
+            continue
+        sentences.append(body)
+        out.append(text[prev:span.start() + lead])
+        out.append(f"[{len(sentences)}] {body}")
+        prev = span.start() + lead + len(body)
+    out.append(text[prev:])
+    return "".join(out), sentences
+
+
 class PageFetcher:
     """One research run's fetcher: tracks which URLs are allowed, what was
     fetched, and the text of every page read."""
 
     def __init__(self, max_fetches: int, seed_text: Iterable[str] = (),
-                 allow_hosts_from: Iterable[str] = (), max_shown_chars: int = MAX_SHOWN_CHARS):
+                 allow_hosts_from: Iterable[str] = (), max_shown_chars: int = MAX_SHOWN_CHARS,
+                 number_sentences: bool = False):
         """`seed_text`: text whose URLs may be fetched (the beat book).
         `allow_hosts_from`: text whose URLs' hosts may be fetched at any
         path (the vetted data portals in the research prompt)."""
@@ -170,6 +191,9 @@ class PageFetcher:
         # How much of each page the model sees. Smaller for models with a
         # small context window; the full text is still kept for checking.
         self.max_shown_chars = max_shown_chars
+        # Show each sentence with a number ("[12] ..."), so a model can quote
+        # by pointing at sentences instead of retyping them.
+        self.number_sentences = number_sentences
         self.network_fetches = 0
         self.allowed: Set[str] = set()
         self.allowed_hosts: Set[str] = set()
@@ -232,7 +256,12 @@ class PageFetcher:
         self.allow_from(text)
         if not text.strip():
             return {"ok": True, "record": rec, "text": f"Fetched {url}, but no readable text was found."}
-        shown = text[:shown_limit]
+        if self.number_sentences:
+            numbered, rec["sentences"] = number_sentences(text)
+            rec["truncated"] = len(numbered) > shown_limit
+            shown = numbered[:shown_limit]
+        else:
+            shown = text[:shown_limit]
         note = f"\n\n[Truncated: showing {shown_limit:,} of {len(text):,} characters.]" if rec["truncated"] else ""
         age = ""
         if cached_copy:

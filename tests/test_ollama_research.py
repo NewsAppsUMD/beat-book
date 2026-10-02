@@ -214,3 +214,51 @@ def test_research_can_run_on_a_local_ollama_while_writing_uses_the_cloud(monkeyp
     # Without the override, research uses the writing model's host.
     monkeypatch.delenv("RESEARCH_OLLAMA_HOST")
     assert ra.research_provider()["host"] == "https://ollama.com"
+
+
+POINT_SCRIPT = [
+    {"content": "", "tool_calls": [_tool_call("web_search", {"query": "Keith Pettigrew CHA start date"})]},
+    {"content": "", "tool_calls": [_tool_call("fetch_page", {"url": PAGE_URL})]},
+    {"content": "", "tool_calls": [
+        _tool_call("submit_fact", {"fact": "Pettigrew began his tenure as CHA chief executive officer on April 20, 2026.",
+                                   "sentences": [2], "url": PAGE_URL, "source_name": "Chicago Housing Authority",
+                                   "published": "Apr 20, 2026", "section": "Key Sources & Players"}),
+        _tool_call("submit_fact", {"fact": "Pettigrew previously led the Alexandria Redevelopment and Housing Authority.",
+                                   "sentences": [99], "url": PAGE_URL, "source_name": "CHA",
+                                   "section": "Key Sources & Players"}),
+        _tool_call("finalize_research", {"summary": "Added Pettigrew's start date."})]},
+]
+
+
+def test_ollama_quotes_by_pointing_at_numbered_sentences(tmp_path, monkeypatch):
+    out, trace, calls = _run(tmp_path, monkeypatch, POINT_SCRIPT)
+    # The page reached the model with numbered sentences.
+    page_msg = next(m for m in calls["chat"][2]["messages"] if m["role"] == "tool" and "BEGIN PAGE" in m["content"])
+    # (Sentence 1 is the page title, which extraction puts first.)
+    assert "[2] Keith Pettigrew officially began" in page_msg["content"]
+    # Sentence 2 became the quote, copied exactly, and the fact went in.
+    accepted = trace["facts_accepted"]
+    assert len(accepted) == 1 and accepted[0]["sentences"] == [2] and accepted[0]["quote"] == QUOTE
+    assert "Pettigrew began his tenure as CHA chief executive officer on April 20, 2026" in out
+    # A number past the page's last sentence is rejected with the count.
+    assert any("sentence 99 isn't on that page" in r["reason"] for r in trace["facts_rejected"])
+    # The prompt explains pointing, and the tool asks for sentences, not a quote.
+    assert "Quoting by sentence number" in calls["chat"][0]["messages"][0]["content"]
+    submit = next(t for t in calls["chat"][0]["tools"] if t["function"]["name"] == "submit_fact")
+    params = submit["function"]["parameters"]
+    assert "sentences" in params["required"] and "quote" not in params["properties"]
+
+
+def test_pointed_sentences_join_like_an_excerpt():
+    import research_agent as ra
+    s = ["First sentence here.", "Second one follows.", "A third is apart.", "Fourth.", "Fifth."]
+    assert ra._quote_from_sentences([2, 1], s) == ("First sentence here. Second one follows.", "")
+    assert ra._quote_from_sentences([1, 3], s) == ("First sentence here. … A third is apart.", "")
+    assert "at most 3" in ra._quote_from_sentences([1, 2, 3, 4], s)[1]
+    assert "sentence numbers" in ra._quote_from_sentences(["one"], s)[1]
+
+
+def test_claude_keeps_typed_quotes():
+    import research_agent as ra
+    submit = next(t for t in ra.build_tools("anthropic") if t["name"] == "submit_fact")
+    assert "quote" in submit["input_schema"]["required"] and "sentences" not in submit["input_schema"]["properties"]

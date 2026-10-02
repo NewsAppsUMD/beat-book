@@ -34,7 +34,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 import os
 
@@ -156,6 +156,38 @@ def _search_tool(provider: str) -> Optional[Dict[str, Any]]:
 
 
 def build_tools(provider: str = "anthropic") -> List[Dict[str, Any]]:
+    tools = _build_tools(provider)
+    if provider == "ollama":
+        tools = [_quote_by_pointing(t) if t["name"] == SUBMIT_TOOL_NAME else t for t in tools]
+    return tools
+
+
+# How many sentences a pointed quote may join.
+MAX_QUOTE_SENTENCES = 3
+
+
+def _quote_by_pointing(tool: Dict[str, Any]) -> Dict[str, Any]:
+    """submit_fact for models that misquote when they retype: the quote is
+    given as sentence numbers from fetch_page's numbered text, and the app
+    copies the sentences. Ollama models retyped quotes inexactly (a Qwen 3.6
+    run lost 3 of 9 submissions to quotes not on the page)."""
+    schema = dict(tool["input_schema"])
+    props = dict(schema["properties"])
+    props.pop("quote", None)
+    props["sentences"] = {"type": "array", "items": {"type": "integer"}, "description": (
+        "The numbers of the one to three sentences on the fetched page that state the "
+        "fact, in order, as fetch_page shows them ([12] ...). The application copies "
+        "them exactly; don't type the quote.")}
+    schema["properties"] = props
+    schema["required"] = ["fact", "sentences", "url", "source_name", "section"]
+    description = tool["description"].replace(
+        "checks that `quote` appears verbatim on the page at `url` (which you must have fetched)",
+        "copies the numbered `sentences` from the page at `url` (which you must have fetched) "
+        "as the quote, checks")
+    return {**tool, "description": description, "input_schema": schema}
+
+
+def _build_tools(provider: str) -> List[Dict[str, Any]]:
     search = _search_tool(provider)
     return ([search] if search else []) + [
         {
@@ -694,6 +726,36 @@ def _fact_text(fact: str, attribution: str) -> str:
     return f"{body} {attribution}{end}"
 
 
+def _quote_from_sentences(numbers: Any, sentences: List[str]) -> Tuple[str, str]:
+    """(quote, "") from 1-based sentence numbers, or ("", why it can't be).
+    Neighboring sentences join with a space, others with " … ", the excerpt
+    form the quote check accepts."""
+    if not isinstance(numbers, list) or not numbers:
+        return "", "give `sentences`, the numbers of the sentences that state the fact."
+    try:
+        nums = [int(n) for n in numbers]
+    except (TypeError, ValueError):
+        return "", "`sentences` must be sentence numbers from the fetched page, like [12, 13]."
+    if not sentences:
+        return "", "that page's sentences weren't numbered; fetch it again in this run."
+    bad = [n for n in nums if not 1 <= n <= len(sentences)]
+    if bad:
+        return "", (f"sentence {bad[0]} isn't on that page, which has {len(sentences)} numbered "
+                    "sentences.")
+    nums = list(dict.fromkeys(sorted(nums)))
+    if len(nums) > MAX_QUOTE_SENTENCES:
+        return "", f"point to at most {MAX_QUOTE_SENTENCES} sentences: the ones that state the fact."
+    parts, prev = [], None
+    for n in nums:
+        text = sentences[n - 1]
+        if prev is not None and n == prev + 1:
+            parts[-1] += " " + text
+        else:
+            parts.append(text)
+        prev = n
+    return " … ".join(parts), ""
+
+
 class FactDesk:
     """Checks submissions against fetched pages and keeps the accepted ones."""
 
@@ -710,12 +772,13 @@ class FactDesk:
         fact = str(inp.get("fact") or "").strip()
         quote = str(inp.get("quote") or "").strip()
         url = normalize_url(str(inp.get("url") or ""))
+        pointed = inp.get("sentences")
         section = str(inp.get("section") or "").strip()
         after_line = str(inp.get("after_line") or "").strip()
 
         def reject(reason: str) -> str:
             self.trace["facts_rejected"].append({"fact": fact[:400], "quote": quote[:700],
-                                                 "url": url, "reason": reason})
+                                                 "sentences": pointed, "url": url, "reason": reason})
             return f"Rejected: {reason}"
 
         if len(self.accepted) >= MAX_FACTS_PER_RUN:
@@ -726,6 +789,10 @@ class FactDesk:
                           "fetch_page and quote it; search snippets can't be quoted.")
         if not (page.get("text") or "").strip():
             return reject("that page had no readable text, so nothing on it can be quoted.")
+        if pointed is not None and not quote:
+            quote, why = _quote_from_sentences(pointed, page.get("sentences") or [])
+            if why:
+                return reject(why)
         where = find_placement(self.draft, section, after_line)
         if where:
             return reject(where)
@@ -751,6 +818,7 @@ class FactDesk:
         record = {
             "id": len(self.accepted) + 1,
             "fact": fact, "quote": quote, "quote_parts": parts or [quote], "url": url,
+            "sentences": pointed if pointed is not None else None,
             "final_url": page.get("final_url") or url, "title": page.get("title", ""),
             "source_name": name, "attribution": attribution,
             "section": section, "after_line": after_line,
@@ -820,10 +888,17 @@ async def run_research_agent(
         system_prompt += (
             "\n\n# No web search in this run\n\nWeb search isn't available, so work from "
             "URLs in the beat book and pages on the portals in <suggested_sources>.")
+    if backend.provider == "ollama":
+        system_prompt += (
+            "\n\n# Quoting by sentence number\n\nfetch_page shows each sentence of a page with a "
+            "number, like [12]. To quote, give submit_fact the numbers of the one to three "
+            "sentences that state the fact, in `sentences`. The application copies them exactly, "
+            "so never type the quote. Pick sentences that contain every figure and date in your fact.")
     tools = build_tools(backend.provider)
     fetcher = PageFetcher(WEB_FETCH_MAX_USES, seed_text=[draft],
                           allow_hosts_from=[SUGGESTED_SOURCES],
-                          max_shown_chars=OLLAMA_MAX_SHOWN_CHARS if backend.provider == "ollama" else MAX_SHOWN_CHARS)
+                          max_shown_chars=OLLAMA_MAX_SHOWN_CHARS if backend.provider == "ollama" else MAX_SHOWN_CHARS,
+                          number_sentences=backend.provider == "ollama")
     desk = FactDesk(draft, fetcher, trace)
     messages: List[Dict[str, Any]] = [{"role": "user", "content": _first_message(draft)}]
     finalized = False
