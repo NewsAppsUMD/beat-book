@@ -1,5 +1,13 @@
 # Beat Book Builder — Changelog
 
+## Session: October 1, 2026 — Contradicted outcomes
+
+- A housing book written by Qwen 3.6 on this machine said "Steele won the primary". The stories say she lost to Liz Nicholson. The outcome check accepted three sentences as evidence: "Steele lost reelection…", which says the opposite; "she unseated an incumbent", about her first election years earlier; and "justice prevailed", about her trial. It checked only that a passage reported the same kind of outcome.
+- `claim_evidence.check_contradictions` ties an outcome to the person it happens to, with a direction: won or lost, acquitted or convicted. The person can be the subject ("Steele lost") or the object of a defeat ("Nicholson defeated Steele"). A claim that pins one direction on a name, where a story pins the opposite on the same name and no story agrees, loses its citation and is marked `contradicted`. The reader and the Word export quote the story's sentence. Sentences dated to another year, and conditional ones, don't count. Across the saved books, it flags only the Steele claim.
+- Election evidence now needs a sentence naming someone the claim names, and "prevailed" counts only with an election word ("prevailed in the primary").
+- Sentences for these checks no longer split after a title or initial. "Larry Rogers Jr., won his sixth term in 2024" had been cut at "Jr.".
+- The build record's egress table leaves out web research when it was turned off.
+
 ## Session: September 30, 2026 — Build timeline
 
 - "How this book was made" is now a timeline, replacing the grouped sections. Each stage is a row with an icon badge, how long it took, its model, and chips with its outcome counts. A row opens to a feed of what the stage's agent did, divided by turn: stories read, searches, pages fetched, facts added (with their quotes, long ones shortened until opened) and facts rejected (with the reason). The writing prompt, what was sent where, token counts and the citation cutoff sit under the stage they belong to. Stages share one neutral color; only the outcome is colored.

@@ -131,3 +131,69 @@ def test_claim_naming_no_one_can_use_a_cited_story():
     e = _cited("She dropped the case.", {"article_id": "p", "passage_text": story["content"][:40],
                                    "passage_offset": 0, "passage_length": 40, "similarity": 0.8})
     assert ce.check_outcomes(e, {"articles": [story]}) == 1
+
+
+def _story(text, aid="s"):
+    return {"articles": [{"article_id": aid, "title": "Primary results", "date": "2026-03-18", "content": text}]}
+
+
+def _claim(text, provenance="corpus"):
+    return {"entries": [{"content": text, "passthrough": False, "kind": "sentence", "provenance": provenance,
+                         "supports": [{"article_id": "s", "passage_text": "x"}]}], "stats": {}}
+
+
+def test_a_reversed_outcome_is_contradicted_with_the_story_sentence():
+    e = _claim("Despite these controversies, Steele won the primary in May 2026 after an acquittal.")
+    idx = _story("Turnout was low. Steele lost reelection in March to longtime Democratic operative Liz Nicholson.")
+    assert ce.check_contradictions(e, idx) == 1
+    claim = e["entries"][0]
+    assert claim["provenance"] == "unsupported" and claim["supports"] == []
+    assert claim["contradicted_by"]["sentence"].startswith("Steele lost reelection")
+    ce.explain_unsourced(e, idx)
+    assert claim["unsourced_reason"] == "contradicted"
+
+
+def test_object_of_a_defeat_and_agreement_are_read():
+    assert ce.check_contradictions(_claim("Steele won the District 2 primary."),
+                                   _story("Liz Nicholson defeated Steele in the District 2 primary.")) == 1
+    # A story that agrees anywhere keeps the claim.
+    assert ce.check_contradictions(_claim("Nicholson won the District 2 primary."),
+                                   _story("Liz Nicholson defeated Steele in the District 2 primary.")) == 0
+
+
+def test_other_years_and_hypotheticals_do_not_contradict():
+    # Her first win, years earlier, isn't about this primary.
+    assert ce.check_contradictions(_claim("Steele won her first race in 2020."),
+                                   _story("Steele lost reelection in 2026 to Liz Nicholson.")) == 0
+    assert ce.check_contradictions(_claim("Steele won the primary."),
+                                   _story("If Steele loses, Nicholson takes the seat.")) == 0
+
+
+def test_election_evidence_must_name_the_claims_person():
+    # The cited passage reports someone else's election, and a trial verdict.
+    passage = ("She said she was not surprised by the backlash after she unseated an incumbent. "
+               "Her attorney said that justice prevailed. Larry Rogers Jr., won his sixth term in 2024.")
+    story = {"article_id": "p", "title": "Steele", "content": passage}
+    e = _cited("Samantha Steele won the primary.",
+               {"article_id": "p", "passage_text": passage, "passage_offset": 0, "passage_length": len(passage),
+                "similarity": 0.8})
+    assert ce.check_outcomes(e, {"articles": [story]}) == 1
+    # A title's period doesn't split the sentence that names the person.
+    e = _cited("Larry Rogers Jr. won his sixth term in 2024.",
+               {"article_id": "p", "passage_text": passage, "passage_offset": 0, "passage_length": len(passage),
+                "similarity": 0.8})
+    assert ce.check_outcomes(e, {"articles": [story]}) == 0
+
+
+def test_word_export_quotes_the_contradicting_sentence():
+    import io
+    from docx import Document
+    from app import _markdown_to_docx
+    entries = [{"content": "Steele won the primary.", "passthrough": False, "kind": "sentence",
+                "provenance": "unsupported", "supports": [], "unsourced_reason": "contradicted",
+                "contradicted_by": {"article_title": "Primary results", "article_date": "2026-03-18",
+                                    "sentence": "Steele lost reelection to Liz Nicholson."}}]
+    stats = {"unsourced_reasons": {"contradicted": 1}}
+    text = "\n".join(p.text for p in Document(io.BytesIO(_markdown_to_docx("", entries, stats))).paragraphs)
+    assert "1 is contradicted by a story" in text
+    assert "Primary results, 2026-03-18: “Steele lost reelection to Liz Nicholson.”" in text

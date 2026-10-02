@@ -123,7 +123,8 @@ def test_unsourced_reasons_separate_outside_details_from_scattered_ones():
     reasons = [x["unsourced_reason"] for x in e["entries"]]
     assert reasons == ["outside_stories", "in_stories", "no_details"]
     assert e["entries"][0]["details_not_in_stories"] == ["Giants-Jets", "1920"]
-    assert counts == {"outside_stories": 1, "in_stories": 1, "outcome_not_stated": 0, "no_details": 1}
+    assert counts == {"contradicted": 0, "outside_stories": 1, "in_stories": 1, "outcome_not_stated": 0,
+                      "no_details": 1}
 
 
 def test_word_export_explains_unsourced_facts():
