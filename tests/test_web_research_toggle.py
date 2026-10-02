@@ -59,6 +59,7 @@ def test_book_builds_without_research_or_an_anthropic_key(tmp_path, monkeypatch)
     manifest = json.loads((tmp_path / f"{book['stem']}.manifest.json").read_text())
     assert manifest["web_research"] is False and manifest["research"] == {"skipped": True}
     assert manifest["providers"]["research"]["skipped"] is True
+    assert "Add web research" not in [r["stage"] for r in manifest["egress"]["rows"]]
     assert (tmp_path / f"{book['stem']}.md").read_text() == DRAFT      # the draft, unchanged
 
 

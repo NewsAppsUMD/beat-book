@@ -861,11 +861,17 @@
     outside_stories: 'Some of its details appear in none of your stories, so they most likely came from the writing model\'s own general knowledge.',
     in_stories: 'Its names, figures and dates appear in your stories, but no passage says what this sentence says. It may combine details from several stories or restate them too loosely to match.',
     outcome_not_stated: 'Your stories cover it, but none of the passages that match it says this happened. They may have been written before the outcome was known.',
+    contradicted: 'A story says otherwise. The writing model may have reversed an outcome or mixed up two people.',
     no_details: 'It names no people, figures or dates that could be looked up in your stories.',
   };
   function unsourcedNote(entry) {
     const base = UNSOURCED_TEXT[entry.unsourced_reason];
     if (!base) return 'No passage in your stories matches this claim. Check it before relying on it.';
+    if (entry.unsourced_reason === 'contradicted' && entry.contradicted_by) {
+      const c = entry.contradicted_by;
+      const where = [c.article_title, c.article_date].filter(Boolean).join(', ');
+      return `Contradicted by your stories. ${where ? where + ': ' : ''}“${c.sentence}” Check it before relying on it.`;
+    }
     const missing = entry.details_not_in_stories || [];
     const outcome = entry.unsourced_reason === 'outcome_not_stated' && (entry.outcome_not_stated || []).length
       ? ` Outcome it states: “${entry.outcome_not_stated.join('”, “')}”.` : '';
@@ -954,6 +960,7 @@
       const parts = [];
       if (r.outside_stories) parts.push(`<strong>${r.outside_stories}</strong> mention details that appear in none of your stories, so those details most likely came from the writing model's own general knowledge`);
       if (r.in_stories) parts.push(`<strong>${r.in_stories}</strong> use names, figures and dates found in your stories, but no single passage says what the sentence says. They may combine several stories, or restate them too loosely to match`);
+      if (r.contradicted) parts.push(`<strong>${r.contradicted}</strong> ${r.contradicted === 1 ? 'is' : 'are'} contradicted by a story, which says the opposite outcome for the same person. Check ${r.contradicted === 1 ? 'it' : 'them'} first`);
       if (r.outcome_not_stated) parts.push(`<strong>${r.outcome_not_stated}</strong> state an outcome, such as who won or what was approved, that no matching passage reports. The stories may have been written before it happened`);
       if (r.no_details) parts.push(`<strong>${r.no_details}</strong> name nothing specific that could be looked up`);
       counts = parts.length ? ` Of the ${st.unsupported}: ${parts.join('; ')}.` : '';

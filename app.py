@@ -677,6 +677,9 @@ def _docx_add_sourcing_section(doc, entries: List[Dict[str, Any]], stats: Dict[s
             bits.append(f"{reasons['outside_stories']} mention details found in none of the stories")
         if reasons.get("in_stories"):
             bits.append(f"{reasons['in_stories']} use details from the stories that no single passage states together")
+        if reasons.get("contradicted"):
+            n = reasons["contradicted"]
+            bits.append(f"{n} {'is' if n == 1 else 'are'} contradicted by a story")
         if reasons.get("outcome_not_stated"):
             bits.append(f"{reasons['outcome_not_stated']} state an outcome that no matching passage reports")
         if reasons.get("no_details"):
@@ -689,6 +692,10 @@ def _docx_add_sourcing_section(doc, entries: List[Dict[str, Any]], stats: Dict[s
         why = UNSOURCED_REASONS.get(e.get("unsourced_reason", ""), "No passage in the stories matches it.")
         missing = e.get("details_not_in_stories") or []
         note = why.replace("your stories", "the stories") + (f" Not in any story: {', '.join(missing)}." if missing else "")
+        if e.get("unsourced_reason") == "contradicted" and e.get("contradicted_by"):
+            c = e["contradicted_by"]
+            where = ", ".join(x for x in (c.get("article_title"), c.get("article_date")) if x)
+            note = f"Contradicted by the stories. {where + ': ' if where else ''}“{c.get('sentence', '')}”"
         if e.get("unsourced_reason") == "outcome_not_stated" and e.get("outcome_not_stated"):
             note += " Outcome it states: " + ", ".join(f"“{w}”" for w in e["outcome_not_stated"]) + "."
         run = p.add_run(f" — {note}")

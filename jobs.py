@@ -48,8 +48,8 @@ from citation_matcher import (
 from embed_client import get_embed_client, get_embed_provider
 from chat_provider import ChatProvider, get_chat_provider
 from egress import egress_summary
-from claim_evidence import (add_anchor_evidence, add_near_evidence, check_outcomes, classify_claims,
-                            explain_unsourced, recount)
+from claim_evidence import (add_anchor_evidence, add_near_evidence, check_contradictions, check_outcomes,
+                            classify_claims, explain_unsourced, recount)
 from draft_check import check_draft
 from trim import needs_trim, trim_draft
 from env_settings import ENV_OVERRIDES
@@ -269,7 +269,7 @@ async def run_generation(
                          else {"provider": None, "model": None, "skipped": True}),
         },
         "web_research": web_research,
-        "egress": egress_summary(),
+        "egress": egress_summary(web_research),
         # .env settings a shell variable overrode when the server started.
         "settings_from_shell": list(ENV_OVERRIDES),
         "corpus": _corpus_record(pipeline_result),
@@ -470,11 +470,15 @@ async def run_generation(
             # Outcomes are checked again for the claims this cites.
             near_cited = add_near_evidence(entries, source_embeddings)
             check_outcomes(entries, source_embeddings)
+            # A claim that pins the opposite outcome on a person than a story
+            # does ("Steele won" against "Steele lost") is flagged, not cited.
+            contradicted = check_contradictions(entries, source_embeddings)
             recount(entries)
             entries["stats"]["claim_sorting"] = sorting
             entries["stats"]["unsourced_reasons"] = explain_unsourced(entries, source_embeddings)
             entries["stats"]["cited_by_anchors"] = anchored
             entries["stats"]["near_added"] = near_cited
+            entries["stats"]["contradicted"] = contradicted
             # The anchor pass cites some of the dropped claims again, from a
             # stretch that does report the outcome; count what's left.
             entries["stats"]["outcome_dropped"] = outcomes_dropped
