@@ -267,7 +267,7 @@ async def run_generation(
                          else {"provider": None, "model": None, "skipped": True}),
         },
         "web_research": web_research,
-        "egress": egress_summary(),
+        "egress": egress_summary(web_research),
         # .env settings a shell variable overrode when the server started.
         "settings_from_shell": list(ENV_OVERRIDES),
         "corpus": _corpus_record(pipeline_result),
