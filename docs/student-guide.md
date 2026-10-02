@@ -59,7 +59,7 @@ OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
 
 Leave `OPENAI_API_KEY` commented out — it isn't used in this option. (Optional) confirm the local model is ready: `ollama list` should show `qwen3-embedding:0.6b`. If it's missing, see Troubleshooting.
 
-`.env.example` also has an **Option C** that runs everything on your own computer with no API keys. It needs a large model and a fast laptop with plenty of memory, so it won't work in a Codespace; skip it unless your instructor says otherwise.
+`.env.example` also has an **Option C** that runs everything on your own computer with no API keys. It needs a large model and a fast laptop with plenty of memory, so it won't work in a Codespace; see [section 8](#8-running-it-on-your-own-computer-instead-of-codespaces).
 
 ---
 
@@ -114,6 +114,53 @@ To keep the raw files too: in the file explorer, find `output/<your-book-name>.m
 - Avoid regenerating the same book repeatedly "just to see". Each build pays again for writing, and for web research if it's on. Embeddings are saved, so rebuilding from the same stories skips most of the citation matching. On Option B, embedding runs on your Codespace's own (fairly limited) CPU, so the first build from a set of stories takes noticeably longer than on Option A.
 - Turn off **Web research** when you don't need newer facts from the web. It's the slowest step, and it uses the Anthropic key.
 - Leave the optional `ENABLE_THINKING` setting alone (commented out) — it's slower and not needed for this class.
+
+## 8. Running it on your own computer (instead of Codespaces)
+
+You can also run the app on your own Mac, Linux or Windows computer. Your books then stay on your machine, with no 30-day deletion, but you install things yourself.
+
+1. **Install Python 3.11, 3.12 or 3.13.** Not 3.14: one of the app's libraries can't install on it yet. Check what you have with `python3 --version` (on Windows, `py --version`). Get Python from [python.org](https://www.python.org/downloads/) if you need it.
+2. **Get the code.** Either clone your copy from step 1:
+
+   ```bash
+   git clone https://github.com/<your-username>/<your-repo-name>.git
+   cd <your-repo-name>
+   ```
+
+   or use GitHub Desktop's **Clone repository**, or **Code → Download ZIP** on your repo's page and unzip it.
+3. **Install the app.** On a Mac or Linux:
+
+   ```bash
+   make install
+   ```
+
+   If `python3` is 3.14, name an older Python instead: `make install PYTHON=python3.12`. On Windows, which doesn't have `make`:
+
+   ```bash
+   py -3.12 -m venv .venv
+   .venv\Scripts\pip install --only-binary=:all: --no-binary=langdetect -r requirements.txt
+   ```
+
+4. **Add your keys.** Copy `.env.example` to `.env` and fill it in exactly as in [step 3](#3-add-your-api-keys), for Option A or Option B.
+5. **For Option B, install Ollama** from [ollama.com/download](https://ollama.com/download), then get the embedding model:
+
+   ```bash
+   ollama pull qwen3-embedding:0.6b
+   ```
+
+   Ollama runs in the background once it's installed. (A Codespace does this step for you.)
+6. **Run the app** with `make run` (on Windows, `.venv\Scripts\uvicorn app:app --host 127.0.0.1 --port 8000`), then open [http://127.0.0.1:8000](http://127.0.0.1:8000) in your browser.
+
+Everything else in this guide works the same, except saving: your books are already in the `output/` folder on your computer.
+
+**Option C: fully local, no API keys.** If your computer is powerful, everything can run on it, and your stories never leave it. That needs Ollama, about 22 GB of free memory for the writing model, and patience: on a recent MacBook Pro with an M3 Max chip, writing a book took about two minutes. Pull the models:
+
+```bash
+ollama pull qwen3.6:35b-mlx
+ollama pull qwen3-embedding:0.6b
+```
+
+The `-mlx` version is built for Macs with Apple silicon; on other computers, ask your instructor which model to use. Then use the Option C block in `.env.example`, and turn off **Web research** on the topic screen. On a computer with less memory, use Option A or B.
 
 ## Troubleshooting
 
