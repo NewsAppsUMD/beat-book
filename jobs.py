@@ -223,12 +223,14 @@ async def run_generation(
     stem = book["stem"] if book else f"beat_book_{book_id}"
     filename = f"{stem}.md"
 
-    # Anthropic is needed for web research, and for writing unless an
-    # Ollama model writes. Without research, an Ollama build needs no key.
+    # Anthropic is needed only by the steps that use it: writing, unless an
+    # Ollama model writes, and web research when it's on and runs on Claude.
+    # An all-Ollama setup, or Ollama writing with research off, needs no key.
     writes_on_anthropic = (type(chat_provider).__name__ == "AnthropicChatProvider" if chat_provider is not None
                            else os.environ.get("CHAT_PROVIDER", "anthropic").strip().lower() != "ollama")
-    if not anthropic_key and (web_research or writes_on_anthropic):
-        why = "web research" if web_research and not writes_on_anthropic else "this build"
+    research_on_anthropic = web_research and _research_mod.research_provider()["provider"] == "anthropic"
+    if not anthropic_key and (writes_on_anthropic or research_on_anthropic):
+        why = "web research" if research_on_anthropic and not writes_on_anthropic else "this build"
         store.update_book(book_id, status="failed", error=f"ANTHROPIC_API_KEY not configured ({why} needs it).")
         await emit({"type": "error", "text": f"ANTHROPIC_API_KEY not configured ({why} needs it)."})
         await emit({"type": "status", "status": "failed"})
@@ -263,7 +265,7 @@ async def run_generation(
                 "provider": get_embed_provider(),
                 "model": getattr(embed_client, "model_name", None) if embed_client else None,
             },
-            "research": ({"provider": "anthropic", "model": _research_mod.MODEL} if web_research
+            "research": (_research_mod.research_provider() if web_research
                          else {"provider": None, "model": None, "skipped": True}),
         },
         "web_research": web_research,

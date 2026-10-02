@@ -16,7 +16,7 @@ Originally built around [Chicago Public Media](https://chicago.suntimes.com/) st
 
 - **Python 3.11–3.13.** (3.14 is not yet recommended — `umap-learn`'s `numba`/`llvmlite` dependency has no prebuilt wheels for it and must compile from source, which often fails.)
 - An [OpenAI API key](https://platform.openai.com/api-keys) — used for embeddings (`text-embedding-3-small`) unless you switch to Ollama embeddings. (Anthropic has no embedding API.)
-- An [Anthropic API key](https://console.anthropic.com/) — used for the web-research step (`claude-sonnet-4-6`) and OCR. Also used for story normalization, cluster labeling, and the beat-book writing agent when running the default Anthropic chat provider.
+- An [Anthropic API key](https://console.anthropic.com/) — used for the beat-book writing agent, story normalization and topic labels with the default Anthropic chat provider; for web research (`claude-sonnet-4-6`), unless it's turned off or runs on Ollama; and for OCR of scanned PDFs. With an Ollama writing model and research off, no Anthropic key is needed.
 - *(Optional)* A [Firecrawl API key](https://firecrawl.dev) — when set, PDFs and pasted URLs are parsed/scraped via Firecrawl (native + scanned PDFs and JS-rendered pages handled uniformly). Without it, the app falls back to local PyMuPDF + Haiku-vision OCR for PDFs and an SSRF-protected `httpx` fetch for URLs, so a Firecrawl account is not required.
 
 Both API providers can be partially or fully replaced by [Ollama](#using-ollama) for local/private inference.
@@ -127,9 +127,12 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 | Purpose | Model | Pull command | Notes |
 |---------|-------|-------------|-------|
-| Chat (default) | `qwen3.5:397b-cloud` | `ollama pull qwen3.5:397b-cloud` | Good balance of quality and speed for normalization, labeling, and writing |
-| Chat (larger) | `glm-5.2:cloud` | `ollama pull glm-5.2:cloud` | Higher quality beat books; runs on Ollama's cloud, not local hardware — requires `OLLAMA_API_KEY` |
-| Embeddings | `qwen3-embedding:0.6b` | `ollama pull qwen3-embedding:0.6b` | replaces OpenAI embeddings |
+| Chat (cloud) | `qwen3.5:397b-cloud` | `ollama pull qwen3.5:397b-cloud` | Good balance of quality and speed for normalization, labeling, and writing |
+| Chat (cloud) | `deepseek-v4.1-flash:cloud` | `ollama pull deepseek-v4.1-flash:cloud` | Fast (writing in 15–30 seconds) but writes 1.5 to 1.9 times the requested length; the trim cuts it back |
+| Chat (local) | `qwen3.6:35b-mlx` | `ollama pull qwen3.6:35b-mlx` | A 22 GB model that runs on a laptop with enough memory; a housing book came out at 2,008 words for a 2,000-word target in under two minutes of writing. Leave `OLLAMA_THINK` off |
+| Embeddings | `qwen3-embedding:0.6b` | `ollama pull qwen3-embedding:0.6b` | Replaces OpenAI embeddings. The 8b model was 10 times slower at matching citations for little gain |
+
+Models that reason in their answer even with thinking off, such as `glm-5.3:cloud`, leak that reasoning into labels and drafts. The app removes what it can and flags damaged drafts, but they are not recommended for writing.
 
 Other Ollama-compatible models will work — set the model name in your `.env` file. Models with tool-use support will get the best results, since the agent relies on structured tool calls.
 
@@ -164,20 +167,22 @@ OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
 
 Pointing `OLLAMA_HOST` at Ollama cloud (`https://ollama.com`) instead of a local instance also requires `OLLAMA_EMBED_API_KEY=your-key-here` (separate from the chat `OLLAMA_API_KEY`, since embeddings and chat can point at different hosts).
 
-**Full Ollama setup** (no OpenAI needed; Anthropic only for OCR and research):
+**Fully local setup** (no OpenAI or Anthropic key; turn off Web research on the topic screen):
 
 ```
 CHAT_PROVIDER=ollama
 OLLAMA_CHAT_HOST=http://localhost:11434
-OLLAMA_CHAT_MODEL=qwen3:8b
+OLLAMA_CHAT_MODEL=qwen3.6:35b-mlx
 
 EMBED_PROVIDER=ollama
 OLLAMA_HOST=http://localhost:11434
 OLLAMA_EMBED_MODEL=qwen3-embedding:0.6b
 
-# Still needed for scanned-PDF OCR and the research agent
-ANTHROPIC_API_KEY=sk-ant-...
+# Only needed for scanned-PDF OCR, or web research on Claude
+# ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+Every step then runs on your machine: finding stories, topics, writing, the trim, claim sorting and citations. The "Where your material goes" table on the topic screen shows each step as "This machine".
 
 A variable exported in your shell overrides the same one in `.env`. At startup the app prints the chat, embedding and research models it will use, plus a warning for each `.env` value the shell overrides. Check that log after switching models. If a model is set in the shell, run `unset OLLAMA_CHAT_MODEL` (or the variable the warning names) before `make run`.
 
@@ -194,12 +199,12 @@ A book that fails gets a ⚠ in the sidebar and the library, and a banner in the
 
 ### What stays on Anthropic
 
-Even with `CHAT_PROVIDER=ollama`, two features still use the Anthropic API:
+Even with `CHAT_PROVIDER=ollama`, two features can still use the Anthropic API:
 
 - **Scanned-PDF OCR** — uses Haiku vision to transcribe page images. Only triggered when a PDF has no extractable text. If you don't upload scanned PDFs, this never runs.
-- **Research step** — uses Claude Sonnet to add quoted, checked facts from the web. This runs after the writing agent finishes.
+- **Research step** — uses Claude Sonnet 4.6 to add quoted, checked facts from the web, after the writing agent finishes. It can be turned off per book, or run on Ollama (see below).
 
-If you don't need OCR or web research, you can omit `ANTHROPIC_API_KEY` entirely.
+If you don't need OCR, and research is off or on Ollama, you can omit `ANTHROPIC_API_KEY` entirely.
 
 ### How web research works
 
@@ -214,6 +219,8 @@ The research step (`research_agent.py`, Claude Sonnet 4.6) adds current context 
 The app inserts accepted facts itself and writes the attribution from the page. A fact goes under the bullet it adds to, after the paragraph it extends, or at the end of its section or subsection. If the model's placement text matches no line, the fact goes at the end of the section and isn't rejected. No existing line changes, so nothing from your stories can be lost. Rejected submissions go back to the model with the reason, so it can fix them. The build record lists every accepted fact with its quote, and every rejection with its reason. The agent has no shell and no file access.
 
 Searches run on Anthropic's servers. Pages are fetched by the app (`page_fetcher.py`), from your machine, or through Firecrawl when `FIRECRAWL_API_KEY` is set. The agent can only fetch URLs already seen in the run, plus pages on the vetted data portals in its prompt. Each redirect is checked against private and loopback addresses. Repeat requests return a note, not the page again, and pages are cached in `.cache/web_pages/` for seven days. At most 8 new pages are fetched per run, and at most 25 facts are added per book.
+
+**Research on Ollama.** Set `RESEARCH_PROVIDER=ollama` to run research on an Ollama model, `RESEARCH_OLLAMA_MODEL` or else `OLLAMA_CHAT_MODEL`, in place of Claude. `RESEARCH_OLLAMA_HOST` (else `OLLAMA_CHAT_HOST`) sets where it runs, so research can use a model on your own machine (`http://localhost:11434`) while the writing model runs on Ollama's cloud. The draft then stays on your machine; only search queries go to Ollama's search service. Ollama models can't search on their own. The app calls Ollama's search service (`POST https://ollama.com/api/web_search`, authorized by `OLLAMA_API_KEY`) when the model asks, the same way it runs its page fetcher. Without a key, research runs without search and uses only URLs in the book and the vetted portals. Ollama models quote by pointing: pages are shown with each sentence numbered (`[12] …`), and `submit_fact` takes the numbers of the one to three sentences that state the fact. The app copies them as the quote, so a weaker model can't misquote; every other check is the same. Claude still types its quotes. Pages shown to an Ollama model are capped at 16,000 characters, and its earlier prose isn't sent back each turn, so a run fits the provider's 64k-token context. The checks on every fact are the same as on Claude: a weaker model gets more rejections, not more errors. For GLM-5.3 and other models that reason in their answers even with thinking off, set `OLLAMA_THINK=on`. The app then asks Ollama for thinking mode, which puts the reasoning in a separate field that the app discards. Leave it off for Qwen and Gemma: with it on, Qwen spent its whole output budget thinking on short calls and returned nothing. So far no Ollama model has matched Claude, which averages about 8 facts per book on the housing evaluation. GLM-5.3 added none in two runs, because its thinking used up the 16,000-token output limit on most turns. Local Qwen 3.6 added 1 with typed quotes, losing 3 submissions to misquotes, and 2 with pointed quotes, losing none. With `CHAT_PROVIDER=ollama` as well, a book builds without an Anthropic key, except for OCR of scanned PDFs.
 
 To test the research step, run the evaluation. It builds each fixed corpus several times and checks every run against stated targets: every web line quoted, no story claims lost, and every quote re-verified.
 
@@ -232,11 +239,11 @@ When `EMBED_PROVIDER` is set to `ollama` or `openai`, a dropdown appears in the 
 ## How It Works
 
 1. **Add sources** — In **New Beat Book**, upload files (Word, PDF, HTML, markdown, plain text, JSON, RTF, RSS) or paste URLs.
-2. **Review stories** — The server extracts text from each source and asks Claude Haiku 4.5 to identify the distinct news stories, splitting multi-story documents and inferring missing metadata. You review the detected stories on the preview screen and can edit titles/dates/authors/type or deselect anything.
-3. **Analyze** — Each confirmed story runs through an NLP pipeline: embed (OpenAI `text-embedding-3-small`), reduce dimensions (UMAP), cluster into topics at two granularities (HDBSCAN), and label each cluster with an LLM.
-4. **Choose topics** — Pick the topics to cover. The writing agent focuses only on what you select.
-5. **Generate (in the background)** — The book is queued and built server-side: a Claude agent explores the corpus and writes a Markdown draft, a research step (Claude Sonnet 4.6) adds facts it quoted from web pages and the app checked, and every claim is matched back to a source passage. A live status dot in the sidebar tracks progress — and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
-6. **Read** — When it's ready, the book opens in an inline reader with academic-style inline citations; clicking a citation opens the matched source passage in a side panel.
+2. **Review stories** — The server extracts text from each source. Story-shaped JSON and RSS are read directly; other documents go to the chat model (Claude Haiku 4.5 by default) to split them into distinct stories and infer missing metadata. You review the detected stories on the preview screen and can edit titles/dates/authors/type or deselect anything.
+3. **Analyze** — Each confirmed story runs through an NLP pipeline: embed (OpenAI `text-embedding-3-small` or an Ollama model), reduce dimensions (UMAP), cluster into topics at two granularities (HDBSCAN), and label each cluster with the chat model.
+4. **Choose topics** — Pick the topics to cover, the style and length, and whether to run web research. The topic screen shows where each step sends your material. The writing agent sees only the topics you select.
+5. **Generate (in the background)** — The book is queued and built server-side. The writing agent reads within a budget and drafts to section word budgets, and a draft far over length is trimmed. Web research, when on, adds facts it quoted from pages the app checked. Then every claim is matched back to a source passage and labeled. A live status dot in the sidebar tracks progress, and because generation is decoupled from the browser, you can navigate around (or refresh) while it runs.
+6. **Read** — When it's ready, the book opens in an inline reader with academic-style inline citations and a sourcing summary; clicking a citation opens the matched source passage in a side panel. "How this book was made" shows the build as a timeline.
 
 ---
 
@@ -247,16 +254,17 @@ Browser — single-page app (sidebar + library / create / reader)
     │
     ├── POST /ingest/start ──▶ files + URLs in; stories out (preview JSON)
     │        └── ingest.py     extract_text(...) → Firecrawl (PDF/URL) or PyMuPDF+OCR / libs
-    │                          normalize(...)    → Claude Haiku 4.5
+    │                          normalize(...)    → chat model (Haiku 4.5 or Ollama)
     │
     ├── POST /process ───────▶ streams SSE pipeline progress; returns a session_id
-    │        └── pipeline.py   embed (OpenAI) → UMAP → HDBSCAN → label (Haiku 4.5)
+    │        └── pipeline.py   embed (OpenAI or Ollama) → UMAP → HDBSCAN → label (chat model)
     │
     ├── POST /books ─────────▶ enqueue generation for a session_id + topics
     │        ├── store.py      library.json index (one record per book)
     │        └── jobs.py       single background worker, one book at a time:
-    │                          run_agent (Sonnet 4.6 draft)  ∥  research (Sonnet 4.6)
-    │                          → merge → citation_matcher → write output files
+    │                          run_agent (draft) → trim if far over length
+    │                          → research (optional; Sonnet 4.6 or Ollama)
+    │                          → citation_matcher + claim_evidence → output files + build record
     │
     ├── WS  /ws/books/{id} ──▶ reconnectable progress stream (snapshot + replay + live)
     │
@@ -327,11 +335,11 @@ Each story is reduced to its title + a section line + the first 400 words, sent 
 
 ### 3. Clustering
 
-[HDBSCAN](https://hdbscan.readthedocs.io/) clusters at **two granularities** — broad (`min_cluster_size = max(4, n//25)`) and specific (`max(2, n//60)`), both `min_samples=2`, Euclidean on the reduced space, `eom` selection. Noise points (`-1`) are reassigned to the nearest cluster centroid so every story belongs to a topic.
+[HDBSCAN](https://hdbscan.readthedocs.io/) clusters at **two granularities**, Euclidean on the reduced space. Broad topics start at `min_cluster_size = max(8, n//6)` with `leaf` selection, and the size grows until there are at most `max(3, n//15)` topics. Specific topics use `max(4, n//20)`, `min_samples=2` and `eom` selection. Noise points (`-1`) are reassigned to the nearest cluster centroid so every story belongs to a topic. Only the broad topics are offered on the topic screen.
 
 ### 4. Topic Labeling
 
-For each cluster, the stories nearest the centroid (up to 8) are formatted into a prompt and **Claude Haiku 4.5** returns a concise 2–5 word topic label (focused on *what*, not *where*). Runs once for broad and once for specific clusters.
+For each cluster, the stories nearest the centroid (up to 8) are formatted into a prompt and the chat model's label model (**Claude Haiku 4.5** by default) returns a concise 2–5 word topic label (focused on *what*, not *where*). Reasoning a model writes into its answer is removed. Runs once for broad and once for specific clusters.
 
 ---
 
@@ -343,7 +351,7 @@ A beat book is a durable, listable thing — not a transient tab session. Two sm
 
 ### `store.py` — the library index
 
-A JSON file at `output/library.json`, guarded by a lock and written atomically, with one record per book: `{id, title, stem, style, target_words, status, created_at, updated_at, error, num_stories, num_topics, selected_topics, opened_at}`. The **stem** (e.g. `city_budget_beat_book`) is the unique filename base for that book's output files; collisions are resolved with a numeric suffix at creation time, so two corpora topping the same topic never overwrite each other. Status flows **`queued` → `generating` → `ready` | `failed`**. On startup, any record left `queued`/`generating` by a crash is marked `failed` (its in-memory state is gone).
+A JSON file at `output/library.json`, guarded by a lock and written atomically, with one record per book: `{id, title, stem, style, target_words, web_research, status, warning, created_at, updated_at, error, num_stories, num_topics, selected_topics, opened_at}`. The **stem** (e.g. `city_budget_beat_book`) is the unique filename base for that book's output files; collisions are resolved with a numeric suffix at creation time, so two corpora topping the same topic never overwrite each other. Status flows **`queued` → `generating` → `ready` | `failed`**. On startup, any record left `queued`/`generating` by a crash is marked `failed` (its in-memory state is gone).
 
 ### `jobs.py` — the generation queue
 
@@ -351,7 +359,7 @@ A JSON file at `output/library.json`, guarded by a lock and written atomically, 
 
 ### Endpoints
 
-`POST /books` (enqueue), `GET /books` (list, newest first), `GET /books/{id}`, `GET /books/{id}/files/{markdown|draft|entries|sources|manifest}`, `PATCH /books/{id}` (rename / mark-opened), `DELETE /books/{id}` (record + output files + sandbox; refused while actively generating), and `WS /ws/books/{id}` (reconnectable progress).
+`POST /books` (enqueue), `GET /books` (list, newest first), `GET /books/{id}`, `GET /books/{id}/files/{markdown|draft|untrimmed|entries|sources|manifest}`, `PATCH /books/{id}` (rename / mark-opened), `DELETE /books/{id}` (record + output files + sandbox; refused while actively generating), and `WS /ws/books/{id}` (reconnectable progress).
 
 The `output/` folder is no longer served as a static directory. A book's files are served only through the routes above, by book id. The app has no login, so keep it bound to `127.0.0.1` or put it behind one.
 
@@ -380,9 +388,10 @@ The writing agent uses Anthropic [tool use](https://docs.claude.com/en/docs/agen
 2. It reads representative stories (favoring `read_stories_in_topic` for coverage) until it meets each selected topic's read target. The targets add up to a budget for the whole book: at least a quarter of the stories (and at least 10), at most 20 full reads, shared across topics by size. The cap keeps the reading within an Ollama model's context window. Scans don't count as reads.
 3. It calls `generate_beat_book` with a complete Markdown document — which is gated until the read targets are met, pushing the agent to actually ground itself in the corpus.
 
-- **Models:** `claude-sonnet-4-6` for writing; `claude-haiku-4-5` for the lightweight coverage-exploration pass.
+- **Models:** with the Anthropic provider, `claude-sonnet-4-6` writes and `claude-haiku-4-5` explores; with Ollama, `OLLAMA_CHAT_MODEL` does both. The startup log names the models in use.
+- A draft more than 1.4 times its target is trimmed by selection (see [Length](#configuring-ollama-in-env)), and every draft is checked for damage.
 - After the draft, the **research step** (`research_agent.py`, Claude Sonnet 4.6) submits web facts with verbatim quotes; the app checks and inserts them. See [How web research works](#how-web-research-works).
-- Finally `citation_matcher.py` embeds source passages and beat-book claims (OpenAI) and matches each claim back to its source, producing the `<stem>.json` + `<stem>_sources.json` the reader uses. Each claim is tagged with where it came from: matched to the corpus, added by web research, or unsupported.
+- Finally `citation_matcher.py` embeds source passages and beat-book claims (with the configured embedding model) and matches each claim back to its source, and `claim_evidence.py` runs the checks beyond similarity. Together they produce the `<stem>.json` + `<stem>_sources.json` the reader uses. Each claim is labeled: matched to the corpus, added by web research, analysis, a tip, or unsourced with a reason.
 - `jobs.py` writes `<stem>.manifest.json`, the book's build record. See [The Reader](#sourcing-and-transparency).
 - The writing agent only sees stories in the topics the reporter selected. `view_topics`, `read_story` and `search_stories` are all scoped to them.
 
@@ -431,12 +440,12 @@ The topic screen also shows, before generation, which provider each stage sends 
 | **PDF parsing & URL scraping (preferred)** | [Firecrawl](https://firecrawl.dev) | Parse PDFs (native + scanned) and scrape URLs to markdown when `FIRECRAWL_API_KEY` is set |
 | **File extraction (fallback + office)** | [PyMuPDF](https://pymupdf.readthedocs.io/), python-docx, python-pptx, openpyxl, BeautifulSoup, striprtf, ebooklib | Local PDF text + OCR page render; docx/pptx/xlsx/html/rtf/epub → text |
 | **Feeds & URL fetch (fallback)** | [feedparser](https://feedparser.readthedocs.io/), [httpx](https://www.python-httpx.org/) | RSS/Atom parsing; SSRF-protected URL fetch |
-| **Normalization & labeling** | [Anthropic API](https://docs.claude.com/) (`claude-haiku-4-5`) | Split documents into stories; label topic clusters |
-| **Embeddings** | [OpenAI API](https://platform.openai.com/docs/guides/embeddings) (`text-embedding-3-small`) | 1536-d vectors for clustering and citation matching |
+| **Normalization & labeling** | [Anthropic API](https://docs.claude.com/) (`claude-haiku-4-5`) or [Ollama](https://ollama.com/) | Split documents into stories; label topic clusters |
+| **Embeddings** | [OpenAI API](https://platform.openai.com/docs/guides/embeddings) (`text-embedding-3-small`) or Ollama (`qwen3-embedding`) | Vectors for clustering and citation matching, cached on disk |
 | **Dimensionality reduction** | [UMAP](https://umap-learn.readthedocs.io/) | Project embeddings for clustering |
 | **Clustering** | [HDBSCAN](https://hdbscan.readthedocs.io/) | Density-based topic discovery at two granularities |
-| **Writing agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Tool-using agent that writes the beat book |
-| **Research step** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) | Web search plus quoted facts the app checks and inserts |
+| **Writing agent** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) or Ollama | Tool-using agent that writes the beat book |
+| **Research step** | [Anthropic API](https://docs.claude.com/) (`claude-sonnet-4-6`) or Ollama | Web search plus quoted facts the app checks and inserts |
 | **Numerical** | [NumPy](https://numpy.org/), [SciPy](https://scipy.org/), [scikit-learn](https://scikit-learn.org/) | Vector math, distances, preprocessing |
 | **Frontend** | Vanilla HTML/CSS/JS | No-framework single-page app |
 
@@ -457,6 +466,14 @@ beat-book/
 ├── page_fetcher.py         # App-side page fetching: allowlist, redirects, cache
 ├── evals/research_eval.py  # Evaluation: fixed corpora, repeated runs, targets
 ├── citation_matcher.py     # Matches beat-book claims back to source sentences
+├── claim_evidence.py       # Checks beyond similarity: anchors, near matches, outcomes, contradictions, unsourced reasons
+├── draft_check.py          # Flags damaged drafts
+├── trim.py                 # Trims drafts far over length by removing whole units
+├── chat_provider.py        # Anthropic and Ollama chat providers behind one interface
+├── embed_client.py         # OpenAI and Ollama embedding clients
+├── embed_cache.py          # Disk cache for embeddings, keyed by model and text
+├── web_search.py           # Ollama search, for research on Ollama models
+├── env_settings.py         # Loads .env and records shell overrides
 ├── claude_client.py        # Shared Anthropic config — models, timeouts, rate-limit backoff
 ├── requirements.txt        # Python dependencies
 ├── Makefile                # install, run, dev, lint, clean

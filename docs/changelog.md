@@ -1,5 +1,11 @@
 # Beat Book Builder — Changelog
 
+## Session: October 2, 2026 — Quoting by pointing on Ollama
+
+- Qwen 3.6, run locally, met every hard target in the research evaluation but added 1 fact of 9 submitted. Three were rejected because the quote it typed wasn't on the page, and three because the date wasn't in the quote.
+- On Ollama, `fetch_page` now shows each sentence with a number, and `submit_fact` takes `sentences` (up to 3) in place of `quote`. The app copies those sentences from the page as the quote: neighbors joined with a space, others with " … ". A number past the page's last sentence is rejected with the page's sentence count. The figure, date and key-word checks are unchanged. Claude keeps typed quotes.
+- Rerun on the same housing draft: 2 facts added, 6 rejected, none for a quote not on the page. The remaining rejections are years or dates the quoted sentences don't state. This time the trim kept the full draft (Qwen's cut would have saved too little), so the run had more to research than the first.
+
 ## Session: October 1, 2026 — Contradicted outcomes
 
 - A housing book written by Qwen 3.6 on this machine said "Steele won the primary". The stories say she lost to Liz Nicholson. The outcome check accepted three sentences as evidence: "Steele lost reelection…", which says the opposite; "she unseated an incumbent", about her first election years earlier; and "justice prevailed", about her trial. It checked only that a passage reported the same kind of outcome.
@@ -114,6 +120,19 @@ Six runs showed the same pattern: prompts reduced problems but never ended them.
 - A GLM-5.3 housing draft started with reasoning. The cut had treated a quoted `"# Title"` in GLM's deliberation as the book's title. Past it came a section outline sketched in the reasoning ("# Title / ## subtitle line maybe / ## Beat Overview …"), then the real book.
 - A title glued onto a sentence no longer counts after a quote mark or backtick. A candidate title must also be at most 120 characters, and it must reach a prose line of 25 or more characters within three headings, which an outline with nothing under its headings fails. On that draft, the cut now lands on "# Beat Book: Chicago Housing Authority & Cook County Government" and removes 4,573 characters.
 - Not handled: a model that restarts the book when asked to continue a draft that hit the length limit. GLM did this, so repeated sections after the title remain.
+
+### Web research on Ollama
+- `RESEARCH_PROVIDER=ollama` runs the research step on an Ollama model (`RESEARCH_OLLAMA_MODEL`, else `OLLAMA_CHAT_MODEL`). The research loop now goes through a small backend layer. Anthropic keeps its streamed requests, server-side search and container handling. Ollama goes through the app's Ollama chat provider.
+- Ollama models can't search on their own, so `web_search.py` calls Ollama's search service when the model asks. Results feed the fetch allowlist, and snippets stay unquotable. Searches are capped at 6 per run in the app. Without `OLLAMA_API_KEY`, research runs without search.
+- On Ollama, each page shown to the model is capped at 16,000 characters, where Claude sees 60,000. The model's earlier prose isn't sent back each turn, because GLM-5.3 writes out its reasoning, which would fill the 64k context. The full page text is still kept for the quote check.
+- The Anthropic key is required only when a configured step uses Anthropic. The build record, egress table and evaluation report name the research provider and model.
+
+### GLM-5.3 research: thinking mode
+- The first GLM-5.3 evaluation run searched 6 times and read 7 pages. Then turns 6 through 10 each reached the 16,000-token output limit without a tool call, and it added no facts. The forced summary also ran out, at 2,048 tokens. GLM ignores `"think": false` and reasons in its answer. With `"think": true` it puts the reasoning in a separate `thinking` field, leaving the answer clean.
+- `OLLAMA_THINK=on` sends `"think": true` on every Ollama call, and the app discards the thinking. A model that rejects thinking is remembered and retried without it. It's off by default.
+- A research turn that reaches the output limit without calling a tool now gets a firm nudge to submit facts, instead of "please continue". The forced summary gets 4,096 tokens.
+- Tests start from the default provider settings whatever the local `.env` says.
+- A second GLM-5.3 run with `OLLAMA_THINK=on` also added no facts. Search and fetching worked: 6 searches, 7 pages. But 7 of 10 turns, and the forced summary, spent their whole output budget on thinking, so no tool was called. Thinking counts against the per-turn limit. GLM stalls at the step that writes facts with exact quotes. Decision (2026-09-28): research stays on Claude. The Ollama path stays available for testing other models; the evaluation measures one in a single run.
 
 ### Stale browser tabs
 - A Bears book showed a raw `[[PV:analysis]]` marker. The tab had loaded the reader before analysis labels existed, and a single-page app keeps running the scripts it loaded. The current reader rendered the same book correctly.

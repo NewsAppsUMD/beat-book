@@ -104,6 +104,8 @@ def measure(book_dir: Path, stem: str, seconds: float) -> Dict[str, Any]:
             tokens[k] = tokens.get(k, 0) + (v or 0)
     res = {
         "status": m.get("status"),
+        "research_provider": r.get("provider", "anthropic"),
+        "research_model": r.get("model", ""),
         "errors": m.get("errors", []),
         "seconds": round(seconds, 1),
         "research_seconds": (m.get("stages", {}).get("research") or {}).get("seconds"),
@@ -207,7 +209,10 @@ async def one_run(name: str, pr, run_i: int, args, embed, chat, key: str,
 def report(results: Dict[str, List[Dict[str, Any]]], args, out_dir: Path) -> str:
     lines = [f"# Research evaluation — {time.strftime('%Y-%m-%d %H:%M')}", "",
              f"Mode: {'dry run (scripted models)' if args.dry_run else 'real models'} · "
-             f"{args.runs} runs per corpus · length {args.length} · style {args.style}", ""]
+             f"{args.runs} runs per corpus · length {args.length} · style {args.style}"]
+    research = sorted({f"{r.get('research_provider')}: {r.get('research_model')}"
+                       for rs in results.values() for r in rs if r.get("research_model")})
+    lines += [f"Research model: {', '.join(research) or 'unknown'}", ""]
     all_runs = [r for rs in results.values() for r in rs]
     passed = sum(1 for r in all_runs if r.get("passed"))
     lines += [f"**{passed} of {len(all_runs)} runs met every hard target.**", ""]
@@ -262,6 +267,7 @@ def report(results: Dict[str, List[Dict[str, Any]]], args, out_dir: Path) -> str
 def install_dry_run() -> Any:
     from chat_provider import ChatResponse
     import research_agent as ra
+    os.environ["RESEARCH_PROVIDER"] = "anthropic"    # the scripted client stands in for Anthropic
 
     class ScriptedWriter:
         explore_model = agent_model = label_model = normalize_model = "scripted"
