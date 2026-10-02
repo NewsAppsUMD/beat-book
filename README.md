@@ -24,7 +24,7 @@ Both API providers can be partially or fully replaced by [Ollama](#using-ollama)
 ### Install
 
 ```bash
-make install        # creates .venv and installs requirements.txt
+make install        # creates .venv and installs requirements.txt (with uv if installed, else pip)
 ```
 
 Or manually (forcing prebuilt wheels avoids slow/failing native builds):

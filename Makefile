@@ -21,10 +21,17 @@ help:
 
 install: $(VENV)/bin/activate
 
+# Uses uv when it's installed (several times faster), else pip.
 $(VENV)/bin/activate: requirements.txt
-	$(PYTHON) -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install --only-binary=:all: --no-binary=langdetect -r requirements.txt
+	@if command -v uv > /dev/null 2>&1; then \
+	  echo "Installing with uv"; \
+	  uv venv --seed --allow-existing --python $(PYTHON) $(VENV) && \
+	  uv pip install --python $(VENV_PY) --only-binary=:all: --no-binary=langdetect -r requirements.txt; \
+	else \
+	  $(PYTHON) -m venv $(VENV) && \
+	  $(PIP) install --upgrade pip && \
+	  $(PIP) install --only-binary=:all: --no-binary=langdetect -r requirements.txt; \
+	fi
 	@touch $(VENV)/bin/activate
 	@echo "✓ Environment ready. Run: make run"
 

@@ -5,7 +5,7 @@ Setup steps for running this with a class of ~10–12 students, each in their ow
 - **Option A: Anthropic + OpenAI** — fully hosted, simplest to support.
 - **Option B: Anthropic + Ollama** — Ollama Cloud for chat, a small embedding model running locally inside each student's Codespace (no OpenAI key needed).
 
-Every Codespace installs Ollama and pulls the local embedding model automatically regardless of which option a student ends up using (see `.devcontainer/devcontainer.json`), so switching a student from A to B mid-class is just a `.env` edit — no extra install step.
+By default every Codespace installs Ollama and pulls the local embedding model, whichever option a student ends up using (see `.devcontainer/devcontainer.json`), so switching a student from A to B mid-class is just a `.env` edit — no extra install step. For a class that uses only Option A, set `"INSTALL_OLLAMA": "false"` in `.devcontainer/devcontainer.json` before students copy the template; their Codespaces then skip the Ollama install and model download.
 
 ## Repo setup (once)
 
@@ -27,7 +27,7 @@ Each student's Codespace is its own process with its own internal throttling —
 ## Pre-class dry run
 
 - [ ] As a test "student," click **Use this template** on the class repo, create a test repo, and open a Codespace on it.
-- [ ] Confirm `postCreateCommand` finishes without errors — it runs `make install`, then installs Ollama, starts it temporarily, and pulls `qwen3-embedding:0.6b` (this happens regardless of which option you end up testing). First-time Codespace creation takes about **10 minutes**, noticeably longer than a plain Python install. Set that expectation with students up front (they'll otherwise assume something's stuck) — it's also in the guide and README. Confirm `ollama list` shows the model afterward and `make run` starts cleanly.
+- [ ] Confirm `postCreateCommand` finishes without errors. It runs `.devcontainer/setup.sh`, which installs `uv`, then runs `make install` and the Ollama setup (install Ollama, start it, pull `qwen3-embedding:0.6b`) at the same time, labeling their output `[python]` and `[ollama]`. Note how long it takes: first-time creation used to take about **10 minutes**, and the parallel install with `uv` should be noticeably faster. Set that expectation with students up front (they'll otherwise assume something's stuck) — it's also in the guide and README. Confirm `ollama list` shows the model afterward and `make run` starts cleanly.
 - [ ] Restart/stop-and-resume the test Codespace once, then run `pgrep -x ollama` (or just try generating a book under Option B) to confirm `postStartCommand` actually brings the Ollama server back up on its own.
 - [ ] Do a full end-to-end run with the bundled `example_stories.txt` **under both options** if you're offering both to students: ingest → preview → pipeline → topic selection → generation → reader. This is the one thing that can't be verified outside a real Codespace — it confirms GitHub's port-forwarding proxy handles the app's server-sent-events progress streams and WebSocket correctly, and (Option B only) that the Codespace's CPU handles local embedding generation in reasonable time.
 - [ ] Confirm downloading a generated file from `output/` works (right-click → Download in the file explorer).
@@ -45,7 +45,7 @@ A class run mostly on `example_stories.txt`-sized corpora (or similarly small st
 
 ## Known limitations to set expectations around
 
-- First-time Codespace creation takes about **10 minutes per student** (installing Ollama and pulling the embedding model happens automatically for everyone, even under Option A). If everyone starts their Codespace at the same moment in class, plan for a real 10-minute dead spot before anyone can do anything — consider having students create their Codespace before class, or building in a buffer at the start.
+- First-time Codespace creation can take up to **10 minutes per student**: the Python packages, Ollama and the embedding model all download then, for everyone unless `INSTALL_OLLAMA` is `false`. If everyone starts their Codespace at the same moment in class, plan for a real 10-minute dead spot before anyone can do anything — consider having students create their Codespace before class, or building in a buffer at the start.
 - No per-student file-count cap on uploads — ask students not to dump huge batches of files in at once (see the guide's "ground rules" section).
 - Codespaces auto-delete after ~30 days of inactivity, and generated files aren't committed to git — students must download their output manually before that happens or before the course ends.
 - A book still "generating" when a Codespace idles out is marked failed on restart; students just need to regenerate it.
