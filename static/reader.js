@@ -66,6 +66,69 @@
     })[c]);
   }
 
+  // ── HTML sanitizer ──────────────────────────────────────────────────────
+  // Everything is parsed inertly (DOMParser never runs scripts or loads
+  // resources) and rebuilt from an allowlist before it reaches innerHTML.
+  // Event-handler attributes are never allowed; the generated markup carries
+  // data-reader-* attributes instead, which one delegated listener handles.
+  const SAFE_TAGS = new Set(('a abbr b blockquote br code dd del details div dl dt em h1 h2 h3 h4 h5 h6 hr i img '
+    + 'li mark ol p pre s small span strong sub summary sup table tbody td tfoot th thead time tr u ul button '
+    + 'svg path circle line polyline').split(' '));
+  const DROP_TAGS = new Set(['script', 'style', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form',
+    'input', 'textarea', 'select', 'template', 'noscript', 'math', 'foreignobject']);
+  const SAFE_ATTRS = new Set(('class title alt href src colspan rowspan open type aria-hidden aria-label aria-expanded '
+    + 'datetime data-reader-action data-n data-k data-article-id data-i '
+    + 'viewbox fill stroke stroke-width stroke-linecap stroke-linejoin points d cx cy r x1 y1 x2 y2').split(' '));
+  const SAFE_BUTTON_TYPES = new Set(['button']);
+  const DELAY_STYLE_RE = /^\s*animation-delay:\s*[\d.]+s;?\s*$/;
+
+  // http(s) and mailto only; anything else (javascript:, data:, vbscript:) is dropped.
+  function safeUrl(url, allowMailto) {
+    const u = String(url || '').trim();
+    if (/^https?:\/\//i.test(u)) return u;
+    if (allowMailto && /^mailto:/i.test(u)) return u;
+    return null;
+  }
+
+  function sanitizeNode(node) {
+    Array.from(node.childNodes).forEach(child => {
+      if (child.nodeType === 3) return;                       // text
+      if (child.nodeType !== 1) { child.remove(); return; }   // comments, etc.
+      const tag = child.localName.toLowerCase();
+      if (DROP_TAGS.has(tag)) { child.remove(); return; }
+      sanitizeNode(child);
+      if (!SAFE_TAGS.has(tag)) { child.replaceWith(...Array.from(child.childNodes)); return; }
+      Array.from(child.attributes).forEach(attr => {
+        const name = attr.name.toLowerCase();
+        if (name === 'style' && DELAY_STYLE_RE.test(attr.value)) return;
+        if (!SAFE_ATTRS.has(name)) { child.removeAttribute(attr.name); return; }
+        if (name === 'href') {
+          const ok = tag === 'a' ? (attr.value.trim() === '#' ? '#' : safeUrl(attr.value, true)) : null;
+          if (ok === null) child.removeAttribute(attr.name); else child.setAttribute(attr.name, ok);
+        } else if (name === 'src') {
+          const ok = tag === 'img' ? safeUrl(attr.value) : null;
+          if (ok === null) child.removeAttribute(attr.name); else child.setAttribute(attr.name, ok);
+        } else if (name === 'type' && !(tag === 'button' && SAFE_BUTTON_TYPES.has(attr.value))) {
+          child.removeAttribute(attr.name);
+        }
+      });
+      if (tag === 'a' && child.hasAttribute('href') && child.getAttribute('href') !== '#') {
+        child.setAttribute('target', '_blank');
+        child.setAttribute('rel', 'noopener noreferrer');
+      } else if (tag === 'a') {
+        child.removeAttribute('target');
+      }
+    });
+  }
+
+  function sanitizeHtml(html) {
+    const doc = new DOMParser().parseFromString(`<body>${html}`, 'text/html');
+    sanitizeNode(doc.body);
+    return doc.body.innerHTML;
+  }
+
+  function setHtml(el, html) { el.innerHTML = sanitizeHtml(html); }
+
   function prettifyTitle(stem) {
     return String(stem)
       .replace(/[_\-]+/g, ' ')
@@ -266,7 +329,7 @@
     const keyRanges = useRaw ? (matchInfo.highlights || []).map(h => ({ offset: h.char_offset, length: h.char_length })) : [];
 
     const authorName = formatAuthorName(story.author);
-    const bylineHtml = authorName !== 'Unknown' ? `<span><strong>By:</strong> ${authorName}</span>` : '';
+    const bylineHtml = authorName !== 'Unknown' ? `<span><strong>By:</strong> ${escapeHtml(authorName)}</span>` : '';
 
     let bodyHtml;
     if (useRaw && articleContent) {
@@ -281,7 +344,7 @@
     }
 
     const linkHtml = story.link
-      ? `<p class="fade-in" style="animation-delay: 0.1s"><a href="${story.link}" target="_blank" rel="noopener">View original →</a></p>` : '';
+      ? `<p class="fade-in" style="animation-delay: 0.1s"><a href="${safeHref(story.link)}" target="_blank" rel="noopener">View original →</a></p>` : '';
 
     let claimCardHtml = '';
     if (matchInfo && matchInfo.claimText) {
@@ -308,7 +371,7 @@
       const altHtml = supports.length > 1 ? `
           <div class="match-alternates">
             <div class="match-alternates-label">${supports.length} matching passages</div>
-            ${supports.map((s, k) => `<button type="button" class="match-alt${k === current ? ' current' : ''}" onclick="Reader.openSupport(${matchInfo.number}, ${k})">
+            ${supports.map((s, k) => `<button type="button" class="match-alt${k === current ? ' current' : ''}" data-reader-action="support" data-n="${+matchInfo.number}" data-k="${k}">
                 <span class="sim-dot ${simBand(s.similarity)}" aria-hidden="true"></span>
                 <span class="match-alt-title">${escapeHtml(s.article_title || 'Untitled')}</span>
                 <span class="match-alt-sim">${fmtSim(s.similarity)}</span></button>`).join('')}
@@ -335,7 +398,7 @@
       <div class="article-content">${bodyHtml}</div>`;
 
     const el = $('articleContent');
-    el.innerHTML = articleHtml;
+    setHtml(el, articleHtml);
     el.scrollTop = 0;
     $('reader-split').classList.add('split-view');
     currentArticleId = articleId;
@@ -462,7 +525,7 @@
   function btQuote(f) {
     const long = (f.quote || '').length > 280;
     return `<blockquote class="bt-quote${long ? ' bt-clamped' : ''}"><span class="bt-quote-text">“${quoteHtml(f)}”</span></blockquote>`
-      + (long ? '<button type="button" class="bt-quote-toggle" aria-expanded="false" onclick="Reader.toggleQuote(this)">Show full quote</button>' : '');
+      + (long ? '<button type="button" class="bt-quote-toggle" aria-expanded="false" data-reader-action="toggle-quote">Show full quote</button>' : '');
   }
   function toggleQuote(btn) {
     const q = btn.previousElementSibling;
@@ -675,7 +738,7 @@
     if (!currentBookId) return;
     $('articlePanelTitle').textContent = 'How this book was made';
     const el = $('articleContent');
-    el.innerHTML = '<p class="reader-loading">Loading…</p>';
+    setHtml(el, '<p class="reader-loading">Loading…</p>');
     $('reader-split').classList.add('split-view');
     currentArticleId = '__manifest__';
     try {
@@ -684,11 +747,11 @@
         if (!r.ok) throw new Error(r.status === 404 ? 'missing' : `HTTP ${r.status}`);
         manifestCache = await r.json();
       }
-      el.innerHTML = `<div class="fade-in">${renderTimeline(manifestCache)}</div>`;
+      setHtml(el, `<div class="fade-in">${renderTimeline(manifestCache)}</div>`);
     } catch (e) {
-      el.innerHTML = e.message === 'missing'
+      setHtml(el, e.message === 'missing'
         ? '<p class="mf-note">This book was made before build records were kept, so there is no record of how it was made.</p>'
-        : `<p class="reader-error">Couldn't load the build record: ${escapeHtml(e.message)}</p>`;
+        : `<p class="reader-error">Couldn't load the build record: ${escapeHtml(e.message)}</p>`);
     }
     el.scrollTop = 0;
   }
@@ -704,13 +767,13 @@
       const metaStr = meta.length ? ` — ${meta.join(', ')}` : '';
       const passageHtml = primary.passage_text
         ? `<blockquote class="footnote-passage">${escapeHtml(primary.passage_text)}</blockquote>` : '';
-      const titleAttr = (primary.article_title ? `Open: ${primary.article_title}` : 'Open source').replace(/"/g, '&quot;');
+      const titleAttr = escapeHtml(primary.article_title ? `Open: ${primary.article_title}` : 'Open source');
       const nums = [...src.numbers].sort((a, b) => a - b);
       const numberChips = nums.map(n =>
-        `<a class="footnote-number" onclick="Reader.openCitation(${n})" title="Inline citation ${n}">${n}</a>`).join('');
+        `<a class="footnote-number" role="button" tabindex="0" data-reader-action="cite" data-n="${n}" title="Inline citation ${n}">${n}</a>`).join('');
       return `<li id="footnote-source-${src.firstSeen}" class="footnote-item">
         <span class="footnote-numbers">${numberChips}</span>
-        <a class="footnote-link" onclick="Reader.openCitation(${nums[0]})" title="${titleAttr}">${escapeHtml(primary.article_title || 'Untitled')}</a><span class="footnote-meta">${escapeHtml(metaStr)}</span>
+        <a class="footnote-link" role="button" tabindex="0" data-reader-action="cite" data-n="${nums[0]}" title="${titleAttr}">${escapeHtml(primary.article_title || 'Untitled')}</a><span class="footnote-meta">${escapeHtml(metaStr)}</span>
         ${passageHtml}
       </li>`;
     });
@@ -828,7 +891,7 @@
     hidePreview();
     $('articlePanelTitle').textContent = sup.title || hostLink(sup.final_url || sup.url);
     const url = sup.final_url || sup.url;
-    $('articleContent').innerHTML = `
+    setHtml($('articleContent'), `
       <div class="cited-claim-card web-fact-card fade-in">
         <div class="cited-claim-label">Web research added:</div>
         <div class="cited-claim-text">${escapeHtml(sup.claimText || '')}</div>
@@ -836,7 +899,7 @@
       </div>
       <blockquote class="mf-quote web-fact-quote fade-in">“${quoteHtml(sup)}”</blockquote>
       ${(sup.quote_parts || []).length > 1 ? '<p class="mf-note fade-in">The quote joins separate passages from the page; each was checked on its own.</p>' : ''}
-      <p class="fade-in">${escapeHtml(sup.source_name || '')}${sup.source_name ? ' · ' : ''}<a href="${safeHref(url)}" target="_blank" rel="noopener">Open the page →</a></p>`;
+      <p class="fade-in">${escapeHtml(sup.source_name || '')}${sup.source_name ? ' · ' : ''}<a href="${safeHref(url)}" target="_blank" rel="noopener">Open the page →</a></p>`);
     $('reader-split').classList.add('split-view');
     currentArticleId = '__web__' + i;
   }
@@ -942,8 +1005,8 @@
       <div class="sourcing-stats">${bits.join('')}</div>
       <div class="sourcing-actions">
         ${threshold}
-        <button type="button" class="btn-link" id="sourcing-toggle" onclick="Reader.toggleSourcing()">Highlight unsourced claims</button>
-        <button type="button" class="btn-link" onclick="Reader.openManifest()">How this book was made</button>
+        <button type="button" class="btn-link" id="sourcing-toggle" data-reader-action="toggle-sourcing">Highlight unsourced claims</button>
+        <button type="button" class="btn-link" data-reader-action="manifest">How this book was made</button>
       </div>
       ${renderUnsourcedExplanation(st)}
       <p class="sourcing-note">A match means the sentence is similar to a passage in your stories. It does not confirm the claim. Check unsourced and web-added claims before you rely on them.</p>
@@ -1067,7 +1130,7 @@
     const markdown = entries.map((entry, i) => decorateEntry(entry, numByIdx[i], isNewShape ? provOf(entry) : null)).join('\n');
 
     if (typeof marked === 'undefined') {
-      $('reader-content').innerHTML = '<p class="reader-error">The markdown renderer failed to load. Check your connection and reload.</p>';
+      setHtml($('reader-content'), '<p class="reader-error">The markdown renderer failed to load. Check your connection and reload.</p>');
       return;
     }
     let html = marked.parse(markdown);
@@ -1084,9 +1147,9 @@
         : isAnchor ? ' · matched on names, figures and dates'
         : (c && typeof c.similarity === 'number' ? ` · ${SIM_BAND_LABEL[band]} (${fmtSim(c.similarity)})` : '');
       const alts = c && c.supports && c.supports.length > 1 ? ` · ${c.supports.length} matching passages` : '';
-      const titleAttr = ((c ? (c.articleTitle ? `Source: ${c.articleTitle}` : `Source [${num}]`) : `Source [${num}]`) + strength + alts).replace(/"/g, '&quot;');
-      const safeId = c ? c.articleId.replace(/'/g, "\\'") : '';
-      return `<sup class="footnote-ref ${band}" onclick="Reader.openCitation(${num})" onmouseenter="Reader.showPreview('${safeId}', event)" onmouseleave="Reader.hidePreview()" title="${titleAttr}">${num}</sup>`;
+      const titleAttr = escapeHtml((c ? (c.articleTitle ? `Source: ${c.articleTitle}` : `Source [${num}]`) : `Source [${num}]`) + strength + alts);
+      const idAttr = c ? ` data-article-id="${escapeHtml(c.articleId)}"` : '';
+      return `<sup class="footnote-ref ${band}" data-reader-action="cite" data-n="${num}"${idAttr} title="${titleAttr}">${num}</sup>`;
     });
     html = html
       .replace(/\[\[PV:unsupported#(\d+)\]\]/g, (_, i) => `<span class="claim claim-unsupported" title="${escapeHtml(unsourcedNotes[+i] || '')}">`)
@@ -1100,10 +1163,10 @@
           ? `${b.title} Page: ${sup.title || sup.url} (${sup.test === 'words' ? `${Math.round((sup.lexical || 0) * 100)}% of its key words appear there` : `similarity ${fmtSim(sup.similarity)}`}; every figure appears on the page).`
           : b.title;
         if (sup && sup.quote) {
-          return `<button type="button" class="web-badge web-${basis}" onclick="Reader.openWebFact(${+sid})" title="${escapeHtml(b.title)}">${b.label}</button>`;
+          return `<button type="button" class="web-badge web-${basis}" data-reader-action="web-fact" data-i="${+sid}" title="${escapeHtml(b.title)}">${b.label}</button>`;
         }
         const tag = sup && /^https?:\/\//i.test(sup.url) ? 'a' : 'span';
-        const href = tag === 'a' ? ` href="${escapeHtml(sup.url)}" target="_blank" rel="noopener"` : '';
+        const href = tag === 'a' ? ` href="${escapeHtml(sup.url.trim())}" target="_blank" rel="noopener"` : '';
         return `<${tag} class="web-badge web-${basis}"${href} title="${escapeHtml(title)}">${b.label}</${tag}>`;
       });
 
@@ -1116,7 +1179,7 @@
     if (Object.keys(sourcesByKey).length > 0) html += renderFootnotesSection(sourcesByKey);
 
     const contentEl = $('reader-content');
-    contentEl.innerHTML = html;
+    setHtml(contentEl, html);
     contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, table, pre').forEach((el, i) => {
       el.classList.add('fade-in');
       el.style.animationDelay = `${i * 0.03}s`;
@@ -1130,11 +1193,11 @@
   // still render the plain Markdown rather than showing "couldn't load."
   function renderPlainMarkdown(markdown) {
     if (typeof marked === 'undefined') {
-      $('reader-content').innerHTML = '<p class="reader-error">The markdown renderer failed to load. Check your connection and reload.</p>';
+      setHtml($('reader-content'), '<p class="reader-error">The markdown renderer failed to load. Check your connection and reload.</p>');
       return;
     }
     const contentEl = $('reader-content');
-    contentEl.innerHTML = insertAfterFirstH1(marked.parse(markdown), renderWarning());
+    setHtml(contentEl, insertAfterFirstH1(marked.parse(markdown), renderWarning()));
     contentEl.querySelectorAll('h1, h2, h3, h4, h5, h6, p, ul, ol, blockquote, table, pre').forEach((el, i) => {
       el.classList.add('fade-in');
       el.style.animationDelay = `${i * 0.03}s`;
@@ -1198,8 +1261,8 @@
       }
       renderBeatbook(await response.json());
     } catch (error) {
-      $('reader-content').innerHTML =
-        `<div class="reader-error"><p>Couldn't load this beat book.</p><p class="reader-error-detail">${escapeHtml(error.message)}</p></div>`;
+      setHtml($('reader-content'),
+        `<div class="reader-error"><p>Couldn't load this beat book.</p><p class="reader-error-detail">${escapeHtml(error.message)}</p></div>`);
     }
     bindScroll();
   }
@@ -1217,6 +1280,36 @@
       if (e.key === 'Escape' && $('view-reader') && $('view-reader').classList.contains('active')) {
         if ($('reader-split').classList.contains('split-view')) closeArticle();
       }
+    });
+
+    // Citation chips, footnotes and buttons in generated HTML carry
+    // data-reader-action; they are wired here rather than with inline handlers.
+    const actions = {
+      'cite': (el) => openCitation(+el.dataset.n),
+      'support': (el) => openSupport(+el.dataset.n, +el.dataset.k),
+      'web-fact': (el) => openWebFact(+el.dataset.i),
+      'toggle-quote': (el) => toggleQuote(el),
+      'toggle-sourcing': () => toggleSourcing(),
+      'manifest': () => openManifest(),
+    };
+    document.addEventListener('click', (e) => {
+      const el = e.target.closest && e.target.closest('[data-reader-action]');
+      const run = el && actions[el.dataset.readerAction];
+      if (run && $('view-reader') && $('view-reader').contains(el)) run(el);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ') return;
+      const el = e.target.closest && e.target.closest('a[data-reader-action]');
+      if (el && actions[el.dataset.readerAction]) { e.preventDefault(); actions[el.dataset.readerAction](el); }
+    });
+    const refOf = (e) => (e.target.closest ? e.target.closest('.footnote-ref[data-article-id]') : null);
+    document.addEventListener('mouseover', (e) => {
+      const ref = refOf(e);
+      if (ref && !ref.contains(e.relatedTarget)) showPreview(ref.dataset.articleId, e);
+    });
+    document.addEventListener('mouseout', (e) => {
+      const ref = refOf(e);
+      if (ref && !ref.contains(e.relatedTarget)) hidePreview();
     });
 
     document.addEventListener('click', (e) => {
