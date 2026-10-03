@@ -103,10 +103,10 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
    ollama --version
    ```
 
-3. **Pull a chat model.** Qwen 3.5 cloud is the tested default:
+3. **Pull a chat model.** Deepseek v4.1 cloud is the tested default:
 
    ```bash
-   ollama pull qwen3.5:397b-cloud
+   ollama pull deepseek-v4.1-flash:cloud
    ```
 
 4. **Pull an embedding model** (if you want local embeddings):
@@ -127,7 +127,6 @@ Then open [http://127.0.0.1:8000](http://127.0.0.1:8000).
 
 | Purpose | Model | Pull command | Notes |
 |---------|-------|-------------|-------|
-| Chat (cloud) | `qwen3.5:397b-cloud` | `ollama pull qwen3.5:397b-cloud` | Good balance of quality and speed for normalization, labeling, and writing |
 | Chat (cloud) | `deepseek-v4.1-flash:cloud` | `ollama pull deepseek-v4.1-flash:cloud` | Fast (writing in 15–30 seconds) but writes 1.5 to 1.9 times the requested length; the trim cuts it back |
 | Chat (local) | `qwen3.6:35b-mlx` | `ollama pull qwen3.6:35b-mlx` | A 22 GB model that runs on a laptop with enough memory; a housing book came out at 2,008 words for a 2,000-word target in under two minutes of writing. Leave `OLLAMA_THINK` off |
 | Embeddings | `qwen3-embedding:0.6b` | `ollama pull qwen3-embedding:0.6b` | Replaces OpenAI embeddings. The 8b model was 10 times slower at matching citations for little gain |
@@ -145,7 +144,7 @@ Add these variables to your `.env` file. You can enable Ollama for chat, embeddi
 ```
 CHAT_PROVIDER=ollama
 OLLAMA_CHAT_HOST=http://localhost:11434
-OLLAMA_CHAT_MODEL=qwen3:8b
+OLLAMA_CHAT_MODEL=qwen3.6:35b-mlx
 ```
 
 For [Ollama cloud](https://ollama.com/) instead of a local instance:
@@ -153,7 +152,7 @@ For [Ollama cloud](https://ollama.com/) instead of a local instance:
 ```
 CHAT_PROVIDER=ollama
 OLLAMA_CHAT_HOST=https://ollama.com
-OLLAMA_CHAT_MODEL=qwen3.5:397b-cloud
+OLLAMA_CHAT_MODEL=deepseek-v4.1-flash:cloud
 OLLAMA_API_KEY=your-key-here
 ```
 
